@@ -169,7 +169,12 @@ def _should_skip(var):
 	if isinstance(var, SKIP_TYPES):
 		return True
 	if isinstance(var, VariableTable):
-		return any(isinstance(v, SKIP_TYPES) for v in var.variables.values())
+		# Show mixed tables like the rating-ranks table, which has a RoleVar
+		# "role" column. The frontend renders skip-type columns as plain text
+		# cells (matching Leshaka's UI), so only skip a table whose columns are
+		# ALL skip-types. Previously this used any(), which hid the entire
+		# Rating ranks editor just because of its optional role column.
+		return all(isinstance(v, SKIP_TYPES) for v in var.variables.values())
 	return False
 
 
