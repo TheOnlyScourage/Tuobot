@@ -121,6 +121,19 @@ async def next_match():
 	return counter['next_id']
 
 
+def _schedule_civ_match(m):
+	"""Kick off background civ recording for a completed match (see bot/civ_matcher.py)."""
+	try:
+		from bot import civ_matcher
+		players = [
+			(p.id, get_nick(p), 0 if p in m.teams[0] else (1 if p in m.teams[1] else None))
+			for p in m.players
+		]
+		civ_matcher.schedule(m.qc.id, m.id, players, getattr(m, 'winner', None), int(time.time()))
+	except Exception as e:
+		log.error(f"Failed to schedule civ match for {getattr(m, 'id', '?')}: {e}")
+
+
 async def register_match_unranked(ctx, m):
 	await db.insert('qc_matches', dict(
 		match_id=m.id, channel_id=m.qc.id, queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
@@ -152,6 +165,8 @@ async def register_match_unranked(ctx, m):
 			'qc_player_matches',
 			dict(match_id=m.id, channel_id=m.qc.id, user_id=p.id, nick=nick, team=team)
 		)
+
+	_schedule_civ_match(m)
 
 
 async def register_match_ranked(ctx, m):
@@ -226,6 +241,8 @@ async def register_match_ranked(ctx, m):
 			match_id=m.id,
 			reason=m.queue.name
 		))
+
+	_schedule_civ_match(m)
 
 	await m.qc.update_rating_roles(*m.players)
 	await m.print_rating_results(ctx, before, after)

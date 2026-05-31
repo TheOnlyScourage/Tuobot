@@ -21,6 +21,13 @@ db.ensure_table(dict(
 		dict(cname="aoe2_name", ctype=db.types.str),
 		dict(cname="civ", ctype=db.types.str),
 		dict(cname="at", ctype=db.types.int),
+		# Linkage to the bot match + player, filled by bot/civ_matcher.py when a
+		# completed match is matched to its aoe2companion game on /report.
+		dict(cname="bot_match_id", ctype=db.types.int, notnull=False),
+		dict(cname="user_id", ctype=db.types.int, notnull=False),
+		dict(cname="nick", ctype=db.types.str),
+		dict(cname="team", ctype=db.types.int, notnull=False),
+		dict(cname="result", ctype=db.types.str),
 	],
 	primary_keys=["id"]
 ))
