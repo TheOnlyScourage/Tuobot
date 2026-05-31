@@ -25,6 +25,12 @@ from core.database import db
 AOE2_API = "https://data.aoe2companion.com/api"
 _PROFILE_MAP_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "player_profile_map.csv")
 
+# Base URL of the replay visualizer (Railway). Overridable via env so we don't
+# hard-code the host. Trailing slash stripped — links append "/?match=...".
+VISUALIZER_URL = os.environ.get(
+	"REPLAY_VISUALIZER_URL", "https://aoe2-replay-visualizer-production.up.railway.app"
+).rstrip("/")
+
 # Time window: bot match `at` (report time) minus API game start time should be
 # positive and within a few hours (game duration + report delay).
 _MAX_DIFF_SECONDS = 3 * 3600
@@ -152,7 +158,46 @@ async def _find_and_record(channel_id, bot_match_id, players, winner, match_at):
 		f"Civ match: bot match {bot_match_id} -> aoe2 {aoe2_match_id}, "
 		f"recorded {len(rows)} civs (overlap {best_overlap})."
 	)
+
+	# Now that the aoe2 match is resolved, post a "watch replay" link. Pick a
+	# download perspective that's actually a participant in the matched game.
+	link_pid = next((pid for pid in active_pids if pid in pid_civ), None)
+	await _post_replay_link(channel_id, aoe2_match_id, link_pid, best)
 	return True
+
+
+async def _post_replay_link(channel_id, aoe2_match_id, profile_id, api_match):
+	"""Post a clickable replay link to the channel (browser viewer + raw download).
+
+	Best-effort: any failure here must not affect civ recording.
+	"""
+	if not aoe2_match_id or not profile_id:
+		return
+	try:
+		from core.client import dc
+		from nextcord import Embed, Colour
+
+		channel = dc.get_channel(channel_id)
+		if channel is None:
+			return
+
+		watch = f"{VISUALIZER_URL}/?match={aoe2_match_id}&profile={profile_id}"
+		download = f"https://aoe.ms/replay/?gameId={aoe2_match_id}&profileId={profile_id}"
+
+		map_name = ""
+		if isinstance(api_match, dict):
+			m = api_match.get("map")
+			map_name = (m.get("name") if isinstance(m, dict) else None) or api_match.get("mapName") or ""
+
+		embed = Embed(
+			title="🎬 Replay ready",
+			description=f"[▶ Watch in browser]({watch})\n[⬇ Download .aoe2record]({download})",
+			colour=Colour(0x5865F2),
+		)
+		embed.set_footer(text=(f"{map_name} · aoe2 match {aoe2_match_id}" if map_name else f"aoe2 match {aoe2_match_id}"))
+		await channel.send(embed=embed)
+	except Exception as e:
+		log.error(f"Replay link post failed (aoe2 {aoe2_match_id}): {e}")
 
 
 async def _record_with_retry(channel_id, bot_match_id, players, winner, match_at):
