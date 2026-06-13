@@ -531,6 +531,16 @@ async def _sub_me(
 ): await run_slash(bot.commands.sub_me, interaction=interaction)
 
 
+@dc.slash_command(
+	name='subauto',
+	description='Replace yourself with the next player in queue and rebalance teams by ELO',
+	**guild_kwargs
+)
+async def _sub_auto(
+		interaction: Interaction
+): await run_slash(bot.commands.sub_auto, interaction=interaction)
+
+
 @dc.slash_command(name='subfor', description='Become a substitute', **guild_kwargs)
 async def _sub_for(
 		interaction: Interaction,

@@ -21,6 +21,7 @@
 | /capfor               | Become a captain                                        |
 | /pick                 | Pick a player                                           |
 | /subme                | Request a substitute                                    |
+| /subauto              | Replace yourself with the next queued player, rebalance |
 | /subfor               | Become a substitute                                     |
 | /teams                | Show current teams                                      |
 | /report               | Report match result                                     |

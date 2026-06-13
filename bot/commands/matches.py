@@ -1,5 +1,5 @@
 __all__ = [
-	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_for', 'put',
+	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
 	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual'
 ]
 
@@ -44,6 +44,11 @@ async def set_ready(ctx, match: bot.Match, is_ready=True):
 @author_match
 async def sub_me(ctx, match: bot.Match):
 	await match.draft.sub_me(ctx, ctx.author)
+
+
+@author_match
+async def sub_auto(ctx, match: bot.Match):
+	await match.draft.sub_auto(ctx, ctx.author)
 
 
 async def sub_for(ctx, player: Member):

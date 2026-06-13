@@ -3,6 +3,8 @@ import bot
 from core.utils import find
 from nextcord import DiscordException
 
+from .subbing import pick_available
+
 
 class Draft:
 
@@ -148,3 +150,43 @@ class Draft:
 			await ctx.notice(embed=self.m.embeds.final_message())
 		else:
 			await self.print(ctx)
+
+	async def sub_auto(self, ctx, author):
+		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
+			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the draft or waiting report stage."))
+
+		# Grab the next queued player who isn't already committed to another
+		# active match. busy_ids spans every active match, so it also excludes
+		# this match's own players (the caller included).
+		busy_ids = {p.id for m in bot.active_matches for p in m.players}
+		candidate = pick_available(self.m.queue.queue, busy_ids)
+		if candidate is None:
+			raise bot.Exc.NotFoundError(self.m.gt("There are no available players in the queue to substitute in."))
+
+		# Swap the caller out for the candidate and recompute ratings for the
+		# new roster so the rebalance below sees correct ELOs.
+		self.m.players.remove(author)
+		self.m.players.append(candidate)
+		if author in self.sub_queue:
+			self.sub_queue.remove(author)
+		self.m.ratings = {
+			p['user_id']: p['rating'] for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
+		}
+
+		# Pull the candidate out of the queue and expire timers, like /subfor.
+		await self.m.qc.remove_members(candidate, ctx=ctx)
+		await bot.remove_players(candidate, reason="pickup started")
+
+		# Full re-matchmaking: re-split everyone into the two most ELO-balanced
+		# teams. Reuses the proven matchmaking path; teams[0][0]/teams[1][0]
+		# become each team's reporting captain (sorted by rating).
+		self.m.init_teams("matchmaking")
+
+		await ctx.notice(self.m.gt("{old} was substituted by {new}. Teams have been rebalanced.").format(
+			old=author.mention, new=candidate.mention
+		))
+
+		if self.m.state == self.m.WAITING_REPORT:
+			await ctx.notice(embed=self.m.embeds.final_message())
+		else:
+			await self.refresh(ctx)
