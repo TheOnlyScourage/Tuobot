@@ -66,23 +66,18 @@ def main():
     if owner_id == "0":
         print("WARNING: DC_OWNER_ID not set. Bot owner commands won't work.")
 
-    # Fail-closed on these two: they're used by bot/events.py on_message
-    # to gate ELO sync and civ sync. Silently defaulting to hardcoded
-    # Discord user IDs (as we used to) means a misconfigured deployment
-    # would either attribute every random bot's messages to Pubobot or
-    # do nothing at all and look healthy. Better to refuse to start.
     pubobot_user_id = os.environ.get("PUBOBOT_USER_ID", "")
     if not pubobot_user_id:
         print("ERROR: PUBOBOT_USER_ID environment variable is required.")
         print("       Set it to the Discord user ID of the Pubobot bot whose")
         print("       ELO result messages NammaPUBobot should mirror.")
         sys.exit(1)
-    lobbybot_user_id = os.environ.get("LOBBYBOT_USER_ID", "")
-    if not lobbybot_user_id:
-        print("ERROR: LOBBYBOT_USER_ID environment variable is required.")
-        print("       Set it to the Discord user ID of the AOE2LobbyBOT whose")
-        print("       match embeds NammaPUBobot should scrape for civ data.")
-        sys.exit(1)
+
+    # LOBBYBOT_USER_ID is optional — only needed if you use AOE2LobbyBOT
+    # for civ data scraping. Defaults to 0 (disabled) if not set.
+    lobbybot_user_id = os.environ.get("LOBBYBOT_USER_ID", "0")
+    if lobbybot_user_id == "0":
+        print("INFO: LOBBYBOT_USER_ID not set. Civ data scraping from AOE2LobbyBOT will be disabled.")
 
     config_content = TEMPLATE.format(
         dc_bot_token=token,
