@@ -11,6 +11,27 @@ from core.database import db
 
 import bot
 
+# Custom rank emojis — must match match.py
+RANK_EMOJIS = [
+	(0,    "<:CHAD:1471923932558000270>"),
+	(800,  "<:Q6Wood:1514727440692547685>"),
+	(1000, "<:Q6Iron:1514727400200470820>"),
+	(1200, "<:Q6Bronze:1514727471205847170>"),
+	(1400, "<:Q6Silver:1514727221808332800>"),
+	(1600, "<:Q6Gold:1514727359461462076>"),
+	(1800, "<:Q6Diamond:1514727335549472930>"),
+	(2000, "<:Q6Champion:1514727158596112464>"),
+	(2200, "<:Q6Star:1514727286132441238>"),
+]
+
+
+def get_rank_emoji(rating):
+	emoji = RANK_EMOJIS[0][1]
+	for threshold, e in RANK_EMOJIS:
+		if rating >= threshold:
+			emoji = e
+	return emoji
+
 
 async def last_game(ctx, queue: str = None, player: Member = None, match_id: int = None):
 	lg = None
@@ -19,13 +40,11 @@ async def last_game(ctx, queue: str = None, player: Member = None, match_id: int
 		lg = await db.select_one(
 			['*'], "qc_matches", where=dict(channel_id=ctx.qc.id, match_id=match_id), order_by="match_id", limit=1
 		)
-
 	elif queue:
 		if queue := find(lambda q: q.name.lower() == queue.lower(), ctx.qc.queues):
 			lg = await db.select_one(
 				['*'], "qc_matches", where=dict(channel_id=ctx.qc.id, queue_id=queue.id), order_by="match_id", limit=1
 			)
-
 	elif player and (member := await ctx.get_member(player)) is not None:
 		if match := await db.select_one(
 			['match_id'], "qc_player_matches", where=dict(channel_id=ctx.qc.id, user_id=member.id),
@@ -34,7 +53,6 @@ async def last_game(ctx, queue: str = None, player: Member = None, match_id: int
 			lg = await db.select_one(
 				['*'], "qc_matches", where=dict(channel_id=ctx.qc.id, match_id=match['match_id'])
 			)
-
 	else:
 		lg = await db.select_one(
 			['*'], "qc_matches", where=dict(channel_id=ctx.qc.id), order_by="match_id", limit=1
@@ -82,7 +100,6 @@ async def stats(ctx, player: Member = None):
 	)
 	for q in data['queues']:
 		embed.add_field(name=q['queue_name'], value=str(q['count']), inline=True)
-
 	await ctx.reply(embed=embed)
 
 
@@ -115,7 +132,6 @@ async def rank(ctx, player: Member = None):
 		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
 
 	data = await ctx.qc.get_lb()
-	# Figure out leaderboard placement
 	if p := find(lambda i: i['user_id'] == target.id, data):
 		place = data.index(p) + 1
 	else:
@@ -128,15 +144,14 @@ async def rank(ctx, player: Member = None):
 		place = "?"
 
 	if p:
+		rank_emoji = get_rank_emoji(p['rating']) if p['rating'] else "❓"
 		embed = Embed(title=f"__{get_nick(target)}__", colour=Colour(0x7289DA))
 		embed.add_field(name="№", value=f"**{place}**", inline=True)
 		embed.add_field(name=ctx.qc.gt("Matches"), value=f"**{(p['wins'] + p['losses'] + p['draws'])}**", inline=True)
 		if p['rating']:
-			embed.add_field(name=ctx.qc.gt("Rank"), value=f"**{ctx.qc.rating_rank(p['rating'])['rank']}**", inline=True)
-			embed.add_field(name=ctx.qc.gt("Rating"), value=f"**{p['rating']}**±{p['deviation']}")
+			embed.add_field(name=ctx.qc.gt("Rank"), value=f"{rank_emoji} **{p['rating']}**", inline=True)
 		else:
-			embed.add_field(name=ctx.qc.gt("Rank"), value="**〈?〉**", inline=True)
-			embed.add_field(name=ctx.qc.gt("Rating"), value="**?**")
+			embed.add_field(name=ctx.qc.gt("Rank"), value="❓ **Unranked**", inline=True)
 		embed.add_field(
 			name="W/L/D/S",
 			value="**{wins}**/**{losses}**/**{draws}**/**{streak}**".format(**p),
@@ -164,7 +179,6 @@ async def rank(ctx, player: Member = None):
 				) for c in changes))
 			)
 		await ctx.reply(embed=embed)
-
 	else:
 		raise bot.Exc.ValueError(ctx.qc.gt("No rating data found."))
 
@@ -173,63 +187,46 @@ async def leaderboard(ctx, page: int = 1):
 	page = (page or 1) - 1
 
 	data = await ctx.qc.get_lb()
-	pages = ceil(len(await ctx.qc.get_lb())/10)
+	pages = ceil(len(data) / 10)
 	data = data[page * 10:(page + 1) * 10]
 	if not len(data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
-	if ctx.qc.cfg.emoji_ranks:  # display as embed message
-		embed = Embed(title=f"Leaderboard - page {page+1} of {pages}", colour=Colour(0x7289DA))
-		embed.add_field(
-			name="Nickname",
-			value="\n".join((
-				f'**{(page*10)+n+1}** ' + data[n]['nick'].strip()[:14]
-				for n in range(len(data))
-			)),
-			inline=True
-		)
-		embed.add_field(
-			name="W / L / D",
-			value="\n".join((
-				f"**{row['wins']}** / **{row['losses']}** / **{row['draws']}** (" +
-				str(int(row['wins'] * 100 / ((row['wins'] + row['losses']) or 1))) + "%)"
-				for row in data
-			)),
-			inline=True
-		)
-		embed.add_field(
-			name="Rating",
-			value="\n".join((
-				ctx.qc.rating_rank(row['rating'])['rank'] + f" **{row['rating']}**"
-				for row in data
-			)),
-			inline=True
-		)
-		await ctx.reply(embed=embed)
-		return
-
-	# display as md table
-	await ctx.reply(
-		discord_table(
-			["№", "Rating〈Ξ〉", "Nickname", "Matches", "W/L/D"],
-			[[
-				(page * 10) + (n + 1),
-				str(data[n]['rating']) + ctx.qc.rating_rank(data[n]['rating'])['rank'],
-				data[n]['nick'].strip(),
-				int(data[n]['wins'] + data[n]['losses'] + data[n]['draws']),
-				"{0}/{1}/{2} ({3}%)".format(  # noqa: UP030
-					data[n]['wins'],
-					data[n]['losses'],
-					data[n]['draws'],
-					int(data[n]['wins'] * 100 / ((data[n]['wins'] + data[n]['losses']) or 1))
-				)
-			] for n in range(len(data))]
-		)
+	embed = Embed(
+		title=f"🏆 Leaderboard — page {page+1} of {pages}",
+		colour=Colour(0x7289DA)
 	)
+	embed.add_field(
+		name="Player",
+		value="\n".join(
+			f"**{(page*10)+n+1}.** {get_rank_emoji(data[n]['rating'])} {data[n]['nick'].strip()[:18]}"
+			for n in range(len(data))
+		),
+		inline=True
+	)
+	embed.add_field(
+		name="Rating",
+		value="\n".join(
+			f"**{row['rating']}**"
+			for row in data
+		),
+		inline=True
+	)
+	embed.add_field(
+		name="W / L / D",
+		value="\n".join(
+			"{wins} / {losses} / {draws} ({wr}%)".format(
+				wins=row['wins'], losses=row['losses'], draws=row['draws'],
+				wr=int(row['wins'] * 100 / ((row['wins'] + row['losses']) or 1))
+			)
+			for row in data
+		),
+		inline=True
+	)
+	await ctx.reply(embed=embed)
 
 
 async def mapstats(ctx, period: str = None):
-	""" Channel-wide map popularity as a horizontal bar chart. """
 	_period_days = {'1M': 30, '6M': 180, '1Y': 365}
 	days = _period_days.get(period) if period else None
 	ts_from = int(time()) - days * 86400 if days else None
@@ -239,9 +236,6 @@ async def mapstats(ctx, period: str = None):
 	if ts_from is not None:
 		params.append(ts_from)
 
-	# `maps` is stored on qc_matches as a newline-joined string (see
-	# bot/stats/stats.py register_match_*). Split it back into rows with a
-	# recursive CTE so we can count map frequency in SQL.
 	rows = await db.fetchall(
 		f"""
 		WITH RECURSIVE map_split AS (
@@ -305,7 +299,6 @@ async def mapstats(ctx, period: str = None):
 
 
 async def activity(ctx, player: Member = None):
-	""" Activity heatmap by weekday x hour (IST), last 28 days. """
 	interaction = getattr(ctx, 'interaction', None)
 	if interaction is not None and not interaction.response.is_done():
 		await interaction.response.defer()
@@ -316,10 +309,6 @@ async def activity(ctx, player: Member = None):
 
 	ts_from = int(time()) - 28 * 86400
 
-	# Day/hour bucketed in IST (UTC+5:30) via CONVERT_TZ on fixed offsets so
-	# it doesn't depend on the MySQL server session timezone. With a player
-	# we join qc_player_matches to scope to their participations; otherwise
-	# we count distinct matches channel-wide.
 	if target:
 		rows = await db.fetchall(
 			"""
@@ -351,7 +340,7 @@ async def activity(ctx, player: Member = None):
 	if not rows:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("No activity data yet."))
 
-	def _to_idx(dow):  # MySQL DAYOFWEEK 1=Sun..7=Sat -> 0=Mon..6=Sun
+	def _to_idx(dow):
 		return (int(dow) + 5) % 7
 
 	grid = [[0] * 24 for _ in range(7)]
