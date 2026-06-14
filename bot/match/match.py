@@ -2,7 +2,7 @@
 from time import time
 from itertools import combinations
 import random
-from nextcord import DiscordException
+from nextcord import DiscordException, Embed, Colour
 
 import bot
 from core.utils import find, get, iter_to_dict, join_and, get_nick  # noqa: F401
@@ -12,6 +12,29 @@ from core.client import dc
 from .check_in import CheckIn
 from .draft import Draft
 from .embeds import Embeds
+
+
+# Custom rank emojis for Q6 server
+RANK_EMOJIS = [
+	(0,    "<:CHAD:1471923932558000270>"),
+	(800,  "<:Q6Wood:1514727440692547685>"),
+	(1000, "<:Q6Iron:1514727400200470820>"),
+	(1200, "<:Q6Bronze:1514727471205847170>"),
+	(1400, "<:Q6Silver:1514727221808332800>"),
+	(1600, "<:Q6Gold:1514727359461462076>"),
+	(1800, "<:Q6Diamond:1514727335549472930>"),
+	(2000, "<:Q6Champion:1514727158596112464>"),
+	(2200, "<:Q6Star:1514727286132441238>"),
+]
+
+
+def get_rank_emoji(rating):
+	"""Return the custom emoji for a given rating."""
+	emoji = RANK_EMOJIS[0][1]
+	for threshold, e in RANK_EMOJIS:
+		if rating >= threshold:
+			emoji = e
+	return emoji
 
 
 class Match:
@@ -35,13 +58,11 @@ class Match:
 	)
 
 	class Team(list):
-		""" Team is basically a set of member objects, but we need it ordered so list is used """
-
 		def __init__(self, name=None, emoji=None, players=None, idx=-1):
 			super().__init__(players or [])
 			self.name = name
 			self.emoji = emoji
-			self.draw_flag = False  # 1 - wants draw; 2 - wants cancel
+			self.draw_flag = False
 			self.idx = idx
 
 		def set(self, players):
@@ -58,11 +79,9 @@ class Match:
 
 	@classmethod
 	async def new(cls, ctx, queue, players, **kwargs):
-		# Create the Match object
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
-		# Prepare the Match object
 		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
 		match.init_teams(match.cfg['pick_teams'])
@@ -114,17 +133,14 @@ class Match:
 		if None in data['players']:
 			raise bot.Exc.ValueError(f"Error fetching guild members.")  # noqa: F541
 
-		# Fill data with discord objects
 		for i in range(len(data['teams'])):
 			data['teams'][i] = [get(data['players'], id=user_id) for user_id in data['teams'][i]]
 		data['ready_players'] = [get(data['players'], id=user_id) for user_id in data['ready_players']]
 
-		# Create the Match object
 		ratings = {p['user_id']: p['rating'] for p in await qc.rating.get_players((p.id for p in data['players']))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, qc, data['players'], ratings, **data['cfg'])
 
-		# Set state data
 		for i in range(len(match.teams)):
 			match.teams[i].set(data['teams'][i])
 		match.check_in.ready_players = set(data['ready_players'])
@@ -133,23 +149,19 @@ class Match:
 		match.states = data['states']
 		if match.state == match.CHECK_IN:
 			ctx = bot.SystemContext(qc)
-			await match.check_in.start(ctx)  # Spawn a new check_in message
+			await match.check_in.start(ctx)
 
 		bot.active_matches.append(match)
 
 	def __init__(self, match_id, queue, qc, players, ratings, **cfg):
-
-		# Set parent objects and shorthands
 		self.queue = queue
 		self.qc = qc
 		self.gt = qc.gt
 
-		# Set configuration variables
-		cfg = {k: v for k, v in cfg.items() if v is not None}  # filter kwargs for notnull values
+		cfg = {k: v for k, v in cfg.items() if v is not None}
 		self.cfg = self.default_cfg.copy()
 		self.cfg.update(cfg)
 
-		# Set working objects
 		self.id = match_id
 		self.ranked = self.cfg['ranked'] and self.cfg['pick_teams'] != 'no teams'
 		self.players = list(players)
@@ -172,7 +184,6 @@ class Match:
 		self.start_time = int(time())
 		self.state = self.INIT
 
-		# Init self sections
 		self.check_in = CheckIn(self, self.cfg['check_in_timeout'])
 		self.draft = Draft(self, self.cfg['pick_order'], self.cfg['captains_role_id'])
 		self.embeds = Embeds(self)
@@ -182,11 +193,9 @@ class Match:
 		for last_map in (last_maps or [])[::-1]:
 			if last_map in maps and map_count < len(maps):
 				maps.remove(last_map)
-
 		return random.sample(maps, min(map_count, len(maps)))
 
 	def sort_players(self, players):
-		""" sort given list of members by captains role and rating """
 		return sorted(
 			players,
 			key=lambda p: [self.cfg['captains_role_id'] in [role.id for role in p.roles], self.ratings[p.id]],
@@ -220,9 +229,7 @@ class Match:
 				combinations(self.players, team_len),
 				key=lambda team: abs(sum([self.ratings[m.id] for m in team])-best_rating)
 			)
-			self.teams[0].set(self.sort_players(
-				best_team[:self.cfg['team_size']]
-			))
+			self.teams[0].set(self.sort_players(best_team[:self.cfg['team_size']]))
 			self.teams[1].set(self.sort_players(
 				[p for p in self.players if p not in best_team][:self.cfg['team_size']]
 			))
@@ -286,16 +293,13 @@ class Match:
 	async def think(self, frame_time):
 		if self.state == self.INIT:
 			await self.next_state(bot.SystemContext(self.qc))
-
 		elif self.state == self.CHECK_IN:
 			await self.check_in.think(frame_time)
-
 		elif frame_time > self.lifetime + self.start_time:
 			ctx = bot.SystemContext(self.qc)
 			try:
 				await ctx.error(self.gt("Match {queue} ({id}) has timed out.").format(
-					queue=self.queue.name,
-					id=self.id
+					queue=self.queue.name, id=self.id
 				))
 			except DiscordException:
 				pass
@@ -319,7 +323,6 @@ class Match:
 		return self.queue.qc.rating_rank(self.ratings[member.id])['rank']
 
 	async def start_waiting_report(self, ctx):
-		# remove never picked players from the match
 		if len(self.teams[2]):
 			for p in self.teams[2]:
 				self.players.remove(p)
@@ -348,17 +351,13 @@ class Match:
 				self.gt(
 					"{self} is calling a draw, waiting for {enemy} to type `/report draw`." if draw_flag == 1 else
 					"{self} offers to cancel the match, waiting for {enemy} to type `/report abort`."
-				).format(
-					self=member.mention,
-					enemy=enemy_team[0].mention,
-				)
+				).format(self=member.mention, enemy=enemy_team[0].mention)
 			)
 			return
 
 		if draw_flag == 2:
 			await self.cancel(ctx)
 			return
-
 		elif draw_flag == 1:
 			self.winner = None
 		else:
@@ -366,7 +365,7 @@ class Match:
 			self.scores[self.winner] = 1
 		await self.finish_match(ctx)
 
-	async def report_win(self, ctx, team_name, draw=False):  # version for admins/mods
+	async def report_win(self, ctx, team_name, draw=False):
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -395,35 +394,68 @@ class Match:
 		await self.finish_match(ctx)
 
 	async def print_rating_results(self, ctx, before, after):
-		msg = "```markdown\n"
-		msg += f"{self.queue.name.capitalize()}({self.id}) results\n"
-		msg += "-------------"
-
+		"""Post a rich embed matching the Q6Bot results style."""
 		if self.winner is not None:
-			winners, losers = self.teams[self.winner], self.teams[abs(self.winner-1)]
+			winners = self.teams[self.winner]
+			losers = self.teams[abs(self.winner - 1)]
 		else:
 			winners, losers = self.teams[:2]
 
-		if len(winners) == 1 and len(losers) == 1:
-			p = winners[0]
-			msg += f"\n1. {get_nick(p)} {before[p.id]['rating']} ⟼ {after[p.id]['rating']}"
-			p = losers[0]
-			msg += f"\n2. {get_nick(p)} {before[p.id]['rating']} ⟼ {after[p.id]['rating']}"
+		def team_avg(team, data):
+			ratings = [data[p.id]['rating'] for p in team]
+			return int(sum(ratings) / len(ratings)) if ratings else 0
+
+		def format_team_field(team, data_before, data_after):
+			lines = []
+			for p in team:
+				b = data_before[p.id]['rating']
+				a = data_after[p.id]['rating']
+				change = a - b
+				emoji = get_rank_emoji(b)
+				sign = "+" if change >= 0 else ""
+				lines.append(f"{emoji} {get_nick(p)}  {b} ↦ {a} ({sign}{change})")
+			return "\n".join(lines)
+
+		avg_before_w = team_avg(winners, before)
+		avg_after_w = team_avg(winners, after)
+		avg_before_l = team_avg(losers, before)
+		avg_after_l = team_avg(losers, after)
+
+		w_change = avg_after_w - avg_before_w
+		l_change = avg_after_l - avg_before_l
+
+		if self.winner is None:
+			title = f"🤝 {self.queue.name.capitalize()} Results — Match {self.id} (Draw)"
 		else:
-			n = 0
-			for team in (winners, losers):
-				avg_bf = int(sum((before[p.id]['rating'] for p in team))/len(team))
-				avg_af = int(sum((after[p.id]['rating'] for p in team))/len(team))
-				msg += f"\n{n}. {team.name} {avg_bf} ⟼ {avg_af}\n"
-				msg += "\n".join(
-					(f"> {get_nick(p)} {before[p.id]['rating']} ⟼ {after[p.id]['rating']}" for p in team)
-				)
-				n += 1  # noqa: SIM113
-		msg += "```"
-		await ctx.notice(msg)
+			title = f"{self.queue.name.capitalize()} Results — Match {self.id}"
+
+		embed = Embed(title=title, colour=Colour(0x27b75e) if self.winner is not None else Colour(0xf5d858))
+
+		w_sign = "+" if w_change >= 0 else ""
+		l_sign = "+" if l_change >= 0 else ""
+
+		if self.winner is not None:
+			winner_header = f"🏆 Winner — {winners.name}  {avg_before_w} ↦ {avg_after_w} ({w_sign}{w_change})"
+			loser_header = f"💀 Loser — {losers.name}  {avg_before_l} ↦ {avg_after_l} ({l_sign}{l_change})"
+		else:
+			winner_header = f"⚔️ {winners.name}  {avg_before_w} ↦ {avg_after_w} ({w_sign}{w_change})"
+			loser_header = f"⚔️ {losers.name}  {avg_before_l} ↦ {avg_after_l} ({l_sign}{l_change})"
+
+		embed.add_field(
+			name=winner_header,
+			value=format_team_field(winners, before, after),
+			inline=False
+		)
+		embed.add_field(name="—", value="\u200b", inline=False)
+		embed.add_field(
+			name=loser_header,
+			value=format_team_field(losers, before, after),
+			inline=False
+		)
+		embed.set_footer(text=f"Match id: {self.id}")
+		await ctx.notice(embed=embed)
 
 	async def final_message(self, ctx):
-		# Embed message with teams
 		try:
 			await ctx.notice(embed=self.embeds.final_message())
 		except DiscordException:
@@ -447,7 +479,9 @@ class Match:
 			bot.waiting_reactions.pop(self.check_in.message.id)
 		try:
 			await ctx.notice(
-				self.gt("{players} your match has been canceled.").format(players=join_and([p.mention for p in self.players]))
+				self.gt("{players} your match has been canceled.").format(
+					players=join_and([p.mention for p in self.players])
+				)
 			)
 		except DiscordException:
 			pass
