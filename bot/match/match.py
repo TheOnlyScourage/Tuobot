@@ -229,23 +229,19 @@ class Match:
 			self.teams[2].set([p for p in self.players if p not in [*self.teams[0], *self.teams[1]]])
 		elif pick_teams == "captain based matchmaking":
 			team_len = min(self.cfg['team_size'], int(len(self.players)/2))
-			# Regular matchmaking result for fallback comparison
 			best_rating = sum(self.ratings.values())/2
 			regular_team = min(
 				combinations(self.players, team_len),
 				key=lambda team: abs(sum([self.ratings[m.id] for m in team])-best_rating)
 			)
 			regular_diff = abs(sum(self.ratings[m.id] for m in regular_team) - best_rating) * 2
-			# Top 2 rated players become captains
 			sorted_by_rating = sorted(self.players, key=lambda p: self.ratings[p.id], reverse=True)
 			captain_strong = sorted_by_rating[0]
 			captain_weak = sorted_by_rating[1]
 			remaining = sorted_by_rating[2:]
-			remaining_team_len = team_len - 1  # each team already has a captain
-			# Find best captain split with weak captain favoring
+			remaining_team_len = team_len - 1
 			favor_combo = None
 			favor_score = float('inf')
-			# Find best captain split without weak captain favoring (pure min diff)
 			balanced_combo = None
 			balanced_diff = float('inf')
 			for combo in combinations(remaining, remaining_team_len):
@@ -254,16 +250,13 @@ class Match:
 				weak_captain_team_elo = self.ratings[captain_weak.id] + sum(self.ratings[p.id] for p in others)
 				diff = weak_captain_team_elo - strong_captain_team_elo
 				abs_diff = abs(diff)
-				# Track best balanced split (pure minimum difference)
 				if abs_diff < balanced_diff:
 					balanced_diff = abs_diff
 					balanced_combo = combo
-				# Track best weak-captain-favoring split
 				score = diff if diff >= 0 else abs_diff + 1e6
 				if score < favor_score:
 					favor_score = score
 					favor_combo = combo
-			# Step 1: Try weak captain favoring
 			favor_diff = abs(
 				(self.ratings[captain_strong.id] + sum(self.ratings[p.id] for p in favor_combo)) -
 				(self.ratings[captain_weak.id] + sum(self.ratings[p.id] for p in
@@ -271,14 +264,10 @@ class Match:
 			)
 			if favor_diff - regular_diff <= 50:
 				best_combo = favor_combo
-			# Step 2: Drop weak captain favoring, use pure balanced captain split
 			elif balanced_diff - regular_diff <= 50:
 				best_combo = balanced_combo
-			# Step 3: Fall back to regular matchmaking entirely
 			else:
-				self.teams[0].set(self.sort_players(
-					regular_team[:self.cfg['team_size']]
-				))
+				self.teams[0].set(self.sort_players(regular_team[:self.cfg['team_size']]))
 				self.teams[1].set(self.sort_players(
 					[p for p in self.players if p not in regular_team][:self.cfg['team_size']]
 				))
@@ -434,20 +423,10 @@ class Match:
 		await ctx.notice(msg)
 
 	async def final_message(self, ctx):
-		#  Embed message with teams
+		# Embed message with teams
 		try:
 			await ctx.notice(embed=self.embeds.final_message())
 		except DiscordException:
-			pass
-
-		# Teams are formed — suggest balanced random civ pools for this match.
-		# Best-effort: never let a civ-suggestion hiccup affect the match flow.
-		try:
-			from bot.civ_stats import build_suggestion_embed
-			civ_embed = await build_suggestion_embed(ctx.channel)
-			if civ_embed is not None:
-				await ctx.notice(embed=civ_embed)
-		except Exception:
 			pass
 
 	async def finish_match(self, ctx):
