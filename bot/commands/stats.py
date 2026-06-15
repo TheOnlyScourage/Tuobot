@@ -186,43 +186,41 @@ async def rank(ctx, player: Member = None):
 async def leaderboard(ctx, page: int = 1):
 	page = (page or 1) - 1
 
-	data = await ctx.qc.get_lb()
-	pages = ceil(len(data) / 10)
-	data = data[page * 10:(page + 1) * 10]
+	all_data = await ctx.qc.get_lb()
+	pages = ceil(len(all_data) / 12)
+	data = all_data[page * 12:(page + 1) * 12]
 	if not len(data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
 	embed = Embed(
-		title=f"🏆 Leaderboard — page {page+1} of {pages}",
+		title=f"U0001f3c6 Leaderboard u2014 page {page+1} of {pages}",
 		colour=Colour(0x7289DA)
 	)
-	embed.add_field(
-		name="Player",
-		value="\n".join(
-			f"**{(page*10)+n+1}.** {get_rank_emoji(data[n]['rating'])} {data[n]['nick'].strip()[:18]}"
-			for n in range(len(data))
-		),
-		inline=True
-	)
-	embed.add_field(
-		name="Rating",
-		value="\n".join(
-			f"**{row['rating']}**"
-			for row in data
-		),
-		inline=True
-	)
-	embed.add_field(
-		name="W / L / D",
-		value="\n".join(
-			"{wins} / {losses} / {draws} ({wr}%)".format(
-				wins=row['wins'], losses=row['losses'], draws=row['draws'],
-				wr=int(row['wins'] * 100 / ((row['wins'] + row['losses']) or 1))
-			)
-			for row in data
-		),
-		inline=True
-	)
+
+	nickname_lines = []
+	for n, row in enumerate(data):
+		pos = (page * 12) + n + 1
+		nick = row["nick"].strip()[:18]
+		nickname_lines.append(f"**{pos}** {nick}")
+
+	wl_lines = []
+	for row in data:
+		w, l = row["wins"], row["losses"]
+		wr = int(w * 100 / ((w + l) or 1))
+		wl_lines.append(f"{w}-{l} ({wr}%)")
+
+	rating_lines = []
+	for row in data:
+		emoji = get_rank_emoji(row["rating"])
+		rating_lines.append(f"{emoji} {row["rating"]}")
+
+	embed.add_field(name="No  Nickname", value="
+".join(nickname_lines), inline=True)
+	embed.add_field(name="W-L  (WR)", value="
+".join(wl_lines), inline=True)
+	embed.add_field(name="Rank  Rating", value="
+".join(rating_lines), inline=True)
+
 	await ctx.reply(embed=embed)
 
 
