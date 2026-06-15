@@ -1,6 +1,7 @@
 __all__ = [
 	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
-	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual'
+	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual',
+	'force_checkin'
 ]
 
 from nextcord import Member
@@ -64,7 +65,6 @@ async def sub_force(ctx, player1: Member, player2: Member):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user is not in a match."))
 	if any((player2 in m.players for m in bot.active_matches)):
 		raise bot.Exc.InMatchError(ctx.qc.gt("Specified user is in an active match."))
-
 	await match.draft.sub_for(ctx, player1, player2, force=True)
 
 
@@ -96,7 +96,6 @@ async def report_admin(ctx, match_id: int, winner_team=None, draw=False, abort=F
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id. Check `/matches`."))
 	if winner_team is None and not draw and not abort:
 		raise bot.Exc.SyntaxError(ctx.qc.gt("Please specify a team name or draw."))
-
 	if abort:
 		await match.cancel(ctx)
 	else:
@@ -116,7 +115,6 @@ async def report(ctx, match: bot.Match, result):
 
 
 async def report_manual(ctx, queue: str, winners: List[Member], losers: List[Member], draw: bool = False):  # noqa: UP006
-	""" Report a fake match """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
@@ -127,3 +125,19 @@ async def report_manual(ctx, queue: str, winners: List[Member], losers: List[Mem
 	if not len(winners) or not len(losers):
 		raise bot.Exc.ValueError(f"Teams can not be empty.")  # noqa: F541
 	await q.fake_ranked_match(ctx, winners, losers, draw=draw)
+
+
+async def force_checkin(ctx, match_id: int):
+	"""Admin command: forcefully check in all players in a match's check-in phase."""
+	ctx.check_perms(ctx.Perms.ADMIN)
+	if (match := find(lambda m: m.qc == ctx.qc and m.id == match_id, bot.active_matches)) is None:
+		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id. Check `/matches`."))
+	if match.state != bot.Match.CHECK_IN:
+		raise bot.Exc.MatchStateError(ctx.qc.gt("Match is not in the check-in phase."))
+
+	# Mark all players as ready and advance the match
+	for player in match.players:
+		match.check_in.ready_players.add(player)
+
+	await match.check_in.refresh(bot.SystemContext(ctx.qc))
+	await ctx.success(ctx.qc.gt("All players have been force checked in."))
