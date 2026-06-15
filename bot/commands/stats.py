@@ -1,4 +1,4 @@
-__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'mapstats', 'activity']
+__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard']
 
 import io
 import asyncio
@@ -224,77 +224,6 @@ async def leaderboard(ctx, page: int = 1):
 	await ctx.reply(embed=embed)
 
 
-async def mapstats(ctx, period: str = None):
-	_period_days = {'1M': 30, '6M': 180, '1Y': 365}
-	days = _period_days.get(period) if period else None
-	ts_from = int(time()) - days * 86400 if days else None
-
-	at_filter = " AND at >= %s" if ts_from is not None else ""
-	params = [ctx.qc.id]
-	if ts_from is not None:
-		params.append(ts_from)
-
-	rows = await db.fetchall(
-		f"""
-		WITH RECURSIVE map_split AS (
-			SELECT
-				match_id,
-				TRIM(SUBSTRING_INDEX(maps, '\n', 1)) AS map_name,
-				IF(LOCATE('\n', maps) > 0, SUBSTRING(maps, LOCATE('\n', maps) + 1), NULL) AS remaining
-			FROM qc_matches
-			WHERE channel_id = %s AND maps IS NOT NULL AND maps != ''{at_filter}
-			UNION ALL
-			SELECT
-				match_id,
-				TRIM(SUBSTRING_INDEX(remaining, '\n', 1)),
-				IF(LOCATE('\n', remaining) > 0, SUBSTRING(remaining, LOCATE('\n', remaining) + 1), NULL)
-			FROM map_split
-			WHERE remaining IS NOT NULL
-		)
-		SELECT map_name, COUNT(*) AS played
-		FROM map_split
-		WHERE map_name != ''
-		GROUP BY map_name
-		ORDER BY played DESC
-		""",
-		params
-	)
-	if not rows:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("No map data yet."))
-
-	period_label = f" ({period})" if days else ""
-	title = f"Map stats{period_label}"
-
-	def _render():
-		from matplotlib.figure import Figure
-		from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-		names = [r['map_name'] for r in rows[:15]]
-		counts = [r['played'] for r in rows[:15]]
-		fig = Figure(figsize=(8, max(2, 0.4 * len(names) + 1)), dpi=120)
-		FigureCanvasAgg(fig)
-		ax = fig.add_subplot(111)
-		y_pos = range(len(names))
-		bars = ax.barh(y_pos, counts, color='#5865f2')
-		ax.set_yticks(y_pos)
-		ax.set_yticklabels(names)
-		ax.invert_yaxis()
-		ax.set_xlabel('Matches played')
-		ax.set_title(title)
-		ax.spines['top'].set_visible(False)
-		ax.spines['right'].set_visible(False)
-		for bar, count in zip(bars, counts):
-			ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f' {count}', va='center', fontsize=9)
-		fig.tight_layout()
-
-		out = io.BytesIO()
-		fig.savefig(out, format='png')
-		out.seek(0)
-		return out
-
-	buf = await asyncio.to_thread(_render)
-	await ctx.reply(file=File(fp=buf, filename='mapstats.png'))
-
 
 async def activity(ctx, player: Member = None):
 	interaction = getattr(ctx, 'interaction', None)
@@ -381,3 +310,52 @@ async def activity(ctx, player: Member = None):
 
 	buf = await asyncio.to_thread(_render)
 	await ctx.reply(file=File(fp=buf, filename='activity.png'))
+
+
+async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
+	"""Leaderboard showing only players with min_matches or more games played."""
+	page = (page or 1) - 1
+
+	all_data = await ctx.qc.get_lb()
+
+	# Filter to players with enough matches
+	qualified = [
+		r for r in all_data
+		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
+	]
+
+	pages = ceil(len(qualified) / 12)
+	data = qualified[page * 12:(page + 1) * 12]
+
+	if not len(data):
+		raise bot.Exc.NotFoundError(
+			ctx.qc.gt(f"No players with {min_matches}+ matches found.")
+		)
+
+	embed = Embed(
+		title=f"🏆 Season Leaderboard — page {page+1} of {max(pages, 1)} ({min_matches}+ matches)",
+		colour=Colour(0xf5c518)
+	)
+
+	nickname_lines = []
+	for n, row in enumerate(data):
+		pos = (page * 12) + n + 1
+		nick = row["nick"].strip()[:18]
+		nickname_lines.append(f"**{pos}** {nick}")
+
+	wl_lines = []
+	for row in data:
+		w, l = row["wins"], row["losses"]
+		wr = int(w * 100 / ((w + l) or 1))
+		wl_lines.append(f"{w}-{l} ({wr}%)")
+
+	rating_lines = []
+	for row in data:
+		emoji = get_rank_emoji(row["rating"])
+		rating_lines.append(f"{emoji} {row['rating']}")
+
+	embed.add_field(name="No  Nickname", value="\n".join(nickname_lines), inline=True)
+	embed.add_field(name="W-L  (WR)", value="\n".join(wl_lines), inline=True)
+	embed.add_field(name="Rank  Rating", value="\n".join(rating_lines), inline=True)
+
+	await ctx.reply(embed=embed)
