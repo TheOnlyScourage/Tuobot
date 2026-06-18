@@ -27,10 +27,11 @@ from core.client import dc
 loop = asyncio.get_event_loop()
 loop.run_until_complete(database.db.connect())
 
-# Initialize the check-in violation tracker table before loading the bot,
-# so the table exists by the time any check-in code tries to write to it.
+# Initialize tracker tables before loading the bot.
 from bot.stats.checkin_tracker import init_checkin_tracker_table
+from bot.stats.season import init_season_table
 loop.run_until_complete(init_checkin_tracker_table())
+loop.run_until_complete(init_season_table())
 
 # Load bot
 import bot
