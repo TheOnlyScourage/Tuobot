@@ -3,6 +3,7 @@ __all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'seas
 import io
 import asyncio
 from time import time
+import re
 from math import ceil
 from nextcord import Member, Embed, Colour, File
 
@@ -31,6 +32,15 @@ def get_rank_emoji(rating):
 		if rating >= threshold:
 			emoji = e
 	return emoji
+
+
+# ── Leaderboard table helpers ─────────────────────────────────────────────────
+_NON_ASCII = re.compile(r'[^\x20-\x7E]')  # matches emoji and non-ASCII
+
+def _table_nick(nick: str, maxlen: int = 18) -> str:
+	"""Strip emoji / non-ASCII chars and truncate for monospace table alignment."""
+	return _NON_ASCII.sub('', nick).strip()[:maxlen]
+
 
 
 async def last_game(ctx, queue: str = None, player: Member = None, match_id: int = None):
@@ -197,16 +207,16 @@ async def leaderboard(ctx, page: int = 1):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
 	# Q6Bot-matching table: inline code spans for alignment + emoji outside
-	header = "`No   Nickname              W-L       WR`"
+	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
 	rows   = []
 	for i, row in enumerate(data):
 		pos   = (page * 12) + i + 1
-		nick  = row["nick"].strip()[:18]
+		nick  = _table_nick(row["nick"])
 		w, l  = row["wins"], row["losses"]
 		wr    = int(w * 100 / ((w + l) or 1))
 		wl    = f"{w}-{l}"
 		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr:>3}%)`"
+		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
 
 	embed = Embed(
@@ -321,16 +331,16 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 		)
 
 	# Q6Bot-matching table format
-	header = "`No   Nickname              W-L       WR`"
+	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
 	rows   = []
 	for i, row in enumerate(data):
 		pos   = (page * 12) + i + 1
-		nick  = row["nick"].strip()[:18]
+		nick  = _table_nick(row["nick"])
 		w, l  = row["wins"], row["losses"]
 		wr    = int(w * 100 / ((w + l) or 1))
 		wl    = f"{w}-{l}"
 		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr:>3}%)`"
+		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
 
 	embed = Embed(
