@@ -39,6 +39,16 @@ def get_rank_emoji(rating):
 
 
 
+# ── Hogwarts house roles → team names ─────────────────────────────────────────
+# Captain's Discord role determines their team name.
+HOUSE_ROLES = {
+	1468807660760596593: 'Hufflepuff',
+	1467995936621068308: 'Slytherin',
+	1468807395659485265: 'Gryffindor',
+	1468807668197097711: 'Ravenclaw',
+}
+
+
 # ── Smart captain selection constants ─────────────────────────────────────────
 _QUIDDITCH_ROLES = ['chaser', 'beater', 'seeker', 'keeper', 'flex']
 _FLEX_COMPATIBLE = {'keeper', 'seeker', 'beater'}
@@ -94,6 +104,7 @@ class Match:
 		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
 		match.init_teams(match.cfg['pick_teams'])
+		match._assign_house_names()  # Name teams from captain house roles
 		if match.ranked:
 			match.states.append(match.WAITING_REPORT)
 		bot.active_matches.append(match)
@@ -288,6 +299,28 @@ class Match:
 
 		best = max(combinations(candidates, 2), key=lambda pair: score_pair(pair[0], pair[1]))
 		return list(best)
+
+
+	# ── House name assignment ──────────────────────────────────────────────────
+
+	@staticmethod
+	def _get_house(player):
+		"""Return the player's Hogwarts house name from their Discord roles, or None."""
+		for role in player.roles:
+			if role.id in HOUSE_ROLES:
+				return HOUSE_ROLES[role.id]
+		return None
+
+	def _assign_house_names(self):
+		"""After captains are set, rename each team from the captain's house role."""
+		if len(self.captains) < 2:
+			return
+		house_a = self._get_house(self.captains[0])
+		house_b = self._get_house(self.captains[1])
+		if house_a:
+			self.teams[0].name = house_a
+		if house_b:
+			self.teams[1].name = house_b
 
 	def init_captains(self, pick_captains, captains_role_id):
 		if pick_captains == "smart":
