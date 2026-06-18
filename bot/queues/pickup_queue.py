@@ -104,7 +104,7 @@ class PickupQueue:
 					"Set how teams should be picked:",
 					"  draft - host a draft stage where captains will have to pick players",
 					"  matchmaking - form teams automatically based on players ratings",
-					"  captain based matchmaking - top 2 rated players become captains, remaining players split to minimize elo difference with weaker captain getting stronger teammates",
+					"  captain based matchmaking - top 2 rated players become captains",
 					"  random teams - form teams randomly",
 					"  no teams - do not form teams, only print the players list"
 				]),
@@ -114,13 +114,14 @@ class PickupQueue:
 				"pick_captains",
 				display="Pick captains",
 				section="Teams",
-				options=["by role and rating", "fair pairs", "random with role preference", "random", "no captains"],
-				default="by role and rating",
+				options=["smart", "by role and rating", "fair pairs", "random with role preference", "random", "no captains"],
+				default="smart",
 				description="\n".join([
-					"Set how captains should be picked (for 'draft' or 'no teams' above):",
-					"  by role and rating - sort by captain role and rating and pick the best",
-					"  fair pairs - pick random pair of players with closest ratings to each other",
-					"  random with role preference - pick captains randomly with preference of the captain role",
+					"Set how captains should be picked:",
+					"  smart - score all pairs by MMR similarity, Quidditch role, captain role, recent penalty",
+					"  by role and rating - sort by captain role and rating",
+					"  fair pairs - random pair with closest ratings",
+					"  random with role preference - random with captain role priority",
 					"  random - pick captains randomly",
 					"  no captains - do not pick captains automatically"
 				]),
@@ -223,7 +224,7 @@ class PickupQueue:
 				verify=lambda i: 299 < i < 86401,
 				verify_message="Must be not lesser than 5 minutes and not bigger than 24 hours.",
 				section="General",
-				description="Set a custom match life time before it times out then ranked is enabled. Default: 3 hours."
+				description="Set a custom match life time before it times out. Default: 3 hours."
 			),
 			Variables.IntVar(
 				"map_count",
@@ -244,7 +245,7 @@ class PickupQueue:
 				verify_message="Map cooldown number must be between 0 and 100.",
 				description="\n".join([
 					"Prefer to not choose last played map(s) for the next specified matches amount.",
-					"This affects map voting pools as well. Set 0 to disable."
+					"Set 0 to disable."
 				])
 			),
 			Variables.IntVar(
@@ -258,7 +259,7 @@ class PickupQueue:
 			),
 			VariableTable(
 				"aliases", display="Aliases", section="General",
-				description="Other names for this queue, you can also group queues by giving them a same alias.",
+				description="Other names for this queue.",
 				variables=[
 					Variables.StrVar("alias", notnull=True)
 				]
@@ -322,7 +323,7 @@ class PickupQueue:
 		return self.cfg.name
 
 	@property
-	def status(self):  # (length/max)
+	def status(self):
 		return f"{len(self.queue)}/{self.cfg.size}"
 
 	@property
@@ -355,14 +356,12 @@ class PickupQueue:
 			name=self.name,
 			left=self.cfg.size-self.length
 		))
-
 		if (
 			promotion_role and not promotion_role.mentionable and
 			ctx.channel.guild.me and not ctx.channel.guild.me.guild_permissions.mention_everyone
 		):
 			raise bot.Exc.PermissionError("Insufficient permissions to ping the promotion role.")
 		else:
-			# answers on /slash commands do not ping, so have to answer sth on /slash command first before sending ctx.notice
 			await ctx.ignore(ctx.qc.gt("Sending **{queue}** promotion...").format(queue=self.name))
 			await ctx.notice(promotion_msg)
 
@@ -392,14 +391,11 @@ class PickupQueue:
 
 		if member not in self.queue:
 			self.queue.append(member)
-
 			if self not in bot.active_queues:
 				bot.active_queues.append(self)
-
 			if len(self.queue) == self.cfg.size and self.cfg.autostart:
 				await self.start(ctx)
 				return bot.Qr.QueueStarted
-
 			return bot.Qr.Success
 		else:
 			return bot.Qr.Duplicate
@@ -433,19 +429,15 @@ class PickupQueue:
 			team_size = min(int(self.cfg.size / 2), int(self.cfg.team_size))
 		else:
 			team_size = int(self.cfg.size / 2)
-
 		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
 
 	async def split(self, ctx, group_size: int = None, sort_by_rating: bool = False):
 		group_size = group_size or len(self.queue)//2
-
 		if len(self.queue) < group_size or group_size < 2:
 			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
-
 		if sort_by_rating:
 			ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in self.queue))}
 			self.queue = sorted(self.queue, key=lambda p: ratings[p.id], reverse=True)
-
 		groups = [self.queue[i-group_size:i] for i in range(group_size, len(self.queue)+1, group_size)]
 		for group in groups:
 			dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
@@ -458,13 +450,11 @@ class PickupQueue:
 					server=self.cfg.server
 				))
 			)
-
 			await bot.Match.new(ctx, self, group, team_size=group_size//2, **self._match_cfg())
 
 	async def fake_ranked_match(self, ctx, winners, losers, draw=False):
 		if not self.cfg.ranked:
 			raise bot.Exc.ValueError("Specified queue is not ranked.")
-
 		await bot.Match.fake_ranked_match(
 			ctx, self, self.qc, winners, losers, draw=draw,
 			team_names=self.cfg.team_names.split(" ") if self.cfg.team_names else None,
@@ -486,7 +476,6 @@ class PickupQueue:
 			self.queue = list(ready) + old_players
 			for p in ready:
 				await self.qc.update_expire(p)
-
 		await ctx.notice(self.qc.topic)
 		if self not in bot.active_queues and self.length:
 			bot.active_queues.append(self)
