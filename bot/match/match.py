@@ -312,15 +312,30 @@ class Match:
 		return None
 
 	def _assign_house_names(self):
-		"""After captains are set, rename each team from the captain's house role."""
+		"""Rename teams from captain house roles.
+		If a captain has no house role, a house is chosen at random.
+		Always tries to give both teams different houses.
+		"""
 		if len(self.captains) < 2:
 			return
+
+		all_houses = list(HOUSE_ROLES.values())  # Hufflepuff, Slytherin, Gryffindor, Ravenclaw
+
 		house_a = self._get_house(self.captains[0])
 		house_b = self._get_house(self.captains[1])
-		if house_a:
-			self.teams[0].name = house_a
-		if house_b:
-			self.teams[1].name = house_b
+
+		# No role on captain A — pick randomly, preferring one different from B's house
+		if not house_a:
+			pool = [h for h in all_houses if h != house_b] if house_b else all_houses
+			house_a = random.choice(pool)
+
+		# No role on captain B — pick randomly, preferring one different from A's house
+		if not house_b:
+			pool = [h for h in all_houses if h != house_a]
+			house_b = random.choice(pool) if pool else random.choice(all_houses)
+
+		self.teams[0].name = house_a
+		self.teams[1].name = house_b
 
 	def init_captains(self, pick_captains, captains_role_id):
 		if pick_captains == "smart":
