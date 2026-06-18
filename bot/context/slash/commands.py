@@ -243,9 +243,16 @@ async def _report_manual(
 @groups.admin_match.subcommand(name='sub_player', description='Substitute a player in a match.')
 async def _sub_force(
 		interaction: Interaction,
-		player1: Member = SlashOption(name="player1", description="The player to substitute for.", verify=False),
-		player2: Member = SlashOption(name="player2", description="The player to substitute with.", verify=False)
-): await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2)
+		player1: Member = SlashOption(name="player1", description="Player to be replaced.", verify=False),
+		player2: Member = SlashOption(name="player2", description="Player coming in.", verify=False),
+		sub_type: str = SlashOption(
+			name="type",
+			description="New: P2 plays fully. Match in progress: P2 wins→gains, team loses→P1 takes penalty.",
+			choices=["New", "Match in progress"],
+			required=False,
+			default="New"
+		)
+): await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2, sub_type=sub_type)
 
 
 @groups.admin_match.subcommand(name='put', description='Put a player in a team.')
