@@ -229,7 +229,7 @@ async def leaderboard(ctx, page: int = 1):
 		wr    = int(w * 100 / ((w + l) or 1))
 		wl    = f"{w}-{l}"
 		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr}%)`"
+		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
 
 	embed = Embed(
@@ -353,7 +353,7 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 		wr    = int(w * 100 / ((w + l) or 1))
 		wl    = f"{w}-{l}"
 		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr}%)`"
+		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
 
 	embed = Embed(
