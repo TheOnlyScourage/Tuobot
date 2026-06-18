@@ -212,14 +212,11 @@ async def leaderboard(ctx, page: int = 1):
 	rating_lines = []
 	for row in data:
 		emoji = get_rank_emoji(row["rating"])
-		rating_lines.append(f"{emoji} {row["rating"]}")
+		rating_lines.append(f"{emoji} {row['rating']}")
 
-	embed.add_field(name="No  Nickname", value="
-".join(nickname_lines), inline=True)
-	embed.add_field(name="W-L  (WR)", value="
-".join(wl_lines), inline=True)
-	embed.add_field(name="Rank  Rating", value="
-".join(rating_lines), inline=True)
+	embed.add_field(name="No  Nickname", value="\n".join(nickname_lines), inline=True)
+	embed.add_field(name="W-L  (WR)", value="\n".join(wl_lines), inline=True)
+	embed.add_field(name="Rank  Rating", value="\n".join(rating_lines), inline=True)
 
 	await ctx.reply(embed=embed)
 
