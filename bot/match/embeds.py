@@ -64,10 +64,11 @@ class Embeds:
 		return p.mention
 
 	def _ranked_nick(self, p: Member):
+		"""Draft stage player label — custom rank emoji + name in code span."""
 		if self.m.ranked:
-			if self.m.qc.cfg.emoji_ranks:
-				return f'{self.m.rank_str(p)}`{get_nick(p)}`'
-			return f'`{self.m.rank_str(p)}{get_nick(p)}`'
+			rating = self.m.ratings.get(p.id)
+			emoji = _rank_emoji(rating) if rating is not None else ''
+			return f'{emoji}`{get_nick(p)}`'
 		return f'`{get_nick(p)}`'
 
 	def _ranked_mention(self, p: Member):
