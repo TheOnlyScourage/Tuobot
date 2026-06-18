@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-import mmap  # noqa: F401
 import random
 import bot
 from nextcord.errors import DiscordException
 
 from core.utils import join_and
 from core.console import log  # noqa: F401
+from bot.stats.checkin_tracker import record_violation
 
 
 class CheckIn:
@@ -69,7 +69,13 @@ class CheckIn:
 				except DiscordException:
 					pass
 
-			# all not ready players discarded check in
+			# All not-ready players discarded — record violations for each
+			for member in self.discarded_players:
+				try:
+					await record_violation(ctx.channel, member, 'aborted')
+				except Exception as e:
+					log.error(f"checkin_tracker error (refresh/abort): {e}")
+
 			await ctx.notice('\n'.join((
 				self.m.gt("{member} has aborted the check-in.").format(
 					member=', '.join([m.mention for m in self.discarded_players])
@@ -159,6 +165,13 @@ class CheckIn:
 	async def abort_member(self, ctx, member):
 		bot.waiting_reactions.pop(self.message.id)
 		await self.message.delete()
+
+		# Record violation before reverting
+		try:
+			await record_violation(ctx.channel, member, 'aborted')
+		except Exception as e:
+			log.error(f"checkin_tracker error (abort_member): {e}")
+
 		await ctx.notice("\n".join((
 			self.m.gt("{member} has aborted the check-in.").format(member=f"<@{member.id}>"),
 			self.m.gt("Reverting {queue} to the gathering stage...").format(queue=f"**{self.m.queue.name}**")
@@ -175,6 +188,13 @@ class CheckIn:
 				await self.message.delete()
 			except DiscordException:
 				pass
+
+		# Record 'missed' violation for every player who didn't check in
+		for member in not_ready:
+			try:
+				await record_violation(ctx.channel, member, 'missed')
+			except Exception as e:
+				log.error(f"checkin_tracker error (abort_timeout): {e}")
 
 		bot.active_matches.remove(self.m)
 
