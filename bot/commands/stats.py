@@ -131,96 +131,113 @@ async def rank(ctx, player: Member = None):
 	if not target:
 		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
 
-	data = await ctx.qc.get_lb()
-	if p := find(lambda i: i['user_id'] == target.id, data):
-		place = data.index(p) + 1
+	lb_data = await ctx.qc.get_lb()
+	if p := find(lambda i: i['user_id'] == target.id, lb_data):
+		place = lb_data.index(p) + 1
 	else:
-		data = await db.select(
+		all_players = await db.select(
 			['user_id', 'rating', 'deviation', 'channel_id', 'wins', 'losses', 'draws', 'is_hidden', 'streak'],
-			"qc_players",
-			where={'channel_id': ctx.qc.rating.channel_id}
+			"qc_players", where={'channel_id': ctx.qc.rating.channel_id}
 		)
-		p = find(lambda i: i['user_id'] == target.id, data)
+		p = find(lambda i: i['user_id'] == target.id, all_players)
 		place = "?"
 
-	if p:
-		rank_emoji = get_rank_emoji(p['rating']) if p['rating'] else "❓"
-		embed = Embed(title=f"__{get_nick(target)}__", colour=Colour(0x7289DA))
-		embed.add_field(name="№", value=f"**{place}**", inline=True)
-		embed.add_field(name=ctx.qc.gt("Matches"), value=f"**{(p['wins'] + p['losses'] + p['draws'])}**", inline=True)
-		if p['rating']:
-			embed.add_field(name=ctx.qc.gt("Rank"), value=f"{rank_emoji} **{p['rating']}**", inline=True)
-		else:
-			embed.add_field(name=ctx.qc.gt("Rank"), value="❓ **Unranked**", inline=True)
-		embed.add_field(
-			name="W/L/D/S",
-			value="**{wins}**/**{losses}**/**{draws}**/**{streak}**".format(**p),
-			inline=True
-		)
-		embed.add_field(name=ctx.qc.gt("Winrate"), value="**{}%**\n\u200b".format(
-			int(p['wins'] * 100 / (p['wins'] + p['losses'] or 1))
-		), inline=True)
-		if target.display_avatar:
-			embed.set_thumbnail(url=target.display_avatar.url)
-
-		changes = await db.select(
-			('at', 'rating_change', 'match_id', 'reason'),
-			'qc_rating_history', where=dict(user_id=target.id, channel_id=ctx.qc.rating.channel_id),
-			order_by='id', limit=5
-		)
-		if len(changes):
-			embed.add_field(
-				name=ctx.qc.gt("Last changes:"),
-				value="\n".join(("\u200b \u200b **{change}** \u200b | {ago} ago | {reason}{match_id}".format(
-					ago=seconds_to_str(int(time() - c['at'])),
-					reason=c['reason'],
-					match_id=f"(__{c['match_id']}__)" if c['match_id'] else "",
-					change=("+" if c['rating_change'] >= 0 else "") + str(c['rating_change'])
-				) for c in changes))
-			)
-		await ctx.reply(embed=embed)
-	else:
+	if not p:
 		raise bot.Exc.ValueError(ctx.qc.gt("No rating data found."))
 
+	rank_emoji  = get_rank_emoji(p['rating']) if p['rating'] else "❓"
+	total_games = p['wins'] + p['losses'] + p['draws']
+	wr          = int(p['wins'] * 100 / (total_games or 1))
+
+	embed = Embed(title=f"__{get_nick(target)}__", colour=Colour(0x7289DA))
+
+	# Row 1: No | Matches | Rank (emoji only — matching Q6Bot Image 3)
+	embed.add_field(name="No",      value=f"**{place}**",       inline=True)
+	embed.add_field(name="Matches", value=f"**{total_games}**", inline=True)
+	embed.add_field(name="Rank",    value=rank_emoji,            inline=True)
+
+	# Row 2: Rating | W/L/D/S | Winrate
+	embed.add_field(name="Rating",
+		value=f"**{p['rating']}**" if p['rating'] else "**?**", inline=True)
+	embed.add_field(name="W/L/D/S",
+		value=f"**{p['wins']}**/**{p['losses']}**/**{p['draws']}**/**{p['streak']}**", inline=True)
+	embed.add_field(name="Winrate",
+		value=f"**{wr}%**\n\u200b", inline=True)
+
+	if target.display_avatar:
+		embed.set_thumbnail(url=target.display_avatar.url)
+
+	# Rating Graph (Last 20 Games) — shows win/loss/draw history
+	graph_rows = await db.fetchall(
+		"SELECT rating_change, rating_before FROM qc_rating_history "
+		"WHERE user_id=%s AND channel_id=%s AND match_id IS NOT NULL "
+		"ORDER BY id DESC LIMIT 20",
+		[target.id, ctx.qc.rating.channel_id]
+	)
+	if graph_rows:
+		chrono  = list(reversed(graph_rows))
+		start_r = chrono[0]['rating_before']
+		end_r   = p['rating'] or 0
+		graph   = "".join(
+			"🟩" if h['rating_change'] > 0
+			else "🟥" if h['rating_change'] < 0
+			else "🟨"
+			for h in chrono
+		)
+		embed.add_field(
+			name=f"Rating Graph (Last {len(graph_rows)} Games) ({start_r} → {end_r})",
+			value=graph,
+			inline=False
+		)
+
+	# Last changes — format: `+14`  19:08:14 ago  6v6-RANKED(001854)
+	changes = await db.select(
+		('at', 'rating_change', 'match_id', 'reason'),
+		'qc_rating_history',
+		where=dict(user_id=target.id, channel_id=ctx.qc.rating.channel_id),
+		order_by='id', limit=5
+	)
+	if changes:
+		now   = int(time())
+		lines = []
+		for c in changes:
+			sign = "+" if c['rating_change'] >= 0 else ""
+			ago  = seconds_to_str(int(now - c['at']))
+			ref  = (f"{c['reason']}({str(c['match_id']).zfill(6)})"
+					if c['match_id'] else c['reason'] or "manual")
+			lines.append(f"`{sign}{c['rating_change']}`  {ago} ago  {ref}")
+		embed.add_field(name="Last changes:", value="\n".join(lines), inline=False)
+
+	await ctx.reply(embed=embed)
 
 async def leaderboard(ctx, page: int = 1):
 	page = (page or 1) - 1
 
 	all_data = await ctx.qc.get_lb()
 	pages = ceil(len(all_data) / 12)
-	data = all_data[page * 12:(page + 1) * 12]
+	data  = all_data[page * 12:(page + 1) * 12]
 	if not len(data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
+	# Q6Bot-matching table: inline code spans for alignment + emoji outside
+	header = "`No   Nickname              W-L       WR`"
+	rows   = []
+	for i, row in enumerate(data):
+		pos   = (page * 12) + i + 1
+		nick  = row["nick"].strip()[:18]
+		w, l  = row["wins"], row["losses"]
+		wr    = int(w * 100 / ((w + l) or 1))
+		wl    = f"{w}-{l}"
+		emoji = get_rank_emoji(row["rating"])
+		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr}%)`"
+		rows.append(f"{text}  {emoji} {row['rating']}")
+
 	embed = Embed(
-		title=f"U0001f3c6 Leaderboard u2014 page {page+1} of {pages}",
+		title=f"🏆 Leaderboard — page {page+1} of {max(pages, 1)}",
+		description=header + "\n—\n" + "\n".join(rows),
 		colour=Colour(0x7289DA)
 	)
-
-	nickname_lines = []
-	for n, row in enumerate(data):
-		pos = (page * 12) + n + 1
-		nick = row["nick"].strip()[:18]
-		nickname_lines.append(f"**{pos}** {nick}")
-
-	wl_lines = []
-	for row in data:
-		w, l = row["wins"], row["losses"]
-		wr = int(w * 100 / ((w + l) or 1))
-		wl_lines.append(f"{w}-{l} ({wr}%)")
-
-	rating_lines = []
-	for row in data:
-		emoji = get_rank_emoji(row["rating"])
-		rating_lines.append(f"{emoji} {row['rating']}")
-
-	embed.add_field(name="No  Nickname", value="\n".join(nickname_lines), inline=True)
-	embed.add_field(name="W-L  (WR)", value="\n".join(wl_lines), inline=True)
-	embed.add_field(name="Rank  Rating", value="\n".join(rating_lines), inline=True)
-
 	await ctx.reply(embed=embed)
-
-
 
 async def activity(ctx, player: Member = None):
 	interaction = getattr(ctx, 'interaction', None)
@@ -313,49 +330,39 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 	"""Leaderboard showing only players with min_matches or more games played."""
 	page = (page or 1) - 1
 
-	all_data = await ctx.qc.get_lb()
-
-	# Filter to players with enough matches
+	all_data  = await ctx.qc.get_lb()
 	qualified = [
 		r for r in all_data
 		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
 	]
 
 	pages = ceil(len(qualified) / 12)
-	data = qualified[page * 12:(page + 1) * 12]
-
+	data  = qualified[page * 12:(page + 1) * 12]
 	if not len(data):
 		raise bot.Exc.NotFoundError(
 			ctx.qc.gt(f"No players with {min_matches}+ matches found.")
 		)
 
-	embed = Embed(
-		title=f"🏆 Season Leaderboard — page {page+1} of {max(pages, 1)} ({min_matches}+ matches)",
-		colour=Colour(0xf5c518)
-	)
-
-	nickname_lines = []
-	for n, row in enumerate(data):
-		pos = (page * 12) + n + 1
-		nick = row["nick"].strip()[:18]
-		nickname_lines.append(f"**{pos}** {nick}")
-
-	wl_lines = []
-	for row in data:
-		w, l = row["wins"], row["losses"]
-		wr = int(w * 100 / ((w + l) or 1))
-		wl_lines.append(f"{w}-{l} ({wr}%)")
-
-	rating_lines = []
-	for row in data:
+	# Q6Bot-matching table format
+	header = "`No   Nickname              W-L       WR`"
+	rows   = []
+	for i, row in enumerate(data):
+		pos   = (page * 12) + i + 1
+		nick  = row["nick"].strip()[:18]
+		w, l  = row["wins"], row["losses"]
+		wr    = int(w * 100 / ((w + l) or 1))
+		wl    = f"{w}-{l}"
 		emoji = get_rank_emoji(row["rating"])
-		rating_lines.append(f"{emoji} {row['rating']}")
+		text  = f"`{pos:>2}  {nick:<19} {wl:<8} ({wr}%)`"
+		rows.append(f"{text}  {emoji} {row['rating']}")
 
-	embed.add_field(name="No  Nickname", value="\n".join(nickname_lines), inline=True)
-	embed.add_field(name="W-L  (WR)", value="\n".join(wl_lines), inline=True)
-	embed.add_field(name="Rank  Rating", value="\n".join(rating_lines), inline=True)
-
+	embed = Embed(
+		title=f"🏆 Season Leaderboard ({min_matches}+ games) — page {page+1} of {max(pages, 1)}",
+		description=header + "\n—\n" + "\n".join(rows),
+		colour=Colour(0x7289DA)
+	)
 	await ctx.reply(embed=embed)
+
 
 
 SEASON_MEDALS = ['🥇', '🥈', '🥉']
