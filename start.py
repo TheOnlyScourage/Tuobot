@@ -94,7 +94,7 @@ def main():
             "https://github.com/Leshaka/PUBobot2/blob/main/COMMANDS.md#avaible-commands"),
         help_text=os.environ.get("HELP",
             "PUBobot2 is a discord bot for pickup games organisation."),
-        status=os.environ.get("STATUS", "PUBobot2"),
+        status=os.environ.get("STATUS", "Tuobot2.0"),
         ws_enable=os.environ.get("WS_ENABLE", "False"),
         ws_port=os.environ.get("WS_PORT", os.environ.get("PORT", "8080")),
         ws_root_url=os.environ.get("WS_ROOT_URL", ""),
