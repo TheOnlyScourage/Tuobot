@@ -24,6 +24,28 @@ def _rank_emoji(rating: int) -> str:
 	return emoji
 
 
+# House emblems — keyed by house name (as set by _assign_house_names in match.py)
+HOUSE_EMOJIS = {
+	'Hufflepuff': '<:HUFFLEPUFF:1468806463026757663>',
+	'Slytherin':  '<:SLYTHERIN:1468806412594446447>',
+	'Gryffindor': '<:GRYFFINDOR:1468806447956492328>',
+	'Ravenclaw':  '<:RAVENCLAW:1468806434320810027>',
+}
+
+
+def _house_team_label(team, avg_rating=None, ranked=False) -> str:
+	"""Return the team header: {house_emoji} HOUSENAME (N) {rank_emoji} 〈avg〉
+	Falls back to the default emoji + team name for non-house teams."""
+	house_emoji = HOUSE_EMOJIS.get(team.name, '')
+	if house_emoji:
+		label = f"{house_emoji} **{team.name} ({team.idx + 1})**"
+	else:
+		label = f"{team.emoji} \u200b **{team.name}**"
+	if ranked and avg_rating is not None:
+		label += f" {_rank_emoji(avg_rating)} \u3008{avg_rating}\u3009"
+	return label
+
+
 class Embeds:
 	""" This class generates discord embeds for various match states """
 
@@ -105,8 +127,11 @@ class Embeds:
 		)
 
 		teams_names = [
-			f"{t.emoji} \u200b **{t.name}**" +
-			(f" \u200b `〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉`" if self.m.ranked else "")
+			_house_team_label(
+				t,
+				avg_rating=sum(self.m.ratings[p.id] for p in t) // (len(t) or 1) if t else 0,
+				ranked=self.m.ranked
+			)
 			for t in self.m.teams[:2]
 		]
 		team_players = [
@@ -162,8 +187,11 @@ class Embeds:
 		elif len(self.m.teams[0]):
 			# ── Team vs Team ───────────────────────────────────────────────────
 			teams_names = [
-				f"{t.emoji} \u200b **{t.name}**" +
-				(f" \u200b 〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉" if self.m.ranked else "")
+				_house_team_label(
+					t,
+					avg_rating=sum(self.m.ratings[p.id] for p in t) // (len(t) or 1) if t else 0,
+					ranked=self.m.ranked
+				)
 				for t in self.m.teams[:2]
 			]
 			team_players = [
