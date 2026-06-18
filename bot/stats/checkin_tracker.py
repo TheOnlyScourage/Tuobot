@@ -19,7 +19,7 @@ BAN_DURATION_SECS = 3600           # 1-hour auto-ban
 
 async def init_checkin_tracker_table():
 	"""Create the checkin_violations table if it doesn't exist."""
-	await db.ensure_table(dict(
+	await db._ensure_table(dict(
 		tname="checkin_violations",
 		columns=[
 			dict(cname="id",             ctype=db.types.int, autoincrement=True),
