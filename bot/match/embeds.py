@@ -2,18 +2,44 @@ from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
 from core.utils import get_nick, join_and
 
+# Rank emoji lookup — duplicated here to avoid circular import with match.py
+_RANK_EMOJIS = [
+	(0,    "<:CHAD:1471923932558000270>"),
+	(800,  "<:Q6Wood:1514727440692547685>"),
+	(1000, "<:Q6Iron:1514727400200470820>"),
+	(1200, "<:Q6Bronze:1514727471205847170>"),
+	(1400, "<:Q6Silver:1514727221808332800>"),
+	(1600, "<:Q6Gold:1514727359461462076>"),
+	(1800, "<:Q6Diamond:1514727335549472930>"),
+	(2000, "<:Q6Champion:1514727158596112464>"),
+	(2200, "<:Q6Star:1514727286132441238>"),
+]
+
+
+def _rank_emoji(rating: int) -> str:
+	emoji = _RANK_EMOJIS[0][1]
+	for threshold, e in _RANK_EMOJIS:
+		if rating >= threshold:
+			emoji = e
+	return emoji
+
 
 class Embeds:
 	""" This class generates discord embeds for various match states """
 
 	def __init__(self, match):
 		self.m = match
-		# self.
 		self.footer = dict(
-			text=f"Match id: {self.m.id}",
+			text=f"Match id: {str(self.m.id).zfill(6)}",
 			icon_url=dc.user.avatar.with_size(32).url if dc.user.avatar else None
-			# icon_url="https://cdn.discordapp.com/avatars/240843400457355264/a51a5bf3b34d94922fd60751ba1d60ab.png?size=64"
 		)
+
+	def _player_line(self, p: Member) -> str:
+		"""Return '{mention} {rank_emoji} 〈{rating}〉' — Q6Bot style player line."""
+		rating = self.m.ratings.get(p.id)
+		if rating is not None and self.m.ranked:
+			return f"{p.mention} {_rank_emoji(rating)} 〈{rating}〉"
+		return p.mention
 
 	def _ranked_nick(self, p: Member):
 		if self.m.ranked:
@@ -68,7 +94,6 @@ class Embeds:
 				inline=False
 			)
 		embed.set_footer(**self.footer)
-
 		return embed
 
 	def draft(self):
@@ -81,7 +106,7 @@ class Embeds:
 
 		teams_names = [
 			f"{t.emoji} \u200b **{t.name}**" +
-			(f" \u200b `〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉`" if self.m.ranked else "")
+			(f" \u200b `〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉`" if self.m.ranked else "")
 			for t in self.m.teams[:2]
 		]
 		team_players = [
@@ -116,43 +141,40 @@ class Embeds:
 			embed.add_field(name="—", value=msg + "\n\u200b", inline=False)
 
 		embed.set_footer(**self.footer)
-
 		return embed
 
 	def final_message(self):
-		show_ranks = bool(self.m.ranked and not self.m.qc.cfg.rating_nicks)
+		# ── Title: ALL CAPS queue name (Q6Bot style) ───────────────────────────
 		embed = Embed(
 			colour=Colour(0x27b75e),
-			title=self.m.qc.gt("__**{queue}** has started!__").format(
-				queue=self.m.queue.name[0].upper()+self.m.queue.name[1:]
-			)
+			title=f"{self.m.queue.name.upper()} has started!"
 		)
 
-		if len(self.m.teams[0]) == 1 and len(self.m.teams[1]) == 1:  # 1v1
+		if len(self.m.teams[0]) == 1 and len(self.m.teams[1]) == 1:
+			# ── 1v1 ────────────────────────────────────────────────────────────
 			p1, p2 = self.m.teams[0][0], self.m.teams[1][0]
-			players = " \u200b {player1}{rating1}\n \u200b {player2}{rating2}".format(
-				rating1=f" \u200b `〈{self.m.ratings[p1.id]}〉`" if show_ranks else "",
-				player1=f"<@{p1.id}>",
-				rating2=f" \u200b `〈{self.m.ratings[p2.id]}〉`" if show_ranks else "",
-				player2=f"<@{p2.id}>",
+			embed.add_field(
+				name=self.m.gt("Players"),
+				value=self._player_line(p1) + "\n" + self._player_line(p2),
+				inline=False
 			)
-			embed.add_field(name=self.m.gt("Players"), value=players, inline=False)
-		elif len(self.m.teams[0]):  # team vs team
+
+		elif len(self.m.teams[0]):
+			# ── Team vs Team ───────────────────────────────────────────────────
 			teams_names = [
 				f"{t.emoji} \u200b **{t.name}**" +
-				(f" \u200b `〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉`" if self.m.ranked else "")
+				(f" \u200b 〈{sum((self.m.ratings[p.id] for p in t))//(len(t) or 1)}〉" if self.m.ranked else "")
 				for t in self.m.teams[:2]
 			]
 			team_players = [
-				" \u200b " +
-				" \u200b ".join([
-					self._ranked_mention(p) for p in t
-				])
+				"\n".join(self._player_line(p) for p in t)
 				for t in self.m.teams[:2]
 			]
-			team_players[1] += "\n\u200b"  # Extra empty line
+			team_players[1] += "\n\u200b"
+
 			embed.add_field(name=teams_names[0], value=team_players[0], inline=False)
 			embed.add_field(name=teams_names[1], value=team_players[1], inline=False)
+
 			if self.m.ranked or self.m.cfg['pick_captains']:
 				embed.add_field(
 					name=self.m.gt("Captains"),
@@ -160,10 +182,11 @@ class Embeds:
 					inline=False
 				)
 
-		else:  # just players list
+		else:
+			# ── Players list (no teams) ────────────────────────────────────────
 			embed.add_field(
 				name=self.m.gt("Players"),
-				value=" \u200b " + " \u200b ".join((m.mention for m in self.m.players)),
+				value="\n".join(self._player_line(p) for p in self.m.players),
 				inline=False
 			)
 			if len(self.m.captains) and len(self.m.players) > 2:
@@ -173,6 +196,7 @@ class Embeds:
 					inline=False
 				)
 
+		# ── Maps / Server ──────────────────────────────────────────────────────
 		if len(self.m.maps):
 			embed.add_field(
 				name=self.m.qc.gt("Map" if len(self.m.maps) == 1 else "Maps"),
@@ -180,16 +204,24 @@ class Embeds:
 				inline=True
 			)
 		if self.m.cfg['server']:
-			embed.add_field(name=self.m.qc.gt("Server"), value=f"`{self.m.cfg['server']}`", inline=True)
+			embed.add_field(
+				name=self.m.qc.gt("Server"),
+				value=f"`{self.m.cfg['server']}`",
+				inline=True
+			)
 
+		# ── start_msg (set via /set_queue start_msg) ───────────────────────────
 		if self.m.cfg['start_msg']:
 			embed.add_field(name="—", value=self.m.cfg['start_msg'] + "\n\u200b", inline=False)
 
-		if self.m.cfg['show_streamers']:  # noqa: SIM102
+		# ── Streamers ──────────────────────────────────────────────────────────
+		if self.m.cfg['show_streamers']:
 			if len(streamers := [p for p in self.m.players if isinstance(p.activity, Streaming)]):
-				embed.add_field(name=self.m.qc.gt("Player streams"), inline=False, value="\n".join([
-					f"{p.mention}: {p.activity.url}" for p in streamers
-				]) + "\n\u200b")
-		embed.set_footer(**self.footer)
+				embed.add_field(
+					name=self.m.qc.gt("Player streams"),
+					inline=False,
+					value="\n".join([f"{p.mention}: {p.activity.url}" for p in streamers]) + "\n\u200b"
+				)
 
+		embed.set_footer(**self.footer)
 		return embed
