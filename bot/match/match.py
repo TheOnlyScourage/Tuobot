@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from time import time
 from itertools import combinations
+from collections import deque
 import random
 from nextcord import DiscordException, Embed, Colour
 
@@ -35,6 +36,14 @@ def get_rank_emoji(rating):
 		if rating >= threshold:
 			emoji = e
 	return emoji
+
+
+
+# ── Smart captain selection constants ─────────────────────────────────────────
+_QUIDDITCH_ROLES = ['chaser', 'beater', 'seeker', 'keeper', 'flex']
+_FLEX_COMPATIBLE = {'keeper', 'seeker', 'beater'}
+# How many past matches to remember for the recent captain penalty
+_CAPTAIN_HISTORY_SIZE = 5
 
 
 class Match:
@@ -202,8 +211,87 @@ class Match:
 			reverse=True
 		)
 
+
+	# ── Smart captain helpers ──────────────────────────────────────────────────
+
+	def _get_quidditch_role(self, player):
+		"""Return the player's Quidditch role from their Discord roles. Defaults to chaser."""
+		role_names = {r.name.lower() for r in player.roles}
+		for role in _QUIDDITCH_ROLES:
+			if role in role_names:
+				return role
+		return 'chaser'
+
+	@staticmethod
+	def _role_bonus(role1, role2):
+		"""Role compatibility bonus: +300 same role, +200 flex+specialist, +0 otherwise."""
+		if role1 == role2:
+			return 300
+		if role1 == 'flex' and role2 in _FLEX_COMPATIBLE:
+			return 200
+		if role2 == 'flex' and role1 in _FLEX_COMPATIBLE:
+			return 200
+		return 0
+
+	@staticmethod
+	def _mmr_bonus(mmr1, mmr2):
+		"""MMR similarity bonus — max +300 for identical MMR, 0 for 1000+ gap."""
+		return max(0, int(300 * (1 - abs(mmr1 - mmr2) / 1000)))
+
+	def _captain_role_bonus(self, p1, p2):
+		"""Captain role bonus: +1000 both have role, +300 one has role, +0 neither."""
+		cap_role_id = self.cfg.get('captains_role_id')
+		if not cap_role_id:
+			return 0
+		p1_has = cap_role_id in {r.id for r in p1.roles}
+		p2_has = cap_role_id in {r.id for r in p2.roles}
+		if p1_has and p2_has:
+			return 1000
+		if p1_has or p2_has:
+			return 300
+		return 0
+
+	def _smart_captain_selection(self):
+		"""Score every candidate pair and return the highest-scoring two players as captains.
+
+		Scoring per pair:
+		  MMR similarity  : max(0, int(300 * (1 - |mmr_a - mmr_b| / 1000)))
+		  Role bonus      : +300 same Quidditch role, +200 Flex+specialist, +0 otherwise
+		  Captain role    : +1000 both have role, +300 one has role
+		  Recent penalty  : -300 × appearances in last _CAPTAIN_HISTORY_SIZE matches each
+		"""
+		last_captains = getattr(self.qc, '_last_captains', frozenset())
+		captain_history = getattr(self.qc, '_captain_history', deque(maxlen=_CAPTAIN_HISTORY_SIZE))
+
+		def recent_count(pid):
+			return sum(1 for match_caps in captain_history if pid in match_caps)
+
+		def score_pair(p1, p2):
+			mmr1 = self.ratings.get(p1.id, 1500)
+			mmr2 = self.ratings.get(p2.id, 1500)
+			role1 = self._get_quidditch_role(p1)
+			role2 = self._get_quidditch_role(p2)
+			return (
+				self._mmr_bonus(mmr1, mmr2)
+				+ self._role_bonus(role1, role2)
+				+ self._captain_role_bonus(p1, p2)
+				+ (recent_count(p1.id) + recent_count(p2.id)) * -300
+			)
+
+		# Prefer players who weren't captains last match
+		non_recent = [p for p in self.players if p.id not in last_captains]
+		candidates = non_recent if len(non_recent) >= 2 else self.players
+
+		if len(candidates) < 2:
+			return sorted(self.players, key=lambda p: self.ratings.get(p.id, 0), reverse=True)[:2]
+
+		best = max(combinations(candidates, 2), key=lambda pair: score_pair(pair[0], pair[1]))
+		return list(best)
+
 	def init_captains(self, pick_captains, captains_role_id):
-		if pick_captains == "by role and rating":
+		if pick_captains == "smart":
+			self.captains = self._smart_captain_selection()
+		elif pick_captains == "by role and rating":
 			self.captains = self.sort_players(self.players)[:2]
 		elif pick_captains == "fair pairs":
 			candidates = sorted(self.players, key=lambda p: [self.ratings[p.id]], reverse=True)
@@ -463,6 +551,15 @@ class Match:
 
 	async def finish_match(self, ctx):
 		bot.active_matches.remove(self)
+
+		# Track captains for smart captain selection in future matches
+		if len(self.teams[0]) and len(self.teams[1]):
+			cap_ids = frozenset({self.teams[0][0].id, self.teams[1][0].id})
+			self.qc._last_captains = cap_ids
+			if not hasattr(self.qc, '_captain_history'):
+				self.qc._captain_history = deque(maxlen=_CAPTAIN_HISTORY_SIZE)
+			self.qc._captain_history.append(cap_ids)
+
 		self.queue.last_maps += self.maps
 		self.queue.last_maps = self.queue.last_maps[-len(self.maps)*self.queue.cfg.map_cooldown:]
 
