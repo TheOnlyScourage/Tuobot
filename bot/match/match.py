@@ -137,7 +137,8 @@ class Match:
 			maps=self.maps,
 			state=self.state,
 			states=self.states,
-			ready_players=[p.id for p in self.check_in.ready_players if p]
+			ready_players=[p.id for p in self.check_in.ready_players if p],
+			fill_subs=self.fill_subs
 		)
 
 	@classmethod
@@ -208,6 +209,7 @@ class Match:
 		self.draft = Draft(self, self.cfg['pick_order'], self.cfg['captains_role_id'])
 		self.embeds = Embeds(self)
 		self.party_code = None   # set after draft when pick_teams=='draft'
+		self.fill_subs: dict = {}  # {player2_id: (player1_id, team_idx)} for 'Match in progress' subs
 
 	@staticmethod
 	def random_maps(maps, map_count, last_maps=None):
