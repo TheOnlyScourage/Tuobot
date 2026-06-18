@@ -257,3 +257,7 @@ async def on_presence_update(before, after):
 async def on_member_remove(member):
 	for qc in filter(lambda i: i.id == member.guild.id, bot.queue_channels.values()):
 		await qc.remove_members(member, reason="left guild")
+
+# ── 41 Alert background task ──────────────────────────────────────────────────
+from bot.alerts import think as _alerts_think
+dc.events['on_think'].append(_alerts_think)
