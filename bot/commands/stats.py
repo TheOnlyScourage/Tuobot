@@ -167,29 +167,6 @@ async def rank(ctx, player: Member = None):
 	if target.display_avatar:
 		embed.set_thumbnail(url=target.display_avatar.url)
 
-	# Rating Graph (Last 20 Games) — shows win/loss/draw history
-	graph_rows = await db.fetchall(
-		"SELECT rating_change, rating_before FROM qc_rating_history "
-		"WHERE user_id=%s AND channel_id=%s AND match_id IS NOT NULL "
-		"ORDER BY id DESC LIMIT 20",
-		[target.id, ctx.qc.rating.channel_id]
-	)
-	if graph_rows:
-		chrono  = list(reversed(graph_rows))
-		start_r = chrono[0]['rating_before']
-		end_r   = p['rating'] or 0
-		graph   = "".join(
-			"🟩" if h['rating_change'] > 0
-			else "🟥" if h['rating_change'] < 0
-			else "🟨"
-			for h in chrono
-		)
-		embed.add_field(
-			name=f"Rating Graph (Last {len(graph_rows)} Games) ({start_r} → {end_r})",
-			value=graph,
-			inline=False
-		)
-
 	# Last changes — format: `+14`  19:08:14 ago  6v6-RANKED(001854)
 	changes = await db.select(
 		('at', 'rating_change', 'match_id', 'reason'),
