@@ -196,6 +196,7 @@ class Match:
 		self.check_in = CheckIn(self, self.cfg['check_in_timeout'])
 		self.draft = Draft(self, self.cfg['pick_order'], self.cfg['captains_role_id'])
 		self.embeds = Embeds(self)
+		self.party_code = None   # set after draft when pick_teams=='draft'
 
 	@staticmethod
 	def random_maps(maps, map_count, last_maps=None):
@@ -423,6 +424,14 @@ class Match:
 			await self.queue.revert(ctx, [], unpicked)
 		else:
 			await self.final_message(ctx)
+			# Start party-up and code collection phase for draft matches
+			if self.cfg.get('pick_teams') == 'draft' and self.teams[0] and self.teams[1]:
+				try:
+					from bot.match.party_code import PartyCode
+					self.party_code = PartyCode(self)
+					await self.party_code.start(ctx)
+				except Exception as e:
+					log.error(f"PartyCode start error: {e}")
 
 	async def report_loss(self, ctx, member, draw_flag):
 		if self.state != self.WAITING_REPORT:
@@ -574,6 +583,8 @@ class Match:
 	async def cancel(self, ctx):
 		if self.check_in.message and self.check_in.message.id in bot.waiting_reactions.keys():
 			bot.waiting_reactions.pop(self.check_in.message.id)
+		if self.party_code:
+			self.party_code.cancel()
 		try:
 			await ctx.notice(
 				self.gt("{players} your match has been canceled.").format(
