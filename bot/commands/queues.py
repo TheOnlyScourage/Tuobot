@@ -1,12 +1,12 @@
 __all__ = [
 	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start', 'split',
-	'reset', 'subscribe', 'server', 'maps'
+	'reset', 'server', 'maps', 'remove_all'
 ]
 
 import time
 from random import choice
 from nextcord import Member
-from core.utils import error_embed, join_and, find, seconds_to_str
+from core.utils import error_embed, join_and, find, seconds_to_str, get_nick
 import bot
 
 
@@ -15,23 +15,18 @@ async def add(ctx, queues: str = None):
 	phrase = await ctx.qc.check_allowed_to_add(ctx, ctx.author)
 
 	targets = queues.lower().split(" ") if queues else []
-	# select the only one queue on the channel
 	if not len(targets) and len(ctx.qc.queues) == 1:
 		t_queues = ctx.qc.queues
-
-	# select queues requested by user
 	elif len(targets):
 		t_queues = [q for q in ctx.qc.queues if any(
 			(t == q.name.lower() or t in (a["alias"].lower() for a in q.cfg.aliases) for t in targets)
 		)]
-
-	# select active queues or default queues if no active queues
 	else:
 		t_queues = [q for q in ctx.qc.queues if len(q.queue) and q.cfg.is_default]
 		if not len(t_queues):
 			t_queues = [q for q in ctx.qc.queues if q.cfg.is_default]
 
-	qr = dict()  # get queue responses
+	qr = dict()
 	for q in t_queues:
 		qr[q] = await q.add_member(ctx, ctx.author)
 		if qr[q] == bot.Qr.QueueStarted:
@@ -48,12 +43,12 @@ async def add(ctx, queues: str = None):
 		if phrase:
 			await ctx.reply(phrase)
 		await ctx.notice(ctx.qc.topic)
-	else:  # have to give some response for slash commands
+	else:
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
 
 
 async def remove(ctx, queues: str = None):
-	""" add author from channel queues """
+	""" remove author from channel queues """
 	targets = queues.lower().split(" ") if queues else []
 
 	if not len(targets):
@@ -75,6 +70,48 @@ async def remove(ctx, queues: str = None):
 		await ctx.notice(ctx.qc.topic)
 	else:
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
+
+
+async def remove_all(ctx, player: Member = None):
+	"""Remove a player from ALL queued channels on this server."""
+	# Moderator check if removing someone other than themselves
+	if player is not None and player.id != ctx.author.id:
+		ctx.check_perms(ctx.Perms.MODERATOR)
+
+	target   = player or ctx.author
+	guild_id = ctx.channel.guild.id
+
+	removed_from = []  # list of (channel, [queue_names])
+
+	for qc in bot.queue_channels.values():
+		if qc.guild_id != guild_id:
+			continue
+
+		affected = []
+		for q in qc.queues:
+			if q.is_added(target):
+				q.pop_members(target)
+				affected.append(q.name)
+
+		if affected:
+			channel = ctx.channel.guild.get_channel(qc.id)
+			bot.expire.cancel(qc, target)
+			removed_from.append((channel, affected))
+
+	if not removed_from:
+		raise bot.Exc.NotFoundError(
+			f"**{get_nick(target)}** is not in any queues on this server."
+		)
+
+	lines = []
+	for channel, queue_names in removed_from:
+		chan_str = channel.mention if channel else f"Unknown channel"
+		lines.append(f"{chan_str} · **{', '.join(queue_names)}**")
+
+	await ctx.success(
+		"\n".join(lines),
+		title=f"Removed **{get_nick(target)}** from all queued channels on this server:"
+	)
 
 
 async def who(ctx, queues: str = None):
@@ -174,34 +211,6 @@ async def reset(ctx, queue: str = None):
 		for q in ctx.qc.queues:
 			await q.reset()
 	await ctx.reply(ctx.qc.topic)
-
-
-async def subscribe(ctx, queues: str = None, unsub: bool = False):
-	if not queues:
-		roles = [ctx.qc.cfg.promotion_role] if ctx.qc.cfg.promotion_role else []
-	else:
-		queues = queues.split(" ")
-		roles = (q.cfg.promotion_role for q in ctx.qc.queues if q.cfg.promotion_role and any(
-			(t == q.name.lower() or t in (a["alias"].lower() for a in q.cfg.aliases) for t in queues)
-		))
-
-	if unsub:
-		roles = [r for r in roles if r in ctx.author.roles]
-		if not len(roles):
-			raise bot.Exc.ValueError(ctx.qc.gt("No changes to apply."))
-		await ctx.author.remove_roles(*roles, reason="subscribe command")
-		await ctx.success(ctx.qc.gt("Removed `{count}` roles from you.").format(
-			count=len(roles)
-		))
-
-	else:
-		roles = [r for r in roles if r not in ctx.author.roles]
-		if not len(roles):
-			raise bot.Exc.ValueError(ctx.qc.gt("No changes to apply."))
-		await ctx.author.add_roles(*roles, reason="subscribe command")
-		await ctx.success(ctx.qc.gt("Added `{count}` roles to you.").format(
-			count=len(roles)
-		))
 
 
 async def server(ctx, queue: str):
