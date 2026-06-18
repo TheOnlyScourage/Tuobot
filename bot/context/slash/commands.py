@@ -410,6 +410,13 @@ async def _remove(
 _remove.on_autocomplete("queues")(autocomplete.queues)
 
 
+
+@dc.slash_command(name='remove_all', description='Remove yourself (or a player) from all queues on this server.', **guild_kwargs)
+async def _remove_all(
+	interaction: Interaction,
+	player: Member = SlashOption(required=False, verify=False, description="Player to remove (moderator only).")
+): await run_slash(bot.commands.remove_all, interaction=interaction, player=player)
+
 @dc.slash_command(name='who', description='List added players.', **guild_kwargs)
 async def _who(
 	interaction: Interaction,
@@ -551,6 +558,20 @@ async def _season_leaderboard(
 		page: int = SlashOption(required=False),
 		min_matches: int = SlashOption(required=False, default=15, description="Minimum matches to qualify (default 15).")
 ): await run_slash(bot.commands.season_leaderboard, interaction=interaction, page=page, min_matches=min_matches)
+
+
+
+@groups.admin_stats.subcommand(name='season_end', description='End the season: post standings, disable ranked, reset stats.')
+async def _season_end(
+		interaction: Interaction,
+		min_matches: int = SlashOption(required=False, default=15, description="Min matches to appear in standings (default 15).")
+): await run_slash(bot.commands.season_end, interaction=interaction, min_matches=min_matches)
+
+
+@groups.admin_stats.subcommand(name='season_start', description='Start a new season: enable ranked on all queues.')
+async def _season_start(
+		interaction: Interaction
+): await run_slash(bot.commands.season_start, interaction=interaction)
 
 
 # ── douche ────────────────────────────────────────────────────────────────────
