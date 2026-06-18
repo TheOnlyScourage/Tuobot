@@ -1,4 +1,4 @@
-__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard']
+__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start']
 
 import io
 import asyncio
@@ -355,4 +355,104 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 	embed.add_field(name="W-L  (WR)", value="\n".join(wl_lines), inline=True)
 	embed.add_field(name="Rank  Rating", value="\n".join(rating_lines), inline=True)
 
+	await ctx.reply(embed=embed)
+
+
+SEASON_MEDALS = ['🥇', '🥈', '🥉']
+
+
+async def season_end(ctx, min_matches: int = 15):
+	"""End the current season: post standings, disable ranked, reset all stats."""
+	ctx.check_perms(ctx.Perms.ADMIN)
+
+	from bot.stats.season import get_current_season_number, record_season_end
+	season_num = await get_current_season_number(ctx.qc.id)
+
+	# Collect standings before reset
+	all_data = await ctx.qc.get_lb()
+	qualified = [
+		r for r in all_data
+		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
+	]
+
+	# Total stats
+	total_rated = len([r for r in all_data if r.get('rating') is not None])
+	total_row = await db.fetchone(
+		"SELECT COUNT(*) as cnt FROM qc_matches WHERE channel_id=%s",
+		[ctx.qc.id]
+	)
+	total_matches = total_row['cnt'] if total_row else 0
+
+	# Ranked queues that will be turned off
+	ranked_queues = [q for q in ctx.qc.queues if q.cfg.ranked]
+
+	# Build embed description
+	lines = [
+		f"**Season {season_num} — Final Standings**\n",
+		f"{total_rated} rated players | {total_matches} total matches\n",
+	]
+
+	if qualified:
+		lines.append(f"**Top {len(qualified)} ({min_matches}+ games)**")
+		for i, row in enumerate(qualified):
+			pos = SEASON_MEDALS[i] if i < 3 else f"{i + 1}."
+			emoji = get_rank_emoji(row['rating'])
+			w, l = row['wins'], row['losses']
+			lines.append(f"{pos} **{row['nick'].strip()}** — {emoji} {row['rating']} ({w}-{l})")
+	else:
+		lines.append(f"*No players with {min_matches}+ matches this season.*")
+
+	if ranked_queues:
+		lines.append("\n**Ranked Turned Off**")
+		for q in ranked_queues:
+			lines.append(f"• {q.name}")
+
+	lines.append(
+		f"\nRatings and stats have been reset. "
+		f"MMR is now off until `/season_start` is used here."
+	)
+
+	embed = Embed(colour=Colour(0x7289DA), description="\n".join(lines))
+	await ctx.reply(embed=embed)
+
+	# Turn off ranked on all previously ranked queues
+	for q in ranked_queues:
+		try:
+			await q.cfg.update({'ranked': '0'})
+		except Exception:
+			pass
+
+	# Reset all ratings and match stats for this channel
+	import bot
+	await bot.stats.reset_channel(ctx.qc.id)
+
+	# Record the season end
+	await record_season_end(ctx.qc.id, season_num)
+
+
+async def season_start(ctx):
+	"""Start a new season: enable ranked on all queues and announce."""
+	ctx.check_perms(ctx.Perms.ADMIN)
+
+	from bot.stats.season import get_current_season_number
+	season_num = await get_current_season_number(ctx.qc.id)
+
+	# Turn ranked on for all queues in this channel
+	enabled = []
+	for q in ctx.qc.queues:
+		if not q.cfg.ranked:
+			try:
+				await q.cfg.update({'ranked': '1'})
+				enabled.append(q.name)
+			except Exception:
+				pass
+
+	lines = [f"🏆 **Season {season_num} has started!**\n"]
+	if enabled:
+		lines.append("**Ranked Turned On**")
+		for name in enabled:
+			lines.append(f"• {name}")
+	lines.append("\nGood luck to all players! MMR is now active.")
+
+	embed = Embed(colour=Colour(0x27b75e), description="\n".join(lines))
 	await ctx.reply(embed=embed)
