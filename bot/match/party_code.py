@@ -160,14 +160,20 @@ class PartyCode:
 
 		try:
 			if game_num == 1:
-				await channel.send(
-					f"✅ {captain.mention}'s team ({team_str}) is ready!\n"
-					f"{captain.mention}, reply to this message with the **Game 1 code**."
+				embed = Embed(
+					colour=Colour(0x2ecc71),
+					description=(
+						f"✅ {captain.mention}'s team ({team_str}) is ready!\n"
+						f"{captain.mention}, reply to this message with the **Game 1 code**."
+					)
 				)
+				await channel.send(embed=embed)
 			else:
-				await channel.send(
-					f"{captain.mention}, reply to this message with the **Game {game_num} code**."
+				embed = Embed(
+					colour=Colour(0x2ecc71),
+					description=f"{captain.mention}, reply to this message with the **Game {game_num} code**."
 				)
+				await channel.send(embed=embed)
 		except DiscordException as e:
 			log.error(f"PartyCode: failed to send code prompt: {e}")
 
@@ -188,8 +194,14 @@ class PartyCode:
 
 		if game_num == 1:
 			self.game1_done = True
-			# If second captain already reacted, prompt them for Game 2
-			if self.second_captain is not None:
+			# Always prompt the other captain for Game 2 — whether they reacted ✅ or not.
+			# The Game 1 embed already told them to reply, so the listener must be ready.
+			other_cap = next(
+				(t[0] for t in self.m.teams[:2] if t and t[0] != captain), None
+			)
+			if other_cap:
+				if self.second_captain is None:
+					self.second_captain = other_cap
 				await self._prompt_code(self.second_captain, game_num=2)
 		elif game_num == 2:
 			# Same second captain submits Game 3
