@@ -754,44 +754,69 @@ async def _redo_teams(interaction: Interaction):
 @dc.slash_command(name='auto_ready', description='Confirm next match check-in automatically.', **guild_kwargs)
 async def _auto_ready(
 		interaction: Interaction,
-		duration: str = SlashOption(required=False),
+		duration: str = SlashOption(required=False, description="Duration e.g. 10m, 1h. Default is 10 minutes."),
 ):
-	async def _run(ctx, *args, _duration=None, **kwargs):
-		if _duration:
-			_duration = _parse_duration(ctx, _duration)
-		await bot.commands.auto_ready(ctx, *args, duration=_duration, **kwargs)
-	await run_slash(_run, interaction=interaction, _duration=duration)
+	"""Ephemeral — only the user who ran it can see the response."""
+	if not bot.bot_ready:
+		return await interaction.response.send_message(
+			embed=error_embed("Bot is under connection, please try again later."), ephemeral=True
+		)
+	qc = bot.queue_channels.get(interaction.channel_id)
+	if qc is None:
+		return await interaction.response.send_message(
+			embed=error_embed("Not in a queue channel."), ephemeral=True
+		)
 
+	from datetime import timedelta as _td
+	DEFAULT_SECS = 10 * 60  # 10 minutes
 
-@dc.slash_command(name='expire', description='Set or show your current expire timer.', **guild_kwargs)
-async def _expire(
-		interaction: Interaction,
-		duration: str = SlashOption(required=False)
-):
-	async def _run(ctx, *args, _duration=None, **kwargs):
-		if _duration:
-			_duration = _parse_duration(ctx, _duration)
-		await bot.commands.expire(ctx, *args, duration=_duration, **kwargs)
-	await run_slash(_run, interaction=interaction, _duration=duration)
+	if duration:
+		try:
+			dur_secs = parse_duration(duration).total_seconds()
+		except ValueError:
+			return await interaction.response.send_message(
+				embed=error_embed("Invalid duration format. Try: 10m, 1h, 01:30:00."), ephemeral=True
+			)
+	else:
+		dur_secs = DEFAULT_SECS
 
+	max_ar = qc.cfg.max_auto_ready if qc.cfg.max_auto_ready else None
+	if max_ar and dur_secs > max_ar:
+		return await interaction.response.send_message(
+			embed=error_embed(f"Auto ready limit is {str(_td(seconds=int(max_ar)))}. Use a shorter duration."),
+			ephemeral=True
+		)
 
-@dc.slash_command(name='expire_default', description='Set or show your default expire timer.', **guild_kwargs)
-async def _default_expire(
-		interaction: Interaction,
-		duration: str = SlashOption(required=False),
-		afk: bool = SlashOption(required=False),
-		clear: bool = SlashOption(required=False)
-):
-	async def _run(ctx, *args, _duration=None, **kwargs):
-		if _duration:
-			_duration = _parse_duration(ctx, _duration)
-		await bot.commands.default_expire(ctx, *args, duration=_duration, **kwargs)
-	await run_slash(_run, interaction=interaction, _duration=duration, afk=afk, clear=clear)
+	bot.auto_ready[interaction.user.id] = time.time() + dur_secs
+	dur_str = str(_td(seconds=int(dur_secs)))
+	await interaction.response.send_message(
+		embed=ok_embed(f"During next **{dur_str}** your match participation will be confirmed automatically."),
+		ephemeral=True
+	)
 
 
 @dc.slash_command(name='allow_offline', description='Switch your offline status immunity.', **guild_kwargs)
-async def _allow_offline(interaction: Interaction,
-): await run_slash(bot.commands.allow_offline, interaction=interaction)
+async def _allow_offline(interaction: Interaction):
+	"""Ephemeral — only the user who ran it can see the response."""
+	if not bot.bot_ready:
+		return await interaction.response.send_message(
+			embed=error_embed("Bot is under connection, please try again later."), ephemeral=True
+		)
+	qc = bot.queue_channels.get(interaction.channel_id)
+	if qc is None:
+		return await interaction.response.send_message(
+			embed=error_embed("Not in a queue channel."), ephemeral=True
+		)
+
+	user_id = interaction.user.id
+	if user_id in bot.allow_offline:
+		bot.allow_offline.remove(user_id)
+		msg = "Your offline immunity is **off**."
+	else:
+		bot.allow_offline.append(user_id)
+		msg = "Your offline immunity is **on** until the next match."
+
+	await interaction.response.send_message(embed=ok_embed(msg), ephemeral=True)
 
 
 @dc.slash_command(name='switch_dms', description='Toggles DMs on queue start.', **guild_kwargs)
