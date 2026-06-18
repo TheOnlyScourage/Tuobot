@@ -17,6 +17,24 @@ from core.client import dc
 from core.utils import get_nick
 from core.console import log
 
+# House emblems — same as embeds.py (duplicated to avoid circular imports)
+HOUSE_EMOJIS = {
+	'Hufflepuff': '<:HUFFLEPUFF:1468806463026757663>',
+	'Slytherin':  '<:SLYTHERIN:1468806412594446447>',
+	'Gryffindor': '<:GRYFFINDOR:1468806447956492328>',
+	'Ravenclaw':  '<:RAVENCLAW:1468806434320810027>',
+}
+
+
+def _team_display(team) -> str:
+	"""Return '{house_emoji} **HOUSENAME (N)**' or '{emoji} **TeamName**'."""
+	house_emoji = HOUSE_EMOJIS.get(team.name, '')
+	if house_emoji:
+		return f"{house_emoji} **{team.name} ({team.idx + 1})**"
+	return f"{team.emoji} **{team.name}**"
+
+
+
 # Module-level registry: {(channel_id, user_id): PartyCode}
 # Checked by events.py on_message to route captain code inputs.
 _waiting_codes: dict = {}
@@ -85,9 +103,9 @@ class PartyCode:
 			f"**Captains**, react with {self.READY_EMOJI} once your team of **{team_size}** is partied up!\n",
 		]
 		if cap_a:
-			lines.append(f"{cap_a.mention} — {self.m.teams[0].emoji} **{self.m.teams[0].name.upper()}** (1)")
+			lines.append(f"{cap_a.mention} — {_team_display(self.m.teams[0])}")
 		if cap_b:
-			lines.append(f"{cap_b.mention} — {self.m.teams[1].emoji} **{self.m.teams[1].name.upper()}** (2)")
+			lines.append(f"{cap_b.mention} — {_team_display(self.m.teams[1])}")
 		lines += [
 			"",
 			"The **first team ready** will create the **Game 1 code**.",
@@ -136,14 +154,19 @@ class PartyCode:
 			log.error(f"PartyCode: could not find channel {self.m.qc.id}")
 			return
 
+		# Determine which team this captain leads for the display string
+		captain_team = next((t for t in self.m.teams[:2] if t and captain in t), None)
+		team_str = _team_display(captain_team) if captain_team else captain.display_name
+
 		try:
 			if game_num == 1:
 				await channel.send(
-					f"✅ {captain.mention} is ready! Please type your **Game 1 lobby code** in this channel."
+					f"✅ {captain.mention}'s team ({team_str}) is ready!\n"
+					f"{captain.mention}, reply to this message with the **Game 1 code**."
 				)
 			else:
 				await channel.send(
-					f"{captain.mention}, please type your **Game {game_num} lobby code** in this channel."
+					f"{captain.mention}, reply to this message with the **Game {game_num} code**."
 				)
 		except DiscordException as e:
 			log.error(f"PartyCode: failed to send code prompt: {e}")
