@@ -23,6 +23,7 @@ class CheckIn:
 		self.discarded_players = set()
 		self.message = None
 		self.standby_pulled = False  # True once standby fill has fired
+		self._check_in_started_at = None  # frame_time when check-in actually started ticking
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			self.ready_players.add(p)
@@ -39,17 +40,27 @@ class CheckIn:
 
 	async def think(self, frame_time):
 		# ── Standby fill at 2/3 of the way through check-in ──────────────────
-		# Example: 3 min check-in → at 2 min, pull standby players for unready slots.
-		pull_at = self.m.start_time + int(self.timeout * 2 / 3)
-		if (
-			not self.standby_pulled
-			and frame_time > pull_at
-			and self.allow_discard
-			and getattr(self.m.queue, 'standby', None)
-		):
-			await self.pull_standby(bot.SystemContext(self.m.qc))
+		# Use the check-in's own clock so the trigger is independent of
+		# self.m.start_time (set at match creation, before INIT \u2192 CHECK_IN).
+		if not hasattr(self, '_check_in_started_at') or self._check_in_started_at is None:
+			self._check_in_started_at = frame_time
 
-		if frame_time > self.m.start_time + self.timeout:
+		pull_at = self._check_in_started_at + int(self.timeout * 2 / 3)
+
+		if not self.standby_pulled and frame_time > pull_at:
+			standby_pool = getattr(self.m.queue, 'standby', None) or []
+			if standby_pool and self.allow_discard:
+				log.info(
+					f"[think] match {self.m.id}: pull_at reached "
+					f"(frame={int(frame_time)}, pull_at={int(pull_at)}), "
+					f"standby={len(standby_pool)}"
+				)
+				await self.pull_standby(bot.SystemContext(self.m.qc))
+			elif not standby_pool:
+				# No standby waiting — mark as already pulled so we don\'t spam this branch
+				self.standby_pulled = True
+
+		if frame_time > (self._check_in_started_at or self.m.start_time) + self.timeout:
 			ctx = bot.SystemContext(self.m.qc)
 			if self.allow_discard:
 				await self.abort_timeout(ctx)
@@ -240,7 +251,14 @@ class CheckIn:
 		not_ready = [m for m in self.m.players if m not in self.ready_players and m not in self.discarded_players]
 		standby = list(getattr(self.m.queue, 'standby', []) or [])
 
+		log.info(
+			f"[pull_standby] match {self.m.id}: "
+			f"not_ready={len(not_ready)}, standby={len(standby)}, "
+			f"queue.standby={[m.display_name for m in standby]}"
+		)
+
 		if not not_ready or not standby:
+			log.info(f"[pull_standby] match {self.m.id}: nothing to do, returning")
 			return
 
 		# Add standby players as additional candidates (don\'t remove anyone yet)
