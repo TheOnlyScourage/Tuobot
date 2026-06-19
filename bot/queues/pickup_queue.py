@@ -331,6 +331,7 @@ class PickupQueue:
 		self.cfg = cfg
 		self.id = self.cfg.p_key
 		self.queue = []
+		self.standby = []  # players who add while a match is in check-in or draft
 		self.last_maps = []
 
 	@property
@@ -401,6 +402,26 @@ class PickupQueue:
 		):
 			return bot.Qr.NotAllowed
 
+		# ── Standby pool ─────────────────────────────────────────────────────
+		# If a match from this queue is in check-in or draft, accept extras
+		# into a standby list. They get pulled in if anyone fails check-in.
+		# Use queue ID instead of object identity so this works after state restore.
+		active_match = next(
+			(m for m in bot.active_matches if m.queue.id == self.id), None
+		)
+		log.info(
+			f"[add_member] queue={self.name} member={member.display_name} "
+			f"active_match={active_match.id if active_match else None} "
+			f"standby_before={[m.display_name for m in self.standby]}"
+		)
+		if active_match is not None:
+			if member in self.queue or member in self.standby or member in active_match.players:
+				log.info(f"[add_member] {member.display_name} already present, returning Duplicate")
+				return bot.Qr.Duplicate
+			self.standby.append(member)
+			log.info(f"[add_member] {member.display_name} added to standby (now {len(self.standby)} players)")
+			return bot.Qr.Success
+
 		if len(self.queue) >= self.cfg.size:
 			return bot.Qr.QueueFull
 
@@ -416,14 +437,17 @@ class PickupQueue:
 			return bot.Qr.Duplicate
 
 	def is_added(self, member):
-		return member in self.queue
+		return member in self.queue or member in self.standby
 
 	def pop_members(self, *members):
 		ids = [m.id for m in members]
-		members = [member for member in self.queue if member.id in ids]
-		for m in members:
+		in_queue = [member for member in self.queue if member.id in ids]
+		in_standby = [member for member in self.standby if member.id in ids]
+		for m in in_queue:
 			self.queue.remove(m)
-		return members
+		for m in in_standby:
+			self.standby.remove(m)
+		return in_queue + in_standby
 
 	async def start(self, ctx):
 		if len(self.queue) < 2:
@@ -522,20 +546,34 @@ class PickupQueue:
 
 	async def revert(self, ctx, not_ready, ready):
 		old_players = list(self.queue)
+
+		# Standby players (who added during check-in/draft) fill slots first
+		standby_players = list(self.standby)
+		self.standby = []
+
 		self.queue = list(ready)
 		if self.cfg.autostart:
+			# 1) Pull from standby first (the whole point of this feature)
+			while len(self.queue) < self.cfg.size and len(standby_players):
+				self.queue.append(standby_players.pop(0))
+			# 2) Then fall back to anyone else who was already in queue
 			while len(self.queue) < self.cfg.size and len(old_players):
 				self.queue.append(old_players.pop(0))
+
 			if len(self.queue) >= self.cfg.size:
 				await self.start(ctx)
-				self.queue = list(old_players)
+				# Anyone left over goes back to a normal queued state
+				self.queue = list(old_players) + list(standby_players)
 			else:
+				# Didn't fill — leftover standby + old_players stay queued
+				self.queue.extend(standby_players)
 				for p in ready:
 					await self.qc.update_expire(p)
 		else:
-			self.queue = list(ready) + old_players
+			self.queue = list(ready) + standby_players + old_players
 			for p in ready:
 				await self.qc.update_expire(p)
+
 		await ctx.notice(self.qc.topic)
 		if self not in bot.active_queues and self.length:
 			bot.active_queues.append(self)
