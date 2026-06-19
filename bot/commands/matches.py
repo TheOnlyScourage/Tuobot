@@ -8,7 +8,7 @@ from nextcord import Member
 from typing import List  # noqa: UP035
 from functools import wraps
 
-from core.utils import get, find  # noqa: F401
+from core.utils import get, find, get_nick, get_nick  # noqa: F401
 
 import bot
 
@@ -151,3 +151,103 @@ async def force_checkin(ctx, match_id: int):
 
 	await match.check_in.refresh(bot.SystemContext(ctx.qc))
 	await ctx.success(ctx.qc.gt("All players have been force checked in."))
+
+
+async def swap_players(ctx, player1: Member, player2: Member):
+	"""Swap two players between teams during the draft phase (admin only)."""
+	ctx.check_perms(ctx.Perms.MODERATOR)
+
+	# Both players must be in the same active match on this channel
+	match = find(
+		lambda m: m.qc == ctx.qc and player1 in m.players and player2 in m.players,
+		bot.active_matches
+	)
+	if match is None:
+		raise bot.Exc.NotFoundError(
+			"Both players must be in the same active match on this channel."
+		)
+
+	if match.state not in (match.DRAFT, match.WAITING_REPORT):
+		raise bot.Exc.MatchStateError(
+			"Swap is only available during the draft or waiting-report phase."
+		)
+
+	# Find which team each player is on (teams[0] and teams[1] only)
+	team1_idx = next((i for i, t in enumerate(match.teams[:2]) if player1 in t), None)
+	team2_idx = next((i for i, t in enumerate(match.teams[:2]) if player2 in t), None)
+
+	if team1_idx is None or team2_idx is None:
+		raise bot.Exc.NotFoundError(
+			"One or both players have not been picked to a team yet."
+		)
+	if team1_idx == team2_idx:
+		raise bot.Exc.ValueError(
+			f"**{get_nick(player1)}** and **{get_nick(player2)}** are already on the same team."
+		)
+
+	# Perform the swap
+	t1 = match.teams[team1_idx]
+	t2 = match.teams[team2_idx]
+	p1_pos = t1.index(player1)
+	p2_pos = t2.index(player2)
+	t1[p1_pos] = player2
+	t2[p2_pos] = player1
+
+	# Refresh the display
+	if match.state == match.WAITING_REPORT:
+		await ctx.notice(embed=match.embeds.final_message())
+	else:
+		await match.draft.print(ctx)
+
+	await ctx.success(
+		f"Swapped **{get_nick(player1)}** ({match.teams[team2_idx].name}) "
+		f"↔ **{get_nick(player2)}** ({match.teams[team1_idx].name})."
+	)
+
+async def swap_players(ctx, player1: Member, player2: Member):
+	"""Swap two players between teams during the draft phase."""
+	ctx.check_perms(ctx.Perms.MODERATOR)
+
+	if player1.id == player2.id:
+		raise bot.Exc.ValueError(ctx.qc.gt("Cannot swap a player with themselves."))
+
+	# Both players must be in the same active match on this channel
+	match = find(
+		lambda m: m.qc == ctx.qc and player1 in m.players and player2 in m.players,
+		bot.active_matches
+	)
+	if match is None:
+		raise bot.Exc.NotFoundError(
+			ctx.qc.gt("Both players must be in the same active match on this channel.")
+		)
+
+	if match.state != match.DRAFT:
+		raise bot.Exc.MatchStateError(
+			ctx.qc.gt("The swap command can only be used during the draft phase.")
+		)
+
+	# Locate each player across all team slots (including unpicked pool)
+	loc1 = loc2 = None
+	for team in match.teams:
+		if player1 in team:
+			loc1 = (team, team.index(player1))
+		if player2 in team:
+			loc2 = (team, team.index(player2))
+
+	if loc1 is None or loc2 is None:
+		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not locate both players in the match."))
+
+	if loc1[0] is loc2[0]:
+		raise bot.Exc.ValueError(
+			ctx.qc.gt("Both players are already on the same team — nothing to swap.")
+		)
+
+	# Perform the swap
+	team_a, idx_a = loc1
+	team_b, idx_b = loc2
+	team_a[idx_a] = player2
+	team_b[idx_b] = player1
+
+	# Refresh the draft embed so everyone sees the updated teams
+	await ctx.notice(embed=match.embeds.draft())
+	await ctx.success(f"Swapped **{get_nick(player1)}** \u2194 **{get_nick(player2)}**.")
