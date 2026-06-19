@@ -314,5 +314,5 @@ async def on_member_remove(member):
 		await qc.remove_members(member, reason="left guild")
 
 # ── 41 Alert background task ──────────────────────────────────────────────────
-from bot.alert import think as _alerts_think
+from bot.alerts import think as _alerts_think
 dc.events['on_think'].append(_alerts_think)
