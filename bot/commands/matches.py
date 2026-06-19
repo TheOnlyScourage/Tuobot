@@ -69,7 +69,7 @@ async def sub_force(ctx, player1: Member, player2: Member, sub_type: str = 'New'
 	# Capture player1's team index BEFORE the swap (needed for fill-in tracking)
 	team_idx = next(
 		(i for i, t in enumerate(match.teams[:2]) if player1 in t), None
-	) if sub_type == 'Match in progress' and match.ranked else None
+	) if sub_type == 'Match in progress' else None
 
 	await match.draft.sub_for(ctx, player1, player2, force=True)
 
@@ -248,6 +248,8 @@ async def swap_players(ctx, player1: Member, player2: Member):
 	team_a[idx_a] = player2
 	team_b[idx_b] = player1
 
-	# Refresh the draft embed so everyone sees the updated teams
-	await ctx.notice(embed=match.embeds.draft())
-	await ctx.success(f"Swapped **{get_nick(player1)}** \u2194 **{get_nick(player2)}**.")
+	# Refresh the draft embed — single response to avoid "did not respond" error
+	await ctx.notice(
+		content=f"✅ Swapped **{get_nick(player1)}** ↔ **{get_nick(player2)}**.",
+		embed=match.embeds.draft()
+	)
