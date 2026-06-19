@@ -255,6 +255,14 @@ async def _sub_force(
 ): await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2, sub_type=sub_type)
 
 
+@groups.admin_match.subcommand(name='swap', description='Swap two players between teams during the draft phase.')
+async def _swap_players(
+		interaction: Interaction,
+		player1: Member = SlashOption(name="player1", description="First player to swap.", verify=False),
+		player2: Member = SlashOption(name="player2", description="Second player to swap.", verify=False),
+): await run_slash(bot.commands.swap_players, interaction=interaction, player1=player1, player2=player2)
+
+
 @groups.admin_match.subcommand(name='put', description='Put a player in a team.')
 async def _put(
 		interaction: Interaction,
