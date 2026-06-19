@@ -28,9 +28,11 @@ loop = asyncio.get_event_loop()
 loop.run_until_complete(database.db.connect())
 
 # One-time fix: set NULL deviations to 350 (prevents rating.py TypeError on match start)
-await database.db.fetchall(
-    "UPDATE qc_players SET deviation = 350 WHERE deviation IS NULL", []
-)
+async def _fix_null_deviations():
+    await database.db.fetchall(
+        "UPDATE qc_players SET deviation = 350 WHERE deviation IS NULL", []
+    )
+loop.run_until_complete(_fix_null_deviations())
 
 # Initialize tracker tables before loading the bot.
 from bot.stats.checkin_tracker import init_checkin_tracker_table
