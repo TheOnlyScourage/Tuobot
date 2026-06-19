@@ -440,14 +440,6 @@ async def _who(
 _who.on_autocomplete("queues")(autocomplete.queues)
 
 
-@dc.slash_command(name='promote', description='Promote a queue.', **guild_kwargs)
-async def promote(
-		interaction: Interaction,
-		queue: str = SlashOption(required=False)
-): await run_slash(bot.commands.promote, interaction=interaction, queue=queue)
-promote.on_autocomplete("queue")(autocomplete.queues)
-
-
 @dc.slash_command(name='server', description='Show queue server.', **guild_kwargs)
 async def server(
 		interaction: Interaction,
@@ -587,6 +579,14 @@ async def _season_end(
 async def _season_start(
 		interaction: Interaction
 ): await run_slash(bot.commands.season_start, interaction=interaction)
+
+
+
+@dc.slash_command(name='don', description='Don.', **guild_kwargs)
+async def _don(interaction: Interaction):
+	await interaction.response.send_message(
+		"<@303565637786009603> <:L_Don:1517566869576355941>"
+	)
 
 
 # ── douche ────────────────────────────────────────────────────────────────────
