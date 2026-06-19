@@ -271,14 +271,45 @@ class CheckIn:
 
 		not_ready_mentions = join_and([m.mention for m in not_ready])
 		added_mentions    = join_and([m.mention for m in added])
-		await ctx.notice(self.m.gt(
-			"\u26a0\ufe0f Standby pulled in! {added} are now competing for the open slots "
-			"with {not_ready}. First to react {ready} wins the spot!"
+
+		# Build a jump URL to the check-in message so standby players can react directly
+		jump_url = self.message.jump_url if self.message else None
+
+		lines = [
+			f"\U0001f6a8 **STANDBY PULLED IN!** \U0001f6a8",
+			f"{added_mentions} \u2014 you have a chance to claim a spot!",
+			f"You\u2019re now competing with {not_ready_mentions} for the remaining slots.",
+			f"**First to react {self.READY_EMOJI} on the check-in message wins their spot.**",
+		]
+		if jump_url:
+			lines.append(f"\U0001f449 Jump to check-in: {jump_url}")
+
+		# Send the alert with the standby players in the content field so they
+		# get a guaranteed mobile/desktop ping (embeds don\'t always notify).
+		try:
+			await ctx.channel.send(
+				content=added_mentions,  # forces a ping
+				embed=None
+			)
+		except Exception:
+			pass
+
+		await ctx.notice("\n".join(lines))
+
+		# DM each standby player so they get notified even if they\'re not watching the channel
+		dm_text = self.m.gt(
+			"\U0001f6a8 You\u2019ve been pulled in from standby for **{queue}** @ {channel}!\n"
+			"Hurry \u2014 react {ready} on the check-in message to claim a spot before time runs out."
 		).format(
-			added=added_mentions,
-			not_ready=not_ready_mentions,
-			ready=self.READY_EMOJI
-		))
+			queue=self.m.queue.name,
+			channel=ctx.channel.mention,
+			ready=self.READY_EMOJI,
+		)
+		for member in added:
+			try:
+				await member.send(dm_text)
+			except Exception:
+				pass  # DMs disabled or blocked — channel ping is the fallback
 
 		await self.refresh(ctx)
 
