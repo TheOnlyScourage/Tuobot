@@ -264,6 +264,15 @@ async def register_match_ranked(ctx, m):
     before, after = {}, {}
     fill_subs = getattr(m, 'fill_subs', {})
 
+    # Zero out fill-in sub changes before building after dict so results
+    # embed shows no change for the fill-in player when their team loses.
+    for p in m.players:
+        if p.id in fill_subs:
+            _, sub_team_idx = fill_subs[p.id]
+            team_won = (m.winner is not None and m.winner == sub_team_idx)
+            if not team_won:
+                changes[p.id] = 0
+
     for p in m.players:
         b           = ratings_by_id.get(p.id) or {}
         cur_rating  = b.get('rating') or 1500
@@ -271,6 +280,7 @@ async def register_match_ranked(ctx, m):
         cur_dev     = b.get('deviation') or init_dev
         team_idx    = 0 if p in m.teams[0] else 1
         is_winner   = (m.winner is not None and m.winner == team_idx)
+        change      = changes.get(p.id, 0)
 
         before[p.id] = {
             'rating':    cur_rating,
@@ -281,9 +291,7 @@ async def register_match_ranked(ctx, m):
             'streak':    cur_streak,
         }
 
-        change = changes.get(p.id, 0)
-
-        if m.winner is None:        # draw
+        if m.winner is None:
             new_streak = 0
             new_wins   = b.get('wins', 0)
             new_losses = b.get('losses', 0)
