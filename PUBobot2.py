@@ -37,8 +37,10 @@ loop.run_until_complete(_fix_null_deviations())
 # Initialize tracker tables before loading the bot.
 from bot.stats.checkin_tracker import init_checkin_tracker_table
 from bot.stats.season import init_season_table
+from bot.main import init_saved_state_table
 loop.run_until_complete(init_checkin_tracker_table())
 loop.run_until_complete(init_season_table())
+loop.run_until_complete(init_saved_state_table())
 
 # Load bot
 import bot
