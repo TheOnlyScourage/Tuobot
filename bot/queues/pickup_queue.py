@@ -53,6 +53,19 @@ class PickupQueue:
 				description="Enable rating features on this queue.",
 				notnull=True
 			),
+			Variables.IntVar(
+				"priority",
+				display="Queue priority",
+				section="General",
+				default=0,
+				verify=lambda n: 0 <= n <= 1000,
+				verify_message="Priority must be between 0 and 1000.",
+				description="\n".join([
+					"Higher-priority queues protect their members when a lower-priority queue starts.",
+					"Example: ranked=100, bonanza=80 → players stay in ranked when bonanza pops.",
+					"Set to 0 (default) to use the original behaviour (removed from all queues)."
+				])
+			),
 			Variables.BoolVar(
 				"autostart",
 				display="Start when full",
@@ -296,6 +309,8 @@ class PickupQueue:
 
 	@classmethod
 	async def from_json(cls, data):
+		"""Restore queue state from saved JSON.  Missing members are skipped
+		gracefully instead of aborting the whole restore."""
 		if (qc := bot.queue_channels.get(data['channel_id'])) is None:
 			raise bot.Exc.ValueError("QueueChannel not found.")
 		if (q := get(qc.queues, id=data['queue_id'])) is None:
@@ -303,9 +318,9 @@ class PickupQueue:
 		if (guild := dc.get_guild(qc.guild_id)) is None:
 			raise bot.Exc.ValueError("Guild not found.")
 
-		players = [guild.get_member(user_id) for user_id in data['players']]
-		if None in players:
-			raise bot.Exc.ValueError(f"Error fetching guild members.")  # noqa: F541
+		# Skip members who left the server instead of failing the whole restore
+		players = [guild.get_member(uid) for uid in data['players']]
+		players = [p for p in players if p is not None]
 
 		q.queue = players
 		if q.length and q not in bot.active_queues:
@@ -414,6 +429,32 @@ class PickupQueue:
 		if len(self.queue) < 2:
 			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
 
+		player_ids = {p.id for p in self.queue}
+		my_priority = getattr(self.cfg, 'priority', None) or 0
+
+		# ── Save states that survive match start ──────────────────────────────
+		# allow_offline and auto_ready are cleared by remove_players inside
+		# queue_started(); we restore them immediately after Match.new() so they
+		# persist through the match (and through a failed check-in, since by the
+		# time revert() is called they're already back).
+		saved_offline    = {uid for uid in bot.allow_offline if uid in player_ids}
+		saved_auto_ready = {uid: t for uid, t in bot.auto_ready.items() if uid in player_ids}
+
+		# Find higher-priority queues whose members we must NOT remove.
+		# queue_started() calls remove_players() which removes from ALL queues;
+		# we re-add those players afterward.
+		higher_q_members = {}  # {PickupQueue: [Member, ...]}
+		if my_priority > 0:
+			for qc in bot.queue_channels.values():
+				for q in qc.queues:
+					if q is self:
+						continue
+					q_prio = getattr(q.cfg, 'priority', None) or 0
+					if q_prio > my_priority:
+						kept = [p for p in self.queue if q.is_added(p)]
+						if kept:
+							higher_q_members[q] = kept
+
 		players = list(self.queue)
 		dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
 		await self.qc.queue_started(
@@ -425,11 +466,30 @@ class PickupQueue:
 				server=self.cfg.server
 			))
 		)
+
 		if self.cfg.team_size:
 			team_size = min(int(self.cfg.size / 2), int(self.cfg.team_size))
 		else:
 			team_size = int(self.cfg.size / 2)
+
 		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
+
+		# ── Restore states after match creation ───────────────────────────────
+		# allow_offline: stays active until the player manually disables it
+		for uid in saved_offline:
+			if uid not in bot.allow_offline:
+				bot.allow_offline.append(uid)
+
+		# auto_ready: stays active until it expires or the player cancels
+		bot.auto_ready.update(saved_auto_ready)
+
+		# Priority: restore membership in higher-priority queues
+		for q, members in higher_q_members.items():
+			for p in members:
+				if p not in q.queue:
+					q.queue.append(p)
+			if q not in bot.active_queues and q.length:
+				bot.active_queues.append(q)
 
 	async def split(self, ctx, group_size: int = None, sort_by_rating: bool = False):
 		group_size = group_size or len(self.queue)//2
