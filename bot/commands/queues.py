@@ -5,9 +5,30 @@ __all__ = [
 
 import time
 from random import choice
-from nextcord import Member
+from nextcord import Member, Embed, Colour
 from core.utils import error_embed, join_and, find, seconds_to_str, get_nick
 import bot
+
+
+# ── Quidditch specialty role IDs ─────────────────────────────────────────────
+# TODO: replace 0s with your actual Discord role IDs
+_SEEKER_ROLE_ID = 1478503988562235595
+_BEATER_ROLE_ID = 1478503991737585735
+_KEEPER_ROLE_ID = 1478503986205036655
+
+_SEEKERS_NEEDED = 2
+_BEATERS_NEEDED = 2
+_KEEPERS_NEEDED = 2
+
+
+def _has_role(member, role_id: int) -> bool:
+	if not role_id:
+		return False
+	return any(r.id == role_id for r in member.roles)
+
+
+def _specialty_line(present: int, needed: int, label: str) -> str:
+	return f"{present}/{needed} {label}"
 
 
 async def add(ctx, queues: str = None):
@@ -178,7 +199,33 @@ async def promote(ctx, queue: str = None):
 			delay=seconds_to_str((ctx.qc.cfg.promotion_delay+ctx.qc.last_promote)-now)
 		)))
 
-	await q.promote(ctx)
+	# ── Build Q6Bot-style specialty promote embed ─────────────────────────────
+	players_in     = len(q.queue)
+	players_needed = max(q.cfg.size - players_in, 0)
+
+	# Count specialty roles among queued players
+	seekers = sum(1 for m in q.queue if _has_role(m, _SEEKER_ROLE_ID))
+	beaters = sum(1 for m in q.queue if _has_role(m, _BEATER_ROLE_ID))
+	keepers = sum(1 for m in q.queue if _has_role(m, _KEEPER_ROLE_ID))
+
+	description = (
+		f"Please add to **{q.name}**, **{players_needed}** players left!\n\n"
+		f"**Specialty Positions Needed:**\n"
+		f"{_specialty_line(seekers, _SEEKERS_NEEDED, 'Seekers')}\n"
+		f"{_specialty_line(beaters, _BEATERS_NEEDED, 'Beaters')}\n"
+		f"{_specialty_line(keepers, _KEEPERS_NEEDED, 'Keepers')}"
+	)
+
+	embed = Embed(colour=Colour(0x5865F2), description=description)
+
+	# Promotion role mention (set via /set_qc promotion_role)
+	content = ""
+	if ctx.qc.cfg.promotion_role:
+		role = ctx.channel.guild.get_role(ctx.qc.cfg.promotion_role)
+		if role:
+			content = role.mention
+
+	await ctx.channel.send(content=content, embed=embed)
 	ctx.qc.last_promote = now
 
 
