@@ -2,13 +2,23 @@
 import traceback  # noqa: F401
 import json
 from nextcord import Interaction  # noqa: F401
-
 from core.console import log
-from core.database import db  # noqa: F401
+from core.database import db
 from core.config import cfg
 from core.utils import error_embed, ok_embed, get  # noqa: F401
-
 import bot
+
+
+async def init_saved_state_table():
+	"""Create the saved_state table in MySQL — survives Railway redeploys."""
+	await db._ensure_table(dict(
+		tname="saved_state",
+		columns=[
+			dict(cname="id",      ctype=db.types.int),
+			dict(cname="payload", ctype=db.types.text),
+		],
+		primary_keys=["id"]
+	))
 
 
 async def enable_channel(message):
@@ -52,34 +62,94 @@ def update_rating_system(qc_cfg):
 
 
 def save_state():
+	"""Save state synchronously to local file AND schedule MySQL save.
+
+	Called from signal handlers (must be sync). The MySQL save is fired
+	via asyncio.ensure_future so it runs on the event loop without
+	blocking the signal handler.
+	"""
+	import asyncio
 	log.info("Saving state...")
 	queues = []
 	for qc in bot.queue_channels.values():
 		for q in qc.queues:
 			if q.length > 0:
 				queues.append(q.serialize())
-
 	matches = []
 	for match in bot.active_matches:
 		matches.append(match.serialize())
 
-	f = open("saved_state.json", 'w')  # noqa: SIM115
-	f.write(json.dumps(dict(queues=queues, matches=matches, allow_offline=bot.allow_offline, expire=bot.expire.serialize())))
-	f.close()
+	payload = dict(
+		queues=queues,
+		matches=matches,
+		allow_offline=bot.allow_offline,
+		auto_ready={str(k): v for k, v in bot.auto_ready.items()},
+		expire=bot.expire.serialize()
+	)
+	payload_json = json.dumps(payload)
+
+	# Local file (survives restart, lost on Railway redeploy)
+	try:
+		with open("saved_state.json", 'w') as f:  # noqa: SIM115
+			f.write(payload_json)
+	except Exception as e:
+		log.error(f"Local save_state failed: {e}")
+
+	# MySQL (survives Railway redeploys)
+	try:
+		loop = asyncio.get_event_loop()
+		if loop.is_running():
+			asyncio.ensure_future(_save_state_db(payload_json))
+		else:
+			loop.run_until_complete(_save_state_db(payload_json))
+	except Exception as e:
+		log.error(f"DB save_state schedule failed: {e}")
+
+
+async def _save_state_db(payload_json: str):
+	"""Persist saved state to MySQL (single-row table, id=1)."""
+	try:
+		existing = await db.select_one(('id',), 'saved_state', where={'id': 1})
+		if existing:
+			await db.update('saved_state', {'payload': payload_json}, keys={'id': 1})
+		else:
+			await db.insert('saved_state', {'id': 1, 'payload': payload_json})
+	except Exception as e:
+		log.error(f"DB save_state failed: {e}\n{traceback.format_exc()}")
 
 
 async def load_state():
+	"""Load state from MySQL first; fall back to local file if DB has nothing."""
+	data = None
+
+	# 1) Try MySQL (survives redeploys)
 	try:
-		with open("saved_state.json", "r") as f:
-			data = json.loads(f.read())
-	except IOError:  # noqa: UP024
+		row = await db.select_one(('payload',), 'saved_state', where={'id': 1})
+		if row and row.get('payload'):
+			data = json.loads(row['payload'])
+			log.info("Loaded state from MySQL.")
+	except Exception as e:
+		log.error(f"DB load_state failed, will try local file: {e}")
+
+	# 2) Fall back to local file (covers fresh DBs / migration window)
+	if data is None:
+		try:
+			with open("saved_state.json", "r") as f:
+				data = json.loads(f.read())
+				log.info("Loaded state from local saved_state.json.")
+		except IOError:  # noqa: UP024
+			return  # nothing to restore
+
+	if data is None:
 		return
 
-	log.info("Loading state...")
+	bot.allow_offline = list(data.get('allow_offline') or [])
 
-	bot.allow_offline = list(data['allow_offline'])
+	# auto_ready: keys may be strings from MySQL, ensure they're ints
+	ar = data.get('auto_ready') or {}
+	bot.auto_ready = {int(k): v for k, v in ar.items()}
 
-	for qd in data['queues']:
+	for qd in (data.get('queues') or []):
 		if qd.get('queue_type') in ['PickupQueue', None]:
 			try:
 				await bot.PickupQueue.from_json(qd)
@@ -88,14 +158,17 @@ async def load_state():
 		else:
 			log.error(f"Got unknown queue type '{qd.get('queue_type')}'.")
 
-	for md in data['matches']:
+	for md in (data.get('matches') or []):
 		try:
 			await bot.Match.from_json(md)
 		except bot.Exc.ValueError as e:
 			log.error(f"Failed to load match {md['match_id']}: {str(e)}")
 
-	if 'expire' in data.keys():
-		await bot.expire.load_json(data['expire'])
+	if 'expire' in data and data['expire']:
+		try:
+			await bot.expire.load_json(data['expire'])
+		except Exception as e:
+			log.error(f"Failed to load expire state: {e}")
 
 
 async def remove_players(*users, reason=None):
