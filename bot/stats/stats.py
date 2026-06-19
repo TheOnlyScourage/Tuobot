@@ -246,9 +246,10 @@ async def register_match_ranked(ctx, m):
     ))
 
     # Ensure all players exist in qc_players
+    init_dev = getattr(m.qc.rating, 'init_deviation', 350) or 350
     for channel_id in {m.qc.id, m.qc.rating.channel_id}:
         await db.insert_many('qc_players', (
-            dict(channel_id=channel_id, user_id=p.id, nick=get_nick(p))
+            dict(channel_id=channel_id, user_id=p.id, nick=get_nick(p), deviation=init_dev)
             for p in m.players
         ), on_dublicate="ignore")
 
@@ -267,12 +268,13 @@ async def register_match_ranked(ctx, m):
         b           = ratings_by_id.get(p.id) or {}
         cur_rating  = b.get('rating') or 1500
         cur_streak  = b.get('streak', 0)
+        cur_dev     = b.get('deviation') or init_dev
         team_idx    = 0 if p in m.teams[0] else 1
         is_winner   = (m.winner is not None and m.winner == team_idx)
 
         before[p.id] = {
             'rating':    cur_rating,
-            'deviation': b.get('deviation', 0),
+            'deviation': cur_dev,
             'wins':      b.get('wins', 0),
             'losses':    b.get('losses', 0),
             'draws':     b.get('draws', 0),
@@ -299,7 +301,7 @@ async def register_match_ranked(ctx, m):
 
         after[p.id] = {
             'rating':    max(0, cur_rating + change),
-            'deviation': b.get('deviation', 0),
+            'deviation': cur_dev,
             'wins':      new_wins,
             'losses':    new_losses,
             'draws':     new_draws,
@@ -358,12 +360,13 @@ async def register_match_ranked(ctx, m):
         await db.update(
             "qc_players",
             dict(
-                nick    = nick,
-                rating  = a['rating'],
-                wins    = a['wins'],
-                losses  = a['losses'],
-                draws   = a['draws'],
-                streak  = a['streak'],
+                nick      = nick,
+                rating    = a['rating'],
+                deviation = a['deviation'],
+                wins      = a['wins'],
+                losses    = a['losses'],
+                draws     = a['draws'],
+                streak    = a['streak'],
                 last_ranked_match_at=now,
             ),
             keys=dict(channel_id=m.qc.rating.channel_id, user_id=p.id)
