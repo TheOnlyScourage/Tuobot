@@ -9,6 +9,57 @@ from core.database import db
 from core.console import log
 from core.config import cfg
 import bot
+
+from nextcord import Embed, Colour
+
+# ── Q Ping specialty embed ────────────────────────────────────────────────────
+_Q_PING_ROLE_ID = 1340717895449186324   # @Q ping role
+
+_SEEKER_ROLE_ID = 1478503988562235595
+_BEATER_ROLE_ID = 1478503991737585735
+_KEEPER_ROLE_ID = 1478503986205036655
+_SEEKERS_NEEDED = 2
+_BEATERS_NEEDED = 2
+_KEEPERS_NEEDED = 2
+
+
+def _has_specialty(member, role_id: int) -> bool:
+	return bool(role_id) and any(r.id == role_id for r in member.roles)
+
+
+async def _send_q_ping_embed(message) -> None:
+	"""Respond to an @Q ping mention with the specialty-position status embed."""
+	qc = bot.queue_channels.get(message.channel.id)
+	if qc is None:
+		return
+
+	# Largest active queue, or first queue if all empty
+	q = next(iter(sorted(
+		(q for q in qc.queues if q.length),
+		key=lambda q: q.length, reverse=True
+	)), qc.queues[0] if qc.queues else None)
+	if q is None:
+		return
+
+	players_in     = len(q.queue)
+	players_needed = max(q.cfg.size - players_in, 0)
+
+	seekers = sum(1 for m in q.queue if _has_specialty(m, _SEEKER_ROLE_ID))
+	beaters = sum(1 for m in q.queue if _has_specialty(m, _BEATER_ROLE_ID))
+	keepers = sum(1 for m in q.queue if _has_specialty(m, _KEEPER_ROLE_ID))
+
+	embed = Embed(
+		colour=Colour(0x5865F2),
+		description=(
+			f"Please add to **{q.name}**, **{players_needed}** players left!\n\n"
+			f"**Specialty Positions Needed:**\n"
+			f"{seekers}/{_SEEKERS_NEEDED} Seekers\n"
+			f"{beaters}/{_BEATERS_NEEDED} Beaters\n"
+			f"{keepers}/{_KEEPERS_NEEDED} Keepers"
+		)
+	)
+	await message.channel.send(embed=embed)
+
 from bot.elo_sync import process_elo_sync
 from bot.civ_sync import parse_lobby_embed, buffer_lobby_result, persist_lobby_civs
 from bot.message_logger import log_channel_message, log_bot_message
@@ -105,6 +156,10 @@ async def on_message(message):
 
 	if message.channel.type != ChannelType.text:
 		return
+
+	# @Q ping role mention → specialty status embed
+	if any(r.id == _Q_PING_ROLE_ID for r in message.role_mentions):
+		await _send_q_ping_embed(message)
 
 	if message.content == '!enable_pubobot':
 		await bot.enable_channel(message)
@@ -259,5 +314,5 @@ async def on_member_remove(member):
 		await qc.remove_members(member, reason="left guild")
 
 # ── 41 Alert background task ──────────────────────────────────────────────────
-from bot.alerts import think as _alerts_think
+from bot.alert import think as _alerts_think
 dc.events['on_think'].append(_alerts_think)
