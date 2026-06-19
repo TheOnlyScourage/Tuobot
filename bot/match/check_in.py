@@ -22,6 +22,7 @@ class CheckIn:
 		self.ready_players = set()
 		self.discarded_players = set()
 		self.message = None
+		self.standby_pulled = False  # True once standby fill has fired
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			self.ready_players.add(p)
@@ -37,6 +38,17 @@ class CheckIn:
 			self.m.states.append(self.m.CHECK_IN)
 
 	async def think(self, frame_time):
+		# ── Standby fill at 2/3 of the way through check-in ──────────────────
+		# Example: 3 min check-in → at 2 min, pull standby players for unready slots.
+		pull_at = self.m.start_time + int(self.timeout * 2 / 3)
+		if (
+			not self.standby_pulled
+			and frame_time > pull_at
+			and self.allow_discard
+			and getattr(self.m.queue, 'standby', None)
+		):
+			await self.pull_standby(bot.SystemContext(self.m.qc))
+
 		if frame_time > self.m.start_time + self.timeout:
 			ctx = bot.SystemContext(self.m.qc)
 			if self.allow_discard:
@@ -91,6 +103,14 @@ class CheckIn:
 			)
 			return
 
+		# ── Race-to-ready finish condition ───────────────────────────────────
+		# Once queue.cfg.size players have readied, the match is full and starts
+		# immediately. Any leftover candidates go back to standby.
+		queue_size = self.m.queue.cfg.size
+		if len(self.ready_players) >= queue_size:
+			await self.finish_race(ctx)
+			return
+
 		if len(not_ready):
 			try:
 				await self.message.edit(content=None, embed=self.m.embeds.check_in(not_ready))
@@ -98,6 +118,33 @@ class CheckIn:
 				pass
 		else:
 			await self.finish(ctx)
+
+	async def finish_race(self, ctx):
+		"""Race ended — queue.cfg.size players readied first. Trim the roster.
+
+		The ready players become the match roster (preserving original order
+		where possible). Anyone who didn\'t make it goes back to standby.
+		"""
+		queue_size = self.m.queue.cfg.size
+
+		# Keep the first `queue_size` ready players (in original join order)
+		kept = [p for p in self.m.players if p in self.ready_players][:queue_size]
+		losers = [p for p in self.m.players if p not in kept]
+
+		# Send losers back to standby (they did nothing wrong)
+		for p in losers:
+			if p not in self.m.queue.standby:
+				self.m.queue.standby.append(p)
+
+		self.m.players = kept
+		self.ready_players = set(kept)
+
+		if losers:
+			await ctx.notice(self.m.gt(
+				"{losers} didn\'t make the cut and have been returned to standby."
+			).format(losers=join_and([m.mention for m in losers])))
+
+		await self.finish(ctx)
 
 	async def finish(self, ctx):
 		bot.waiting_reactions.pop(self.message.id)
@@ -180,6 +227,61 @@ class CheckIn:
 		bot.active_matches.remove(self.m)
 		await self.m.queue.revert(ctx, [member], [m for m in self.m.players if m != member])
 
+	async def pull_standby(self, ctx):
+		"""At 2/3 of check-in: add standby as ADDITIONAL candidates.
+
+		Nobody is kicked out. The 2 standby players now compete with the
+		unready originals for the open slots — first to ready up wins.
+		When `queue.cfg.size` players have readied, finish() fires and the
+		rest go back to standby.
+		"""
+		self.standby_pulled = True
+
+		not_ready = [m for m in self.m.players if m not in self.ready_players and m not in self.discarded_players]
+		standby = list(getattr(self.m.queue, 'standby', []) or [])
+
+		if not not_ready or not standby:
+			return
+
+		# Add standby players as additional candidates (don\'t remove anyone yet)
+		added = []
+		for in_player in standby:
+			if in_player in self.m.players:
+				continue
+			self.m.players.append(in_player)
+			self.m.queue.standby.remove(in_player)
+			added.append(in_player)
+
+			# Make sure ratings dict has the new player
+			if in_player.id not in self.m.ratings:
+				try:
+					rows = await self.m.qc.rating.get_players([in_player.id])
+					if rows:
+						self.m.ratings[in_player.id] = rows[0]['rating']
+				except Exception as e:
+					log.error(f"pull_standby rating fetch failed: {e}")
+					self.m.ratings.setdefault(in_player.id, 1500)
+
+			# Auto-readies still apply for late arrivals
+			if in_player.id in bot.auto_ready:
+				self.ready_players.add(in_player)
+
+		if not added:
+			return
+
+		not_ready_mentions = join_and([m.mention for m in not_ready])
+		added_mentions    = join_and([m.mention for m in added])
+		await ctx.notice(self.m.gt(
+			"\u26a0\ufe0f Standby pulled in! {added} are now competing for the open slots "
+			"with {not_ready}. First to react {ready} wins the spot!"
+		).format(
+			added=added_mentions,
+			not_ready=not_ready_mentions,
+			ready=self.READY_EMOJI
+		))
+
+		await self.refresh(ctx)
+
 	async def abort_timeout(self, ctx):
 		not_ready = [m for m in self.m.players if m not in self.ready_players]
 		if self.message:
@@ -203,4 +305,15 @@ class CheckIn:
 			self.m.gt("Reverting {queue} to the gathering stage...").format(queue=f"**{self.m.queue.name}**")
 		)))
 
-		await self.m.queue.revert(ctx, not_ready, list(self.ready_players))
+		# If we expanded past queue.cfg.size via standby, the ready set might be
+		# bigger than the queue size. Trim it down using join order so revert()
+		# doesn\'t try to start a match with too many players.
+		queue_size = self.m.queue.cfg.size
+		ready_list = [p for p in self.m.players if p in self.ready_players][:queue_size]
+		extra_ready = [p for p in self.m.players if p in self.ready_players][queue_size:]
+		# Anyone ready but over the cap goes back to standby (they didn\'t fail)
+		for p in extra_ready:
+			if p not in self.m.queue.standby:
+				self.m.queue.standby.append(p)
+
+		await self.m.queue.revert(ctx, not_ready, ready_list)
