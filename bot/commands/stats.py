@@ -416,6 +416,16 @@ async def season_end(ctx, min_matches: int = 15):
 		except Exception:
 			pass
 
+	# Build & post the highlights embed BEFORE the reset wipes the data
+	try:
+		from bot.stats.season_highlights import build_highlights_embed
+		highlights = await build_highlights_embed(ctx, season_num)
+		if highlights is not None:
+			await ctx.channel.send(embed=highlights)
+	except Exception as e:
+		from core.console import log
+		log.error(f"[season_highlights] failed to build/post embed: {e}")
+
 	# Reset all ratings and match stats for this channel
 	import bot
 	await bot.stats.reset_channel(ctx.qc.id)
