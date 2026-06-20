@@ -1,4 +1,4 @@
-__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start']
+__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start', 'house_points', 'house_points_reset']
 
 import io
 import asyncio
@@ -450,3 +450,32 @@ async def season_start(ctx):
 
 	embed = Embed(colour=Colour(0x27b75e), description="\n".join(lines))
 	await ctx.reply(embed=embed)
+
+async def house_points(ctx):
+	"""Show the Hogwarts house standings."""
+	from bot.stats.house_points import get_standings
+	from bot.match.embeds import HOUSE_EMOJIS
+
+	standings = await get_standings()
+
+	medals = ["\U0001f947", "\U0001f948", "\U0001f949", "\u20074."]
+	lines = []
+	for i, row in enumerate(standings):
+		rank = medals[i] if i < len(medals) else f"{i+1}."
+		emoji = HOUSE_EMOJIS.get(row['house'], "")
+		lines.append(f"{rank} {emoji} **{row['house']}** \u2014 **{row['points']}** points")
+
+	embed = Embed(
+		colour=Colour(0xf1c40f),
+		title="\U0001f4dc Hogwarts House Cup Standings",
+		description="\n".join(lines)
+	)
+	await ctx.reply(embed=embed)
+
+
+async def house_points_reset(ctx):
+	"""Admin: reset every house's points to zero."""
+	ctx.check_perms(ctx.Perms.ADMIN)
+	from bot.stats.house_points import reset_all
+	await reset_all()
+	await ctx.success("All house point totals have been reset to 0.", title="House Points Reset")
