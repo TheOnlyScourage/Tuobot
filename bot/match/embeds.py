@@ -65,10 +65,10 @@ class Embeds:
 		return dict(text=text, icon_url=self._icon_url)
 
 	def _player_line(self, p: Member) -> str:
-		"""Return '{mention} {rank_emoji} 〈{rating}〉' — Q6Bot style player line."""
+		"""Return '{rank_emoji} 〈{rating}〉 {mention}' — rank/rating first, name last."""
 		rating = self.m.ratings.get(p.id)
 		if rating is not None and self.m.ranked:
-			return f"{p.mention} {_rank_emoji(rating)} 〈{rating}〉"
+			return f"{_rank_emoji(rating)} 〈{rating}〉 {p.mention}"
 		return p.mention
 
 	def _ranked_nick(self, p: Member):
