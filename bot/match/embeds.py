@@ -51,10 +51,18 @@ class Embeds:
 
 	def __init__(self, match):
 		self.m = match
-		self.footer = dict(
-			text=f"Match id: {str(self.m.id).zfill(6)}",
-			icon_url=dc.user.avatar.with_size(32).url if dc.user.avatar else None
-		)
+		# Footer is rebuilt lazily via _make_footer() so the season number
+		# (stashed on the match in Match.new) is included if available.
+		self._icon_url = dc.user.avatar.with_size(32).url if dc.user.avatar else None
+		self.footer = self._make_footer()
+
+	def _make_footer(self):
+		"""Build the footer dict. Includes 'Season N' if match.season_number is set."""
+		text = f"Match id: {str(self.m.id).zfill(6)}"
+		season = getattr(self.m, 'season_number', None)
+		if season:
+			text += f"  \u2022  Season {season}"
+		return dict(text=text, icon_url=self._icon_url)
 
 	def _player_line(self, p: Member) -> str:
 		"""Return '{mention} {rank_emoji} 〈{rating}〉' — Q6Bot style player line."""
@@ -116,7 +124,7 @@ class Embeds:
 				]),
 				inline=False
 			)
-		embed.set_footer(**self.footer)
+		embed.set_footer(**self._make_footer())
 		return embed
 
 	def draft(self):
@@ -166,7 +174,7 @@ class Embeds:
 
 			embed.add_field(name="—", value=msg + "\n\u200b", inline=False)
 
-		embed.set_footer(**self.footer)
+		embed.set_footer(**self._make_footer())
 		return embed
 
 	def final_message(self):
@@ -252,5 +260,5 @@ class Embeds:
 					value="\n".join([f"{p.mention}: {p.activity.url}" for p in streamers]) + "\n\u200b"
 				)
 
-		embed.set_footer(**self.footer)
+		embed.set_footer(**self._make_footer())
 		return embed
