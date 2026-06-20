@@ -27,17 +27,49 @@ async def add(ctx, queues: str = None):
 		if not len(t_queues):
 			t_queues = [q for q in ctx.qc.queues if q.cfg.is_default]
 
+	# Track which queue each result came from so we can detect standby placement
 	qr = dict()
+	standby_queues = []
 	for q in t_queues:
 		qr[q] = await q.add_member(ctx, ctx.author)
 		if qr[q] == bot.Qr.QueueStarted:
 			await ctx.notice(ctx.qc.topic)
 			return
+		# If the player was routed to the standby pool, remember the queue
+		if qr[q] == bot.Qr.Success and ctx.author in getattr(q, 'standby', []):
+			standby_queues.append(q)
 
 	if len(not_allowed := [q for q in qr.keys() if qr[q] == bot.Qr.NotAllowed]):
 		await ctx.error(ctx.qc.gt("You are not allowed to add to {queues} queues.".format(
 			queues=join_and([f"**{q.name}**" for q in not_allowed])
 		)))
+
+	if standby_queues:
+		# Standby placement: ephemeral success in channel + DM so the player
+		# isn\'t confused by the queue topic showing "no players".
+		queue_names = join_and([f"**{q.name}**" for q in standby_queues])
+		channel_mention = ctx.channel.mention if hasattr(ctx, 'channel') and ctx.channel else "the queue channel"
+		standby_msg = (
+			f"\u23f3 You\u2019re on **standby** for {queue_names}.\n"
+			f"A match is currently in check-in. If any of the current players "
+			f"don\u2019t ready up in time, you\u2019ll be pulled in to compete for the open slot."
+		)
+		try:
+			await ctx.success(standby_msg, title="On Standby", ephemeral=True)
+		except TypeError:
+			# Older context might not accept ephemeral kwarg — fall back to normal
+			await ctx.success(standby_msg, title="On Standby")
+
+		# DM the player for extra safety
+		try:
+			await ctx.author.send(
+				f"\u23f3 You\u2019re on standby for {queue_names} in {channel_mention}.\n"
+				f"A match is currently in check-in. If anyone fails to ready up, "
+				f"you\u2019ll be pulled in \u2014 keep an eye on the channel."
+			)
+		except Exception:
+			pass  # DMs disabled / blocked
+		return
 
 	if bot.Qr.Success in qr.values():
 		await ctx.qc.update_expire(ctx.author)
@@ -143,6 +175,26 @@ async def add_player(ctx, player: Member, queue: str):
 
 	resp = await q.add_member(ctx, p)
 	if resp == bot.Qr.Success:
+		# Standby detection — if player landed in standby, send DM + ephemeral notice
+		if p in getattr(q, 'standby', []):
+			channel_mention = ctx.channel.mention if hasattr(ctx, 'channel') and ctx.channel else "the queue channel"
+			try:
+				await p.send(
+					f"\u23f3 You\u2019ve been added to **standby** for **{q.name}** in {channel_mention}.\n"
+					f"A match is currently in check-in. If anyone fails to ready up, "
+					f"you\u2019ll be pulled in to compete for the spot."
+				)
+			except Exception:
+				pass
+			try:
+				await ctx.success(
+					f"**{get_nick(p)}** added to standby for **{q.name}**.",
+					title="On Standby",
+					ephemeral=True
+				)
+			except TypeError:
+				await ctx.success(f"**{get_nick(p)}** added to standby for **{q.name}**.")
+			return
 		await ctx.qc.update_expire(p)
 		await ctx.reply(ctx.qc.topic)
 	elif resp == bot.Qr.QueueStarted:
