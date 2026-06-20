@@ -554,37 +554,44 @@ async def _pick(
 
 @_pick.on_autocomplete("player")
 async def _pick_autocomplete(interaction: Interaction, current: str):
-	"""Autocomplete only the unpicked players in the active draft on this channel."""
-	qc = bot.queue_channels.get(interaction.channel_id)
-	if qc is None:
-		await interaction.response.send_autocomplete([])
-		return
+	"""Autocomplete the unpicked players for the active draft on this channel.
 
-	# Find an active match on this channel that is in DRAFT phase
-	candidates = []
-	for m in bot.active_matches:
-		if m.qc != qc:
-			continue
-		if m.state != m.DRAFT:
-			continue
-		if len(m.teams) > 2 and m.teams[2]:
-			candidates = list(m.teams[2])  # unpicked pool
-			break
+	Wrapped in a broad try/except so a single error here never leaves the
+	Discord client showing "Loading options failed" — we always send something
+	back, even an empty list.
+	"""
+	try:
+		qc = bot.queue_channels.get(interaction.channel_id)
+		candidates = []
+		if qc is not None:
+			for m in bot.active_matches:
+				if m.qc != qc:
+					continue
+				if m.state != m.DRAFT:
+					continue
+				if len(m.teams) > 2 and m.teams[2]:
+					candidates = list(m.teams[2])
+					break
 
-	# Filter by what the user has typed so far
-	cur = (current or "").lower().strip()
-	results = []
-	for p in candidates:
-		name = p.display_name
-		if cur and cur not in name.lower():
-			continue
-		# Show "DisplayName" but the value is the user_id for reliable lookup
-		results.append({"name": name[:100], "value": str(p.id)})
-		if len(results) >= 25:
-			break
+		cur = (current or "").lower().strip()
+		# Build {display_name: user_id_string} — nextcord renders this as the
+		# autocomplete dropdown and sends the user_id back to the command handler.
+		choices = {}
+		for p in candidates:
+			name = p.display_name[:100]
+			if cur and cur not in name.lower():
+				continue
+			choices[name] = str(p.id)
+			if len(choices) >= 25:
+				break
 
-	# nextcord accepts a list of dicts directly
-	await interaction.response.send_autocomplete(results)
+		await interaction.response.send_autocomplete(choices)
+	except Exception as exc:
+		log.error(f"[_pick_autocomplete] failed: {exc}")
+		try:
+			await interaction.response.send_autocomplete({})
+		except Exception:
+			pass
 
 
 @dc.slash_command(name='report', description='Report match result.', **guild_kwargs)
