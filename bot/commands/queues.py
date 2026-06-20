@@ -60,15 +60,19 @@ async def add(ctx, queues: str = None):
 			# Older context might not accept ephemeral kwarg — fall back to normal
 			await ctx.success(standby_msg, title="On Standby")
 
-		# DM the player for extra safety
-		try:
-			await ctx.author.send(
-				f"\u23f3 You\u2019re on standby for {queue_names} in {channel_mention}.\n"
-				f"A match is currently in check-in. If anyone fails to ready up, "
-				f"you\u2019ll be pulled in \u2014 keep an eye on the channel."
-			)
-		except Exception:
-			pass  # DMs disabled / blocked
+		# DM the player for extra safety — fire-and-forget so the slash response isn\'t blocked
+		import asyncio as _aio
+		dm_text = (
+			f"\u23f3 You\u2019re on standby for {queue_names} in {channel_mention}.\n"
+			f"A match is currently in check-in. If anyone fails to ready up, "
+			f"you\u2019ll be pulled in \u2014 keep an eye on the channel."
+		)
+		async def _dm():
+			try:
+				await ctx.author.send(dm_text)
+			except Exception:
+				pass
+		_aio.ensure_future(_dm())
 		return
 
 	if bot.Qr.Success in qr.values():
@@ -178,14 +182,18 @@ async def add_player(ctx, player: Member, queue: str):
 		# Standby detection — if player landed in standby, send DM + ephemeral notice
 		if p in getattr(q, 'standby', []):
 			channel_mention = ctx.channel.mention if hasattr(ctx, 'channel') and ctx.channel else "the queue channel"
-			try:
-				await p.send(
-					f"\u23f3 You\u2019ve been added to **standby** for **{q.name}** in {channel_mention}.\n"
-					f"A match is currently in check-in. If anyone fails to ready up, "
-					f"you\u2019ll be pulled in to compete for the spot."
-				)
-			except Exception:
-				pass
+			import asyncio as _aio
+			dm_text = (
+				f"\u23f3 You\u2019ve been added to **standby** for **{q.name}** in {channel_mention}.\n"
+				f"A match is currently in check-in. If anyone fails to ready up, "
+				f"you\u2019ll be pulled in to compete for the spot."
+			)
+			async def _dm():
+				try:
+					await p.send(dm_text)
+				except Exception:
+					pass
+			_aio.ensure_future(_dm())
 			try:
 				await ctx.success(
 					f"**{get_nick(p)}** added to standby for **{q.name}**.",
