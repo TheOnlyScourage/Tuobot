@@ -403,15 +403,20 @@ class PickupQueue:
 			return bot.Qr.NotAllowed
 
 		# ── Standby pool ─────────────────────────────────────────────────────
-		# If a match from this queue is in check-in or draft, accept extras
-		# into a standby list. They get pulled in if anyone fails check-in.
-		# Use queue ID instead of object identity so this works after state restore.
+		# Standby only applies during the CHECK_IN phase — that\'s the only
+		# stage where late joiners can still claim a slot. Once a match reaches
+		# DRAFT or WAITING_REPORT, new adders go straight into the normal queue
+		# so they\'re ready for the next match.
 		active_match = next(
-			(m for m in bot.active_matches if m.queue.id == self.id), None
+			(
+				m for m in bot.active_matches
+				if m.queue.id == self.id and m.state == m.CHECK_IN
+			),
+			None
 		)
 		log.info(
 			f"[add_member] queue={self.name} member={member.display_name} "
-			f"active_match={active_match.id if active_match else None} "
+			f"active_match_in_checkin={active_match.id if active_match else None} "
 			f"standby_before={[m.display_name for m in self.standby]}"
 		)
 		if active_match is not None:
@@ -421,6 +426,17 @@ class PickupQueue:
 			self.standby.append(member)
 			log.info(f"[add_member] {member.display_name} added to standby (now {len(self.standby)} players)")
 			return bot.Qr.Success
+
+		# If there\'s no check-in but standby has stale entries (e.g. from a
+		# previous match that already finished), flush them back into the queue
+		# proper so they can join the next match normally.
+		if self.standby:
+			flushed = list(self.standby)
+			self.standby = []
+			for p in flushed:
+				if p not in self.queue and len(self.queue) < self.cfg.size:
+					self.queue.append(p)
+			log.info(f"[add_member] flushed {len(flushed)} stale standby players back into queue")
 
 		if len(self.queue) >= self.cfg.size:
 			return bot.Qr.QueueFull
