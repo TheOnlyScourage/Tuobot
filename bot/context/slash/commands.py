@@ -521,11 +521,77 @@ async def _cap_for(
 _cap_for.on_autocomplete('team')(autocomplete.teams_by_author)
 
 
-@dc.slash_command(name='pick', description='Pick a player.', **guild_kwargs)
+@dc.slash_command(name='pick', description='Pick a player from the unpicked pool.', **guild_kwargs)
 async def _pick(
 		interaction: Interaction,
-		player: Member = SlashOption(name="player", verify=False),
-): await run_slash(bot.commands.pick, interaction=interaction, players=[player])
+		player: str = SlashOption(name="player", description="Pick from the unpicked pool.", required=True),
+):
+	# Resolve the player string (formatted as "<user_id>") back to a Member
+	guild = interaction.guild
+	member = None
+	try:
+		uid = int(player)
+		member = guild.get_member(uid) if guild else None
+	except (ValueError, TypeError):
+		member = None
+
+	if member is None:
+		# Fall back to name-match against the active match\'s unpicked pool
+		qc = bot.queue_channels.get(interaction.channel_id)
+		if qc is not None:
+			matches = [m for m in bot.active_matches if m.qc == qc and m.state == m.DRAFT]
+			for m in matches:
+				if len(m.teams) > 2:
+					for p in m.teams[2]:
+						if p.display_name.lower() == player.lower() or p.name.lower() == player.lower():
+							member = p
+							break
+				if member:
+					break
+
+	if member is None:
+		await interaction.response.send_message(
+			embed=error_embed(f"Could not find player '{player}' in the unpicked pool."),
+			ephemeral=True,
+		)
+		return
+
+	await run_slash(bot.commands.pick, interaction=interaction, players=[member])
+
+
+@_pick.on_autocomplete("player")
+async def _pick_autocomplete(interaction: Interaction, current: str):
+	"""Autocomplete only the unpicked players in the active draft on this channel."""
+	qc = bot.queue_channels.get(interaction.channel_id)
+	if qc is None:
+		await interaction.response.send_autocomplete([])
+		return
+
+	# Find an active match on this channel that is in DRAFT phase
+	candidates = []
+	for m in bot.active_matches:
+		if m.qc != qc:
+			continue
+		if m.state != m.DRAFT:
+			continue
+		if len(m.teams) > 2 and m.teams[2]:
+			candidates = list(m.teams[2])  # unpicked pool
+			break
+
+	# Filter by what the user has typed so far
+	cur = (current or "").lower().strip()
+	results = []
+	for p in candidates:
+		name = p.display_name
+		if cur and cur not in name.lower():
+			continue
+		# Show "DisplayName" but the value is the user_id for reliable lookup
+		results.append({"name": name[:100], "value": str(p.id)})
+		if len(results) >= 25:
+			break
+
+	# nextcord accepts a list of dicts directly
+	await interaction.response.send_autocomplete(results)
 
 
 @dc.slash_command(name='report', description='Report match result.', **guild_kwargs)
