@@ -59,33 +59,34 @@ async def sub_for(ctx, player: Member):
 	await match.draft.sub_for(ctx, player, ctx.author)
 
 
-async def sub_force(ctx, player1: Member, player2: Member, sub_type: str = 'New'):
-	ctx.check_perms(ctx.Perms.MODERATOR)
+async def sub_force(ctx, player1: Member, player2: Member):
+	"""Substitute player1 out for player2 in the active match.
 
-	# Diagnostic — log every active match so we can see why a lookup fails
-	from core.console import log
-	active_summary = [
-		f"match {m.id} on qc {m.qc.id}: {[p.display_name for p in m.players]}"
-		for m in bot.active_matches
-	]
-	log.info(f"[sub_force] player1={player1.display_name} ({player1.id}) ctx.qc={ctx.qc.id} "
-	         f"active_matches=[{'; '.join(active_summary)}]")
+	player2 is treated as a FILL-IN: if the team wins, player2 gets normal
+	gains. If the team loses, the rating penalty is redirected to player1
+	(the original who was subbed out), since they're the one who committed
+	to the match.
+	"""
+	ctx.check_perms(ctx.Perms.MODERATOR)
 
 	if (match := find(lambda m: m.qc == ctx.qc and player1 in m.players, bot.active_matches)) is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt(
 			f"**{player1.display_name}** is not in any active match on this channel."
 		))
 	if any((player2 in m.players for m in bot.active_matches)):
-		raise bot.Exc.InMatchError(ctx.qc.gt("Specified user is in an active match."))
+		raise bot.Exc.InMatchError(ctx.qc.gt(
+			f"**{player2.display_name}** is already in an active match."
+		))
 
-	# Capture player1's team index BEFORE the swap (needed for fill-in tracking)
+	# Capture player1\'s team index BEFORE the swap so we can redirect the
+	# penalty to player1 if the team ends up losing.
 	team_idx = next(
 		(i for i, t in enumerate(match.teams[:2]) if player1 in t), None
-	) if sub_type == 'Match in progress' else None
+	)
 
 	await match.draft.sub_for(ctx, player1, player2, force=True)
 
-	# Register fill-in sub so rating logic can apply loss to player1 if team loses
+	# Always register as fill-in: team loss → player1 takes the hit.
 	if team_idx is not None:
 		match.fill_subs[player2.id] = (player1.id, team_idx)
 
@@ -166,52 +167,134 @@ async def force_checkin(ctx, match_id: int):
 
 
 async def swap_players(ctx, player1: Member, player2: Member):
-	"""Swap two players between teams during the draft phase (admin only)."""
+	"""Swap two players. Auto-detects mode:
+
+	Mode A — Both players in the same active match:
+	   Swap their positions across teams (or move one in/out of unpicked pool).
+	   No rating side-effects.
+
+	Mode B — One player is in an active match, the other is NOT in any match
+	   AND NOT in any queue:
+	   Bring the outsider in, send the insider out. Clean swap, no penalty
+	   redirect (use /match sub_player for the penalty-on-original semantics).
+
+	Mode C — Neither is in any match (both are just queued/idle):
+	   Swap their positions in the queue if both are queued, otherwise error.
+	"""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 
-	# Both players must be in the same active match on this channel
-	match = find(
-		lambda m: m.qc == ctx.qc and player1 in m.players and player2 in m.players,
-		bot.active_matches
-	)
-	if match is None:
-		raise bot.Exc.NotFoundError(
-			"Both players must be in the same active match on this channel."
+	if player1.id == player2.id:
+		raise bot.Exc.ValueError(ctx.qc.gt("Cannot swap a player with themselves."))
+
+	# Resolve which active matches each player is in (channel-scoped)
+	m1 = find(lambda m: m.qc == ctx.qc and player1 in m.players, bot.active_matches)
+	m2 = find(lambda m: m.qc == ctx.qc and player2 in m.players, bot.active_matches)
+
+	# ── Mode A: both in the same match → swap team positions ──────────────
+	if m1 is not None and m2 is not None:
+		if m1 is not m2:
+			raise bot.Exc.ValueError(ctx.qc.gt(
+				"Players are in different matches \u2014 swap not possible."
+			))
+		match = m1
+		if match.state not in (match.DRAFT, match.WAITING_REPORT):
+			raise bot.Exc.MatchStateError(ctx.qc.gt(
+				"Swap is only available during the draft or waiting-report phase."
+			))
+
+		# Find each player\'s location across ALL team slots (incl. unpicked pool)
+		loc1 = next(((t, t.index(player1)) for t in match.teams if player1 in t), None)
+		loc2 = next(((t, t.index(player2)) for t in match.teams if player2 in t), None)
+		if loc1 is None or loc2 is None:
+			raise bot.Exc.NotFoundError(ctx.qc.gt(
+				"Could not locate both players in the match."
+			))
+		if loc1[0] is loc2[0]:
+			raise bot.Exc.ValueError(ctx.qc.gt(
+				f"**{get_nick(player1)}** and **{get_nick(player2)}** are already on the same team."
+			))
+
+		t1, i1 = loc1
+		t2, i2 = loc2
+		t1[i1] = player2
+		t2[i2] = player1
+
+		if match.state == match.WAITING_REPORT:
+			await ctx.notice(embed=match.embeds.final_message())
+		else:
+			await match.draft.print(ctx)
+
+		await ctx.success(
+			f"Swapped **{get_nick(player1)}** \u2194 **{get_nick(player2)}** within the match."
 		)
+		return
 
-	if match.state not in (match.DRAFT, match.WAITING_REPORT):
-		raise bot.Exc.MatchStateError(
-			"Swap is only available during the draft or waiting-report phase."
+	# ── Mode B: one in a match, the other free → bring outsider in ────────
+	if (m1 is None) != (m2 is None):
+		match    = m1 or m2
+		insider  = player1 if m1 is not None else player2
+		outsider = player2 if m1 is not None else player1
+
+		# Outsider must NOT be in any other match
+		if any(outsider in m.players for m in bot.active_matches):
+			raise bot.Exc.InMatchError(ctx.qc.gt(
+				f"**{outsider.display_name}** is already in an active match."
+			))
+
+		# Pull outsider out of any queues so they don\'t double-add
+		for q in ctx.qc.queues:
+			if q.is_added(outsider):
+				q.pop_members(outsider)
+
+		# Find insider\'s slot in the match and replace
+		loc = next(((t, t.index(insider)) for t in match.teams if insider in t), None)
+		if loc is None:
+			raise bot.Exc.NotFoundError(ctx.qc.gt(
+				f"Could not locate **{get_nick(insider)}** in the match."
+			))
+		team_obj, idx = loc
+		team_obj[idx] = outsider
+
+		# Keep match.players in sync
+		if insider in match.players:
+			match.players[match.players.index(insider)] = outsider
+
+		# Add the outsider\'s rating into the match dict so embeds don\'t KeyError
+		if outsider.id not in match.ratings:
+			try:
+				rows = await match.qc.rating.get_players([outsider.id])
+				if rows:
+					match.ratings[outsider.id] = rows[0]['rating'] or 1500
+			except Exception:
+				match.ratings.setdefault(outsider.id, 1500)
+
+		if match.state == match.WAITING_REPORT:
+			await ctx.notice(embed=match.embeds.final_message())
+		elif match.state == match.DRAFT:
+			await match.draft.print(ctx)
+
+		await ctx.success(
+			f"Swapped **{get_nick(insider)}** \u2194 **{get_nick(outsider)}** "
+			"(outside player brought in, no penalty redirect)."
 		)
+		return
 
-	# Find which team each player is on (teams[0] and teams[1] only)
-	team1_idx = next((i for i, t in enumerate(match.teams[:2]) if player1 in t), None)
-	team2_idx = next((i for i, t in enumerate(match.teams[:2]) if player2 in t), None)
+	# ── Mode C: neither in a match → swap queue positions ─────────────────
+	swapped_in_queue = False
+	for q in ctx.qc.queues:
+		if q.is_added(player1) and q.is_added(player2):
+			i1 = q.queue.index(player1)
+			i2 = q.queue.index(player2)
+			q.queue[i1], q.queue[i2] = q.queue[i2], q.queue[i1]
+			swapped_in_queue = True
 
-	if team1_idx is None or team2_idx is None:
-		raise bot.Exc.NotFoundError(
-			"One or both players have not been picked to a team yet."
+	if swapped_in_queue:
+		await ctx.success(
+			f"Swapped queue positions of **{get_nick(player1)}** \u2194 **{get_nick(player2)}**."
 		)
-	if team1_idx == team2_idx:
-		raise bot.Exc.ValueError(
-			f"**{get_nick(player1)}** and **{get_nick(player2)}** are already on the same team."
-		)
+		return
 
-	# Perform the swap
-	t1 = match.teams[team1_idx]
-	t2 = match.teams[team2_idx]
-	p1_pos = t1.index(player1)
-	p2_pos = t2.index(player2)
-	t1[p1_pos] = player2
-	t2[p2_pos] = player1
-
-	# Refresh the display
-	if match.state == match.WAITING_REPORT:
-		await ctx.notice(embed=match.embeds.final_message())
-	else:
-		await match.draft.print(ctx)
-
-	await ctx.success(
-		f"Swapped **{get_nick(player1)}** ({match.teams[team2_idx].name}) "
-		f"↔ **{get_nick(player2)}** ({match.teams[team1_idx].name})."
-	)
+	raise bot.Exc.NotFoundError(ctx.qc.gt(
+		"Neither player is in an active match, and they\u2019re not both queued together. "
+		"Nothing to swap."
+	))
