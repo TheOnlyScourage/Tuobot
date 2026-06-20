@@ -1,7 +1,7 @@
 __all__ = [
 	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
 	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual',
-	'force_checkin'
+	'force_checkin', 'swap_players'
 ]
 
 from nextcord import Member
@@ -202,54 +202,4 @@ async def swap_players(ctx, player1: Member, player2: Member):
 	await ctx.success(
 		f"Swapped **{get_nick(player1)}** ({match.teams[team2_idx].name}) "
 		f"↔ **{get_nick(player2)}** ({match.teams[team1_idx].name})."
-	)
-
-async def swap_players(ctx, player1: Member, player2: Member):
-	"""Swap two players between teams during the draft phase."""
-	ctx.check_perms(ctx.Perms.MODERATOR)
-
-	if player1.id == player2.id:
-		raise bot.Exc.ValueError(ctx.qc.gt("Cannot swap a player with themselves."))
-
-	# Both players must be in the same active match on this channel
-	match = find(
-		lambda m: m.qc == ctx.qc and player1 in m.players and player2 in m.players,
-		bot.active_matches
-	)
-	if match is None:
-		raise bot.Exc.NotFoundError(
-			ctx.qc.gt("Both players must be in the same active match on this channel.")
-		)
-
-	if match.state != match.DRAFT:
-		raise bot.Exc.MatchStateError(
-			ctx.qc.gt("The swap command can only be used during the draft phase.")
-		)
-
-	# Locate each player across all team slots (including unpicked pool)
-	loc1 = loc2 = None
-	for team in match.teams:
-		if player1 in team:
-			loc1 = (team, team.index(player1))
-		if player2 in team:
-			loc2 = (team, team.index(player2))
-
-	if loc1 is None or loc2 is None:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not locate both players in the match."))
-
-	if loc1[0] is loc2[0]:
-		raise bot.Exc.ValueError(
-			ctx.qc.gt("Both players are already on the same team — nothing to swap.")
-		)
-
-	# Perform the swap
-	team_a, idx_a = loc1
-	team_b, idx_b = loc2
-	team_a[idx_a] = player2
-	team_b[idx_b] = player1
-
-	# Refresh the draft embed — single response to avoid "did not respond" error
-	await ctx.notice(
-		content=f"✅ Swapped **{get_nick(player1)}** ↔ **{get_nick(player2)}**.",
-		embed=match.embeds.draft()
 	)
