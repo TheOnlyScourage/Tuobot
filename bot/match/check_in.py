@@ -20,6 +20,7 @@ class CheckIn:
 		self.allow_discard = self.m.cfg['check_in_discard']
 		self.discard_immediately = self.m.cfg['check_in_discard_immediately']
 		self.ready_players = set()
+		self.ready_order = []  # Members in the order they readied — used by finish_race tie-break
 		self.discarded_players = set()
 		self.message = None
 		self.standby_pulled = False  # True once standby fill has fired
@@ -138,13 +139,21 @@ class CheckIn:
 	async def finish_race(self, ctx):
 		"""Race ended — queue.cfg.size players readied first. Trim the roster.
 
-		The ready players become the match roster (preserving original order
-		where possible). Anyone who didn\'t make it goes back to standby.
+		The FIRST `queue_size` players to actually ready up keep their spot.
+		Everyone else (unready originals AND late-ready standby losers) goes
+		back to standby. Order is determined by self.ready_order, which is
+		appended to in real time as players click ✅.
 		"""
 		queue_size = self.m.queue.cfg.size
 
-		# Keep the first `queue_size` ready players (in original join order)
-		kept = [p for p in self.m.players if p in self.ready_players][:queue_size]
+		# Keep the first `queue_size` players who actually readied, in ready order.
+		# Fallback: if ready_order somehow missed someone (legacy state), use
+		# ready_players set as backup so we never lose a legitimate ready.
+		kept = [p for p in self.ready_order if p in self.ready_players][:queue_size]
+		if len(kept) < queue_size:
+			extras = [p for p in self.ready_players if p not in kept]
+			kept.extend(extras[:queue_size - len(kept)])
+
 		losers = [p for p in self.m.players if p not in kept]
 
 		# Send losers back to standby (they did nothing wrong)
@@ -165,6 +174,7 @@ class CheckIn:
 	async def finish(self, ctx):
 		bot.waiting_reactions.pop(self.message.id)
 		self.ready_players = set()
+		self.ready_order = []
 		if len(self.maps):
 			order = list(range(len(self.maps)))
 			random.shuffle(order)
@@ -191,6 +201,8 @@ class CheckIn:
 					self.map_votes[idx].add(user.id)
 					self.discarded_players.discard(user)
 					self.ready_players.add(user)
+					if user not in self.ready_order:
+						self.ready_order.append(user)
 				await self.refresh(bot.SystemContext(self.m.queue.qc))
 
 		elif str(reaction) == self.READY_EMOJI:
@@ -199,6 +211,8 @@ class CheckIn:
 			else:
 				self.discarded_players.discard(user)
 				self.ready_players.add(user)
+				if user not in self.ready_order:
+					self.ready_order.append(user)
 			await self.refresh(bot.SystemContext(self.m.queue.qc))
 
 		elif str(reaction) == self.NOT_READY_EMOJI and self.allow_discard:
@@ -211,6 +225,8 @@ class CheckIn:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the check-in stage."))
 		if ready:
 			self.ready_players.add(member)
+			if member not in self.ready_order:
+				self.ready_order.append(member)
 			self.discarded_players.discard(member)
 			await self.refresh(ctx)
 		elif not ready:
@@ -222,6 +238,8 @@ class CheckIn:
 
 	async def discard_member(self, ctx, member):
 		self.ready_players.discard(member)
+		if member in self.ready_order:
+			self.ready_order.remove(member)
 		self.discarded_players.add(member)
 		await self.refresh(ctx)
 
@@ -289,6 +307,8 @@ class CheckIn:
 			# Auto-readies still apply for late arrivals
 			if in_player.id in bot.auto_ready:
 				self.ready_players.add(in_player)
+				if in_player not in self.ready_order:
+					self.ready_order.append(in_player)
 
 		if not added:
 			return
