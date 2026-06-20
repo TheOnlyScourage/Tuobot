@@ -24,6 +24,7 @@ class CheckIn:
 		self.message = None
 		self.standby_pulled = False  # True once standby fill has fired
 		self._check_in_started_at = None  # frame_time when check-in actually started ticking
+		self.original_player_ids = set()  # populated in start(); only these get violations
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			self.ready_players.add(p)
@@ -68,6 +69,8 @@ class CheckIn:
 				await self.finish(ctx)
 
 	async def start(self, ctx):
+		# Snapshot originals so standby joiners aren\'t penalized for missing check-in.
+		self.original_player_ids = {p.id for p in self.m.players}
 		text = f"!spawn message {self.m.id}"
 		self.message = await ctx.channel.send(text)
 
@@ -340,8 +343,17 @@ class CheckIn:
 			except DiscordException:
 				pass
 
-		# Record 'missed' violation for every player who didn't check in
+		# Record 'missed' violation ONLY for original players who didn\'t check in.
+		# Standby joiners pulled in late shouldn\'t be penalized.
+		# If original set is empty (e.g. state restored mid-checkin), fall back
+		# to penalizing everyone like the old behaviour.
+		originals = self.original_player_ids if self.original_player_ids else {p.id for p in self.m.players}
 		for member in not_ready:
+			if member.id not in originals:
+				log.info(
+					f"[abort_timeout] skipping violation for standby joiner {member.display_name}"
+				)
+				continue
 			try:
 				await record_violation(ctx.channel, member, 'missed')
 			except Exception as e:
