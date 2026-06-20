@@ -450,13 +450,45 @@ class Match:
 			if self.state == self.CHECK_IN:
 				await self.check_in.start(ctx)
 			elif self.state == self.DRAFT:
+				await self._priority_cross_queue_cleanup(ctx)
 				await self.draft.start(ctx)
 			elif self.state == self.WAITING_REPORT:
+				await self._priority_cross_queue_cleanup(ctx)
 				await self.start_waiting_report(ctx)
 		else:
 			if self.state != self.WAITING_REPORT:
 				await self.final_message(ctx)
 			await self.finish_match(ctx)
+
+	async def _priority_cross_queue_cleanup(self, ctx):
+		"""Remove this match\'s players from other queues, respecting priority.
+
+		Called when the match transitions from check-in into the next phase
+		(DRAFT or WAITING_REPORT for queues without a draft). Players are
+		only removed from queues whose priority is <= this queue\'s priority.
+		Higher-priority queues keep them, matching the documented behaviour.
+		"""
+		if getattr(self, "_priority_cleanup_done", False):
+			return
+		self._priority_cleanup_done = True
+
+		my_priority = getattr(self, "_my_priority", None)
+		if my_priority is None:
+			my_priority = getattr(self.queue.cfg, "priority", None) or 0
+
+		player_ids = {p.id for p in self.players}
+		for qc in bot.queue_channels.values():
+			for q in qc.queues:
+				if q is self.queue:
+					continue
+				q_prio = getattr(q.cfg, "priority", None) or 0
+				if q_prio > my_priority:
+					continue  # higher-priority queue protects its members
+				to_remove = [m for m in q.queue if m.id in player_ids]
+				for m in to_remove:
+					q.queue.remove(m)
+				if not q.queue and q in bot.active_queues:
+					bot.active_queues.remove(q)
 
 	def rank_str(self, member):
 		return self.queue.qc.rating_rank(self.ratings[member.id])['rank']
