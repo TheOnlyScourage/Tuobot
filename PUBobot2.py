@@ -41,6 +41,8 @@ from bot.main import init_saved_state_table
 loop.run_until_complete(init_checkin_tracker_table())
 loop.run_until_complete(init_season_table())
 loop.run_until_complete(init_saved_state_table())
+from bot.stats.house_points import init_house_points_table
+loop.run_until_complete(init_house_points_table())
 
 # Load bot
 import bot
