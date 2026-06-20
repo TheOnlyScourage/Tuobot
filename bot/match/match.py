@@ -105,6 +105,14 @@ class Match:
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
 		match.init_teams(match.cfg['pick_teams'])
 		match._assign_house_names()  # Name teams from captain house roles
+
+		# Stash the current season number on the match so embeds can show it in the footer.
+		try:
+			from bot.stats.season import get_current_season_number
+			match.season_number = await get_current_season_number(ctx.qc.id)
+		except Exception:
+			match.season_number = None
+
 		if match.ranked:
 			match.states.append(match.WAITING_REPORT)
 		bot.active_matches.append(match)
