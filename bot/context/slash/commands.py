@@ -246,26 +246,19 @@ async def _report_manual(
 	await run_slash(_run, interaction=interaction, queue=queue, _winners=winners, _losers=losers, draw=draw)
 
 
-@groups.admin_match.subcommand(name='sub_player', description='Substitute a player in a match.')
+@groups.admin_match.subcommand(name='sub_player', description='Sub a player out. If their team loses, the penalty goes to the original.')
 async def _sub_force(
 		interaction: Interaction,
-		player1: Member = SlashOption(name="player1", description="Player to be replaced.", verify=False),
-		player2: Member = SlashOption(name="player2", description="Player coming in.", verify=False),
-		sub_type: str = SlashOption(
-			name="type",
-			description="New: P2 plays fully. Match in progress: P2 wins→gains, team loses→P1 takes penalty.",
-			choices=["New", "Match in progress"],
-			required=False,
-			default="New"
-		)
-): await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2, sub_type=sub_type)
+		player1: Member = SlashOption(name="player1", description="Player being subbed out (takes loss penalty if team loses).", verify=False),
+		player2: Member = SlashOption(name="player2", description="Player coming in as the fill-in.", verify=False),
+): await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2)
 
 
-@groups.admin_match.subcommand(name='swap', description='Swap two players between teams during the draft phase.')
+@dc.slash_command(name='swap', description='Swap two players (within match, queue, or bring an outsider in).', **guild_kwargs)
 async def _swap_players(
 		interaction: Interaction,
-		player1: Member = SlashOption(name="player1", description="First player to swap.", verify=False),
-		player2: Member = SlashOption(name="player2", description="Second player to swap.", verify=False),
+		player1: Member = SlashOption(name="player1", description="First player.", verify=False),
+		player2: Member = SlashOption(name="player2", description="Second player.", verify=False),
 ): await run_slash(bot.commands.swap_players, interaction=interaction, player1=player1, player2=player2)
 
 
