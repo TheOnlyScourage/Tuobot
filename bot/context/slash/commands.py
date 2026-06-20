@@ -263,6 +263,17 @@ async def _swap_players(
 ): await run_slash(bot.commands.swap_players, interaction=interaction, player1=player1, player2=player2)
 
 
+@dc.slash_command(name='matches', description='Match statistics.', **guild_kwargs)
+async def _matches(interaction: Interaction): pass
+
+
+@_matches.subcommand(name='all_time', description='Show all-time match counts for a player.')
+async def _matches_all_time(
+		interaction: Interaction,
+		player: Member = SlashOption(required=False, verify=False, description="Player to look up. Defaults to yourself.")
+): await run_slash(bot.commands.all_time_matches, interaction=interaction, player=player)
+
+
 @groups.admin_match.subcommand(name='put', description='Put a player in a team.')
 async def _put(
 		interaction: Interaction,
@@ -588,6 +599,19 @@ async def _don(interaction: Interaction):
 		"<@303565637786009603> <:L_Don:1517566869576355941>"
 	)
 
+
+
+
+@dc.slash_command(name='house_points', description='Show the Hogwarts House Cup standings.', **guild_kwargs)
+async def _house_points(
+		interaction: Interaction,
+): await run_slash(bot.commands.house_points, interaction=interaction)
+
+
+@groups.admin_stats.subcommand(name='house_points_reset', description='Reset all house point totals to zero.')
+async def _house_points_reset(
+		interaction: Interaction,
+): await run_slash(bot.commands.house_points_reset, interaction=interaction)
 
 # ── douche ────────────────────────────────────────────────────────────────────
 
