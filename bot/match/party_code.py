@@ -12,6 +12,7 @@ Flow:
   5. Captain B types code   → Game 2 Code embed posted
   6. Captain B types code   → Game 3 Code embed posted
 """
+import re
 from nextcord import Embed, Colour, DiscordException
 from core.client import dc
 from core.utils import get_nick
@@ -37,6 +38,16 @@ def _team_display(team) -> str:
 
 # Module-level registry: {(channel_id, user_id): PartyCode}
 # Checked by events.py on_message to route captain code inputs.
+# Game codes must be exactly 6 characters, uppercase letters and digits only.
+# We uppercase the input before checking so the captain can type either case.
+CODE_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
+
+
+def _is_valid_code(text: str) -> bool:
+	"""Return True if `text` (after strip+upper) is a valid 6-char code."""
+	return bool(CODE_PATTERN.match(text.strip().upper()))
+
+
 _waiting_codes: dict = {}
 
 
@@ -44,14 +55,24 @@ async def handle_code_input(message) -> bool:
 	"""
 	Called from events.py on_message.
 	Returns True if the message was consumed as a game code, False otherwise.
+
+	Only messages that match the strict 6-char A-Z/0-9 code format are
+	consumed. Anything else (random chatter, "one code pplease", etc.)
+	is ignored so the captain can keep talking while waiting.
 	"""
 	key = (message.channel.id, message.author.id)
 	pc = _waiting_codes.get(key)
-	if pc is not None and pc.active:
-		_waiting_codes.pop(key, None)
-		await pc._receive_code(message)
-		return True
-	return False
+	if pc is None or not pc.active:
+		return False
+
+	if not _is_valid_code(message.content):
+		return False  # not a code — leave the listener in place
+
+	# Pop BEFORE handing off so a successful submission can\'t double-fire,
+	# but the validation already happened above so this is safe.
+	_waiting_codes.pop(key, None)
+	await pc._receive_code(message)
+	return True
 
 
 class PartyCode:
@@ -184,7 +205,21 @@ class PartyCode:
 		if not self.active:
 			return
 
-		code      = message.content.strip()
+		code = message.content.strip().upper()
+
+		# Defensive re-check — handle_code_input filters out non-matching
+		# messages, but if somehow an invalid one gets through, bail without
+		# clearing the pending captain so they can retry.
+		if not _is_valid_code(code):
+			try:
+				await message.channel.send(
+					f"{message.author.mention} that code doesn\u2019t look right. "
+					"Codes must be exactly **6 characters** using "
+					"**A-Z and 0-9** only (e.g. `AB12C3`)."
+				)
+			except Exception:
+				pass
+			return
 		game_num  = self.pending_game
 		captain   = self.pending_captain
 		self.pending_captain = None
