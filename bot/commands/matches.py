@@ -61,8 +61,20 @@ async def sub_for(ctx, player: Member):
 
 async def sub_force(ctx, player1: Member, player2: Member, sub_type: str = 'New'):
 	ctx.check_perms(ctx.Perms.MODERATOR)
+
+	# Diagnostic — log every active match so we can see why a lookup fails
+	from core.console import log
+	active_summary = [
+		f"match {m.id} on qc {m.qc.id}: {[p.display_name for p in m.players]}"
+		for m in bot.active_matches
+	]
+	log.info(f"[sub_force] player1={player1.display_name} ({player1.id}) ctx.qc={ctx.qc.id} "
+	         f"active_matches=[{'; '.join(active_summary)}]")
+
 	if (match := find(lambda m: m.qc == ctx.qc and player1 in m.players, bot.active_matches)) is None:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user is not in a match."))
+		raise bot.Exc.NotFoundError(ctx.qc.gt(
+			f"**{player1.display_name}** is not in any active match on this channel."
+		))
 	if any((player2 in m.players for m in bot.active_matches)):
 		raise bot.Exc.InMatchError(ctx.qc.gt("Specified user is in an active match."))
 
