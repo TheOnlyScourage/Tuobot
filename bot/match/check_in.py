@@ -95,12 +95,14 @@ class CheckIn:
 				except DiscordException:
 					pass
 
-			# All not-ready players discarded — record violations for each
-			for member in self.discarded_players:
-				try:
-					await record_violation(ctx.channel, member, 'aborted')
-				except Exception as e:
-					log.error(f"checkin_tracker error (refresh/abort): {e}")
+			# All not-ready players discarded — record violations only on ranked.
+			# Unranked queues are casual; missing/aborting check-in shouldn\'t penalize.
+			if self.m.ranked:
+				for member in self.discarded_players:
+					try:
+						await record_violation(ctx.channel, member, 'aborted')
+					except Exception as e:
+						log.error(f"checkin_tracker error (refresh/abort): {e}")
 
 			await ctx.notice('\n'.join((
 				self.m.gt("{member} has aborted the check-in.").format(
@@ -227,11 +229,12 @@ class CheckIn:
 		bot.waiting_reactions.pop(self.message.id)
 		await self.message.delete()
 
-		# Record violation before reverting
-		try:
-			await record_violation(ctx.channel, member, 'aborted')
-		except Exception as e:
-			log.error(f"checkin_tracker error (abort_member): {e}")
+		# Record violation before reverting — ranked queues only.
+		if self.m.ranked:
+			try:
+				await record_violation(ctx.channel, member, 'aborted')
+			except Exception as e:
+				log.error(f"checkin_tracker error (abort_member): {e}")
 
 		await ctx.notice("\n".join((
 			self.m.gt("{member} has aborted the check-in.").format(member=f"<@{member.id}>"),
@@ -343,21 +346,25 @@ class CheckIn:
 			except DiscordException:
 				pass
 
-		# Record 'missed' violation ONLY for original players who didn\'t check in.
-		# Standby joiners pulled in late shouldn\'t be penalized.
-		# If original set is empty (e.g. state restored mid-checkin), fall back
-		# to penalizing everyone like the old behaviour.
-		originals = self.original_player_ids if self.original_player_ids else {p.id for p in self.m.players}
-		for member in not_ready:
-			if member.id not in originals:
-				log.info(
-					f"[abort_timeout] skipping violation for standby joiner {member.display_name}"
-				)
-				continue
-			try:
-				await record_violation(ctx.channel, member, 'missed')
-			except Exception as e:
-				log.error(f"checkin_tracker error (abort_timeout): {e}")
+		# Record 'missed' violation ONLY for original players on RANKED queues.
+		# - Unranked queues: no penalty for missing check-in (casual play)
+		# - Standby joiners pulled in late: also no penalty (they did nothing wrong)
+		# Fallback if original set is empty (state restored mid-checkin): treat
+		# everyone as original so behaviour matches pre-standby logic.
+		if self.m.ranked:
+			originals = self.original_player_ids if self.original_player_ids else {p.id for p in self.m.players}
+			for member in not_ready:
+				if member.id not in originals:
+					log.info(
+						f"[abort_timeout] skipping violation for standby joiner {member.display_name}"
+					)
+					continue
+				try:
+					await record_violation(ctx.channel, member, 'missed')
+				except Exception as e:
+					log.error(f"checkin_tracker error (abort_timeout): {e}")
+		else:
+			log.info(f"[abort_timeout] match {self.m.id} unranked \u2014 no violations recorded")
 
 		bot.active_matches.remove(self.m)
 
