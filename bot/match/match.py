@@ -467,10 +467,22 @@ class Match:
 		(DRAFT or WAITING_REPORT for queues without a draft). Players are
 		only removed from queues whose priority is <= this queue\'s priority.
 		Higher-priority queues keep them, matching the documented behaviour.
+		Also flushes the standby pool back into the queue, since standby
+		only applies during the check-in window.
 		"""
 		if getattr(self, "_priority_cleanup_done", False):
 			return
 		self._priority_cleanup_done = True
+
+		# Flush standby back to the queue — standby is over once we leave check-in.
+		if hasattr(self.queue, "standby") and self.queue.standby:
+			flushed = list(self.queue.standby)
+			self.queue.standby = []
+			for p in flushed:
+				if p not in self.queue.queue and len(self.queue.queue) < self.queue.cfg.size:
+					self.queue.queue.append(p)
+			if self.queue.queue and self.queue not in bot.active_queues:
+				bot.active_queues.append(self.queue)
 
 		my_priority = getattr(self, "_my_priority", None)
 		if my_priority is None:
