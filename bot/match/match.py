@@ -627,6 +627,38 @@ class Match:
 		else:
 			await bot.stats.register_match_unranked(ctx, self)
 
+		# Award Hogwarts house points to the winning team (no-op on draws/cancels)
+		if self.winner is not None and self.winner in (0, 1):
+			try:
+				from bot.stats.house_points import award_for_win
+				winning_team = self.teams[self.winner]
+				awarded = await award_for_win(winning_team)
+				if awarded:
+					await self._post_house_award_embed(ctx, awarded)
+			except Exception as e:
+				bot_log = __import__("core.console", fromlist=["log"]).log
+				bot_log.error(f"[house_points] award_for_win failed: {e}")
+
+	async def _post_house_award_embed(self, ctx, awarded):
+		"""Brief announcement listing house point awards from this match."""
+		from nextcord import Embed, Colour
+		from bot.match.embeds import HOUSE_EMOJIS
+
+		lines = []
+		for house, pts in sorted(awarded.items(), key=lambda kv: -kv[1]):
+			emoji = HOUSE_EMOJIS.get(house, "")
+			lines.append(f"{emoji} **{house}** +{pts}")
+
+		embed = Embed(
+			colour=Colour(0xf1c40f),
+			title=f"\U0001f4dc House Points \u2014 Match {str(self.id).zfill(6)}",
+			description="\n".join(lines)
+		)
+		try:
+			await ctx.channel.send(embed=embed)
+		except Exception:
+			pass
+
 	def print(self):
 		return f"> *({self.id})* **{self.queue.name}** | `{join_and([get_nick(p) for p in self.players])}`"
 
@@ -644,3 +676,5 @@ class Match:
 		except DiscordException:
 			pass
 		bot.active_matches.remove(self)
+		if hasattr(self.queue, 'standby'):
+			self.queue.standby = []
