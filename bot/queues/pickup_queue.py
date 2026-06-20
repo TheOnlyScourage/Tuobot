@@ -454,30 +454,27 @@ class PickupQueue:
 			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
 
 		player_ids = {p.id for p in self.queue}
-		my_priority = getattr(self.cfg, 'priority', None) or 0
 
 		# ── Save states that survive match start ──────────────────────────────
-		# allow_offline and auto_ready are cleared by remove_players inside
-		# queue_started(); we restore them immediately after Match.new() so they
-		# persist through the match (and through a failed check-in, since by the
-		# time revert() is called they're already back).
+		# allow_offline / auto_ready are cleared by remove_players() inside
+		# queue_started(); we restore them after Match.new() so they persist
+		# through the match (and through a failed check-in).
 		saved_offline    = {uid for uid in bot.allow_offline if uid in player_ids}
 		saved_auto_ready = {uid: t for uid, t in bot.auto_ready.items() if uid in player_ids}
 
-		# Find higher-priority queues whose members we must NOT remove.
-		# queue_started() calls remove_players() which removes from ALL queues;
-		# we re-add those players afterward.
-		higher_q_members = {}  # {PickupQueue: [Member, ...]}
-		if my_priority > 0:
-			for qc in bot.queue_channels.values():
-				for q in qc.queues:
-					if q is self:
-						continue
-					q_prio = getattr(q.cfg, 'priority', None) or 0
-					if q_prio > my_priority:
-						kept = [p for p in self.queue if q.is_added(p)]
-						if kept:
-							higher_q_members[q] = kept
+		# ── Cross-queue memberships ───────────────────────────────────────────
+		# Save EVERY other-queue membership these players had. queue_started()
+		# below will yank them from all queues; we restore them all immediately
+		# after so they stay queued during check-in. The match itself will
+		# pull them out when it transitions into the DRAFT phase.
+		cross_q_members = {}  # {PickupQueue: [Member, ...]}
+		for qc in bot.queue_channels.values():
+			for q in qc.queues:
+				if q is self:
+					continue
+				kept = [p for p in self.queue if q.is_added(p)]
+				if kept:
+					cross_q_members[q] = kept
 
 		players = list(self.queue)
 		dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
@@ -499,21 +496,29 @@ class PickupQueue:
 		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
 
 		# ── Restore states after match creation ───────────────────────────────
-		# allow_offline: stays active until the player manually disables it
 		for uid in saved_offline:
 			if uid not in bot.allow_offline:
 				bot.allow_offline.append(uid)
-
-		# auto_ready: stays active until it expires or the player cancels
 		bot.auto_ready.update(saved_auto_ready)
 
-		# Priority: restore membership in higher-priority queues
-		for q, members in higher_q_members.items():
+		# Re-add players to every queue they were in. The MATCH will trigger
+		# the actual removal when it transitions into the draft phase, applying
+		# the priority rules at that point (only remove from queues with
+		# priority <= this queue's priority).
+		for q, members in cross_q_members.items():
 			for p in members:
 				if p not in q.queue:
 					q.queue.append(p)
 			if q not in bot.active_queues and q.length:
 				bot.active_queues.append(q)
+
+		# Stash the priority for the match draft-phase cleanup.
+		newest_match = next(
+			(m for m in bot.active_matches if m.queue is self), None
+		)
+		if newest_match is not None:
+			newest_match._my_priority = getattr(self.cfg, 'priority', None) or 0
+			newest_match._priority_cleanup_done = False
 
 	async def split(self, ctx, group_size: int = None, sort_by_rating: bool = False):
 		group_size = group_size or len(self.queue)//2
