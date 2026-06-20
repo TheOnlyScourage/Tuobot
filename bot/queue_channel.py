@@ -16,6 +16,17 @@ from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating, AoE2Rat
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
 
+# Discord nickname hard limit
+MAX_NICK_LEN = 32
+
+
+def _build_rated_nick(rating: int, base_name: str) -> str:
+	"""Return '[<rating>] <name>' truncated so the total is at most 32 chars."""
+	prefix = f"[{rating}] "
+	# How many chars are available for the actual name part
+	avail = max(0, MAX_NICK_LEN - len(prefix))
+	return prefix + (base_name or "")[:avail]
+
 
 class Perms(Enum):
 	MEMBER = 0
@@ -296,22 +307,22 @@ class QueueChannel:
 			VariableTable(
 				'ranks', display="Rating ranks", section="Leaderboard",
 				variables=[
-					Variables.StrVar("rank", default="〈F〉"),
+					Variables.StrVar("rank", default="〈F〉"),
 					Variables.IntVar("rating", default=0, description="The rank will be given on this rating or higher."),
 					Variables.RoleVar("role", description="Assign a guild role to the rank owners.")
 				],
 				default=[
-					dict(rank="〈F〉", rating=0, role=None),
-					dict(rank="〈D〉", rating=500, role=None),
-					dict(rank="〈C〉", rating=1000, role=None),
-					dict(rank="〈B〉", rating=1200, role=None),
-					dict(rank="〈A〉", rating=1400, role=None),
-					dict(rank="〈★〉", rating=1600, role=None),
-					dict(rank="〈★★〉", rating=1800, role=None),
-					dict(rank="〈★★★〉", rating=2000, role=None),
-					dict(rank="〈$〉", rating=2500, role=None)
+					dict(rank="〈F〉", rating=0, role=None),
+					dict(rank="〈D〉", rating=500, role=None),
+					dict(rank="〈C〉", rating=1000, role=None),
+					dict(rank="〈B〉", rating=1200, role=None),
+					dict(rank="〈A〉", rating=1400, role=None),
+					dict(rank="〈★〉", rating=1600, role=None),
+					dict(rank="〈★★〉", rating=1800, role=None),
+					dict(rank="〈★★★〉", rating=2000, role=None),
+					dict(rank="〈$〉", rating=2500, role=None)
 				],
-				blank=dict(rank="〈F〉", rating=0, role=None)
+				blank=dict(rank="〈F〉", rating=0, role=None)
 			)
 		]
 	)
@@ -458,7 +469,7 @@ class QueueChannel:
 			key=lambda r: r['rating'], reverse=True
 		)
 		if not len(below):
-			return {'rank': '〈?〉', 'rating': 0, 'role': None}
+			return {'rank': '〈?〉', 'rating': 0, 'role': None}
 		return below[0]
 
 	async def get_lb(self):
@@ -503,10 +514,14 @@ class QueueChannel:
 				if roles[member.id] is not None and roles[member.id] not in member.roles:
 					await member.add_roles(roles[member.id], reason="Rank update.")
 				if self.cfg.rating_nicks:
+					# Build the new nick safely under Discord's 32-char limit.
+					# If their current nick already has [<rating>] prefix, strip it first.
 					if member.nick and (x := re.match(r"^\[\d+\] (.+)", member.nick)):
-						await member.edit(nick=f"[{ratings[member.id]}] " + x.group(1))
+						base = x.group(1)
 					else:
-						await member.edit(nick=f"[{ratings[member.id]}] " + (member.nick or member.name))
+						base = member.nick or member.name
+					new_nick = _build_rated_nick(ratings[member.id], base)
+					await member.edit(nick=new_nick)
 			except Forbidden:
 				pass
 
