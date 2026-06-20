@@ -1,6 +1,7 @@
 from typing import Callable  # noqa: UP035
 from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
+from nextcord.errors import InteractionResponded
 from nextcord import Interaction, SlashOption, Member, TextChannel, Embed, Colour
 import re
 import traceback
@@ -49,8 +50,13 @@ async def run_slash(coro: Callable, interaction: Interaction, **kwargs):
 	try:
 		await wait_for(shield(run_slash_coro(ctx, coro, **kwargs)), timeout=max(2.5 - passed_time, 0))
 	except (TimeoutError, aTimeoutError):
-		log.info('Deferring /slash command')
-		await interaction.response.defer()
+		# If the inner coro hasn\'t responded yet, defer so Discord stops waiting.
+		# If it already responded (e.g. ctx.notice fired mid-flight), just log.
+		try:
+			await interaction.response.defer()
+			log.info('Deferred /slash command')
+		except InteractionResponded:
+			log.info('Slow /slash command finished mid-timeout (already responded)')
 
 
 async def run_slash_coro(ctx: SlashContext, coro: Callable, **kwargs):
