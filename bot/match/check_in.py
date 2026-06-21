@@ -137,39 +137,9 @@ class CheckIn:
 			await self.finish(ctx)
 
 	async def finish_race(self, ctx):
-		"""Race ended — queue.cfg.size players readied first. Trim the roster.
-
-		The FIRST `queue_size` players to actually ready up keep their spot.
-		Everyone else (unready originals AND late-ready standby losers) goes
-		back to standby. Order is determined by self.ready_order, which is
-		appended to in real time as players click ✅.
-		"""
-		queue_size = self.m.queue.cfg.size
-
-		# Keep the first `queue_size` players who actually readied, in ready order.
-		# Fallback: if ready_order somehow missed someone (legacy state), use
-		# ready_players set as backup so we never lose a legitimate ready.
-		kept = [p for p in self.ready_order if p in self.ready_players][:queue_size]
-		if len(kept) < queue_size:
-			extras = [p for p in self.ready_players if p not in kept]
-			kept.extend(extras[:queue_size - len(kept)])
-
-		losers = [p for p in self.m.players if p not in kept]
-
-		# Send losers back to standby (they did nothing wrong)
-		for p in losers:
-			if p not in self.m.queue.standby:
-				self.m.queue.standby.append(p)
-
-		self.m.players = kept
-		self.ready_players = set(kept)
-
-		if losers:
-			await ctx.notice(self.m.gt(
-				"{losers} didn\'t make the cut and have been returned to standby."
-			).format(losers=join_and([m.mention for m in losers])))
-
-		await self.finish(ctx)
+		"""Delegate to bot.match.standby.finalize_race_results."""
+		from bot.match.standby import finalize_race_results
+		await finalize_race_results(self, ctx)
 
 	async def finish(self, ctx):
 		bot.waiting_reactions.pop(self.message.id)
@@ -263,99 +233,11 @@ class CheckIn:
 		await self.m.queue.revert(ctx, [member], [m for m in self.m.players if m != member])
 
 	async def pull_standby(self, ctx):
-		"""At 2/3 of check-in: add standby as ADDITIONAL candidates.
-
-		Nobody is kicked out. The 2 standby players now compete with the
-		unready originals for the open slots — first to ready up wins.
-		When `queue.cfg.size` players have readied, finish() fires and the
-		rest go back to standby.
-		"""
+		"""Delegate to bot.match.standby.pull_standby_into_match — kept as a
+		thin shim so existing callers (think()) don\'t need to change."""
 		self.standby_pulled = True
-
-		not_ready = [m for m in self.m.players if m not in self.ready_players and m not in self.discarded_players]
-		standby = list(getattr(self.m.queue, 'standby', []) or [])
-
-		log.info(
-			f"[pull_standby] match {self.m.id}: "
-			f"not_ready={len(not_ready)}, standby={len(standby)}, "
-			f"queue.standby={[m.display_name for m in standby]}"
-		)
-
-		if not not_ready or not standby:
-			log.info(f"[pull_standby] match {self.m.id}: nothing to do, returning")
-			return
-
-		# Add standby players as additional candidates (don\'t remove anyone yet)
-		added = []
-		for in_player in standby:
-			if in_player in self.m.players:
-				continue
-			self.m.players.append(in_player)
-			self.m.queue.standby.remove(in_player)
-			added.append(in_player)
-
-			# Make sure ratings dict has the new player
-			if in_player.id not in self.m.ratings:
-				try:
-					rows = await self.m.qc.rating.get_players([in_player.id])
-					if rows:
-						self.m.ratings[in_player.id] = rows[0]['rating']
-				except Exception as e:
-					log.error(f"pull_standby rating fetch failed: {e}")
-					self.m.ratings.setdefault(in_player.id, 1500)
-
-			# Auto-readies still apply for late arrivals
-			if in_player.id in bot.auto_ready:
-				self.ready_players.add(in_player)
-				if in_player not in self.ready_order:
-					self.ready_order.append(in_player)
-
-		if not added:
-			return
-
-		not_ready_mentions = join_and([m.mention for m in not_ready])
-		added_mentions    = join_and([m.mention for m in added])
-
-		# Build a jump URL to the check-in message so standby players can react directly
-		jump_url = self.message.jump_url if self.message else None
-
-		lines = [
-			f"\U0001f6a8 **STANDBY PULLED IN!** \U0001f6a8",
-			f"{added_mentions} \u2014 you have a chance to claim a spot!",
-			f"You\u2019re now competing with {not_ready_mentions} for the remaining slots.",
-			f"**First to react {self.READY_EMOJI} on the check-in message wins their spot.**",
-		]
-		if jump_url:
-			lines.append(f"\U0001f449 Jump to check-in: {jump_url}")
-
-		# Send the alert with the standby players in the content field so they
-		# get a guaranteed mobile/desktop ping (embeds don\'t always notify).
-		try:
-			await ctx.channel.send(
-				content=added_mentions,  # forces a ping
-				embed=None
-			)
-		except Exception:
-			pass
-
-		await ctx.notice("\n".join(lines))
-
-		# DM each standby player so they get notified even if they\'re not watching the channel
-		dm_text = self.m.gt(
-			"\U0001f6a8 You\u2019ve been pulled in from standby for **{queue}** @ {channel}!\n"
-			"Hurry \u2014 react {ready} on the check-in message to claim a spot before time runs out."
-		).format(
-			queue=self.m.queue.name,
-			channel=ctx.channel.mention,
-			ready=self.READY_EMOJI,
-		)
-		for member in added:
-			try:
-				await member.send(dm_text)
-			except Exception:
-				pass  # DMs disabled or blocked — channel ping is the fallback
-
-		await self.refresh(ctx)
+		from bot.match.standby import pull_standby_into_match
+		await pull_standby_into_match(self, ctx)
 
 	async def abort_timeout(self, ctx):
 		not_ready = [m for m in self.m.players if m not in self.ready_players]
