@@ -14,21 +14,17 @@ DB schema (created at startup):
 
 import time
 from core.console import log
+from bot.constants import (
+	HOUSE_ROLES, ALL_HOUSES,
+	HOUSE_POINTS_PER_PLAYER as POINTS_PER_PLAYER,
+	HOUSE_POINTS_FOR_CAPTAIN as POINTS_FOR_CAPTAIN,
+)
 from core.database import db
 
 
 # House Discord role IDs → house name (must match HOUSE_ROLES in match.py)
-HOUSE_ROLES = {
-	1468807660760596593: 'Hufflepuff',
-	1467995936621068308: 'Slytherin',
-	1468807395659485265: 'Gryffindor',
-	1468807668197097711: 'Ravenclaw',
-}
+# HOUSE_ROLES centralized in bot/constants.py — imported below
 
-ALL_HOUSES = list(HOUSE_ROLES.values())
-
-POINTS_PER_PLAYER  = 5
-POINTS_FOR_CAPTAIN = 10
 
 
 async def init_house_points_table():
