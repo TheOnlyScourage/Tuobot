@@ -13,18 +13,14 @@ Flow:
   6. Captain B types code   → Game 3 Code embed posted
 """
 import re
+from bot.constants import HOUSE_EMOJIS
 from nextcord import Embed, Colour, DiscordException
 from core.client import dc
 from core.utils import get_nick
 from core.console import log
 
 # House emblems — same as embeds.py (duplicated to avoid circular imports)
-HOUSE_EMOJIS = {
-	'Hufflepuff': '<:HUFFLEPUFF:1468806463026757663>',
-	'Slytherin':  '<:SLYTHERIN:1468806412594446447>',
-	'Gryffindor': '<:GRYFFINDOR:1468806447956492328>',
-	'Ravenclaw':  '<:RAVENCLAW:1468806434320810027>',
-}
+# HOUSE_EMOJIS centralized in bot/constants.py — imported below
 
 
 def _team_display(team) -> str:
