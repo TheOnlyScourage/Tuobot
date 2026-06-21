@@ -6,7 +6,7 @@ import random
 from nextcord import DiscordException, Embed, Colour
 
 import bot
-from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji
+from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID
 from core.utils import find, get, iter_to_dict, join_and, get_nick  # noqa: F401
 from core.console import log  # noqa: F401
 from core.client import dc
@@ -317,9 +317,57 @@ class Match:
 		self.teams[0].name = house_a
 		self.teams[1].name = house_b
 
+	def _captain_role_selection(self):
+		"""Pick captains from players holding the Captain role.
+
+		If at least 2 players in the queue have the Captain role:
+		  - Score every pair of role-holders by Quidditch role match
+		    (same role +300, Flex+specialist +200, otherwise 0)
+		  - Tie-break by MMR similarity (closer ratings preferred)
+		  - Return the highest-scoring pair
+		  - If no scoring pair beats 0 (e.g. 4 chasers), pick 2 random
+		    role-holders so we still honour the role preference.
+
+		If fewer than 2 players hold the Captain role, fall back to the
+		full smart-captain selection across the entire queue.
+		"""
+		from itertools import combinations
+		import random
+
+		role_holders = [
+			p for p in self.players
+			if CAPTAIN_ROLE_ID in {r.id for r in p.roles}
+		]
+
+		if len(role_holders) < 2:
+			# Not enough captains — defer to smart selection
+			return self._smart_captain_selection()
+
+		def score(p1, p2):
+			role1 = self._get_quidditch_role(p1)
+			role2 = self._get_quidditch_role(p2)
+			role_score = self._role_bonus(role1, role2)
+			mmr_score = self._mmr_bonus(
+				self.ratings.get(p1.id, 1500),
+				self.ratings.get(p2.id, 1500),
+			)
+			# Role match is the primary signal — MMR similarity is the tie-break
+			return (role_score, mmr_score)
+
+		best_pair = max(combinations(role_holders, 2), key=lambda pair: score(*pair))
+		best_role_score, _ = score(*best_pair)
+
+		if best_role_score == 0:
+			# No pair shares roles — fall back to random among role-holders
+			return random.sample(role_holders, 2)
+
+		return list(best_pair)
+
 	def init_captains(self, pick_captains, captains_role_id):
 		if pick_captains == "smart":
 			self.captains = self._smart_captain_selection()
+		elif pick_captains == "captain_role":
+			self.captains = self._captain_role_selection()
 		elif pick_captains == "by role and rating":
 			self.captains = self.sort_players(self.players)[:2]
 		elif pick_captains == "fair pairs":
