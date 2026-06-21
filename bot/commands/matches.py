@@ -139,16 +139,13 @@ async def put(ctx, match_id: int, player: Member, team_name: str):
 	# the right team is picked even when both teams share a Hogwarts name.
 	target_team = match.teams[target_idx]
 
-	# Player must already be in the match
-	current_loc = next(
-		((t, i) for t in match.teams for i in [t.index(player)] if player in t),
-		None
-	)
-	if current_loc is None:
+	# Player must already be in the match — check membership FIRST, then index,
+	# otherwise .index() raises ValueError on teams the player isn\'t on.
+	current_team = next((t for t in match.teams if player in t), None)
+	if current_team is None:
 		raise bot.Exc.NotFoundError(
 			f"**{player.display_name}** is not in match {match_id}."
 		)
-	current_team, _ = current_loc
 
 	if current_team is target_team:
 		await ctx.success(f"**{player.display_name}** is already in **{target_team.name}**.")
