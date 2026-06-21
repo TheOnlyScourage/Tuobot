@@ -1,36 +1,13 @@
+from bot.constants import HOUSE_EMOJIS, get_rank_emoji as _rank_emoji
 from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
 from core.utils import get_nick, join_and
 
 # Rank emoji lookup — duplicated here to avoid circular import with match.py
-_RANK_EMOJIS = [
-	(0,    "<:CHAD:1471923932558000270>"),
-	(800,  "<:Q6Wood:1514727440692547685>"),
-	(1000, "<:Q6Iron:1514727400200470820>"),
-	(1200, "<:Q6Bronze:1514727471205847170>"),
-	(1400, "<:Q6Silver:1514727221808332800>"),
-	(1600, "<:Q6Gold:1514727359461462076>"),
-	(1800, "<:Q6Diamond:1514727335549472930>"),
-	(2000, "<:Q6Champion:1514727158596112464>"),
-	(2200, "<:Q6Star:1514727286132441238>"),
-]
-
-
-def _rank_emoji(rating: int) -> str:
-	emoji = _RANK_EMOJIS[0][1]
-	for threshold, e in _RANK_EMOJIS:
-		if rating >= threshold:
-			emoji = e
-	return emoji
 
 
 # House emblems — keyed by house name (as set by _assign_house_names in match.py)
-HOUSE_EMOJIS = {
-	'Hufflepuff': '<:HUFFLEPUFF:1468806463026757663>',
-	'Slytherin':  '<:SLYTHERIN:1468806412594446447>',
-	'Gryffindor': '<:GRYFFINDOR:1468806447956492328>',
-	'Ravenclaw':  '<:RAVENCLAW:1468806434320810027>',
-}
+# HOUSE_EMOJIS centralized in bot/constants.py — imported below
 
 
 def _house_team_label(team, avg_rating=None, ranked=False) -> str:
