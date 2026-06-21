@@ -11,14 +11,13 @@ from core.utils import join_and, seconds_to_str, get_nick
 from core.database import db
 
 import bot
+from bot.constants import MAX_NICK_LEN
 from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating, AoE2Rating
 
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
 
-# Discord nickname hard limit
-MAX_NICK_LEN = 32
-
+# MAX_NICK_LEN centralized in bot/constants.py — imported below
 
 def _build_rated_nick(rating: int, base_name: str) -> str:
 	"""Return '[<rating>] <name>' truncated so the total is at most 32 chars."""
