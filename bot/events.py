@@ -13,14 +13,17 @@ import bot
 from nextcord import Embed, Colour
 
 # ── Q Ping specialty embed ────────────────────────────────────────────────────
-_Q_PING_ROLE_ID = 1340717895449186324   # @Q ping role
+# IDs centralized in bot/constants.py
+from bot.constants import (
+	Q_PING_ROLE_ID    as _Q_PING_ROLE_ID,
+	SEEKER_ROLE_ID    as _SEEKER_ROLE_ID,
+	BEATER_ROLE_ID    as _BEATER_ROLE_ID,
+	KEEPER_ROLE_ID    as _KEEPER_ROLE_ID,
+	SEEKERS_NEEDED    as _SEEKERS_NEEDED,
+	BEATERS_NEEDED    as _BEATERS_NEEDED,
+	KEEPERS_NEEDED    as _KEEPERS_NEEDED,
+)
 
-_SEEKER_ROLE_ID = 1478503988562235595
-_BEATER_ROLE_ID = 1478503991737585735
-_KEEPER_ROLE_ID = 1478503986205036655
-_SEEKERS_NEEDED = 2
-_BEATERS_NEEDED = 2
-_KEEPERS_NEEDED = 2
 
 
 def _has_specialty(member, role_id: int) -> bool:
