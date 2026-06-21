@@ -107,10 +107,65 @@ async def pick(ctx, match: bot.Match, players: List[Member]):  # noqa: UP006
 
 
 async def put(ctx, match_id: int, player: Member, team_name: str):
+	"""Put a player on Team A (teams[0]), Team B (teams[1]), or back to the unpicked pool.
+
+	The slash command sends 'Team A', 'Team B', or 'Unpicked'. We translate
+	into a team INDEX before forwarding so that duplicate Hogwarts house
+	names (e.g. both teams renamed to Hufflepuff) can never be confused.
+	"""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (match := find(lambda m: m.qc == ctx.qc and m.id == match_id, bot.active_matches)) is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id. Check `/matches`."))
-	await match.draft.put(ctx, player, team_name)
+
+	# Resolve which target team / pool the player should end up in.
+	if team_name == 'Team A':
+		target_idx = 0
+	elif team_name == 'Team B':
+		target_idx = 1
+	elif team_name.lower() == 'unpicked':
+		target_idx = 2
+	else:
+		# Backwards-compat: try matching by name string
+		target_idx = next(
+			(i for i, t in enumerate(match.teams) if t.name.lower() == team_name.lower()),
+			None
+		)
+		if target_idx is None:
+			raise bot.Exc.SyntaxError(
+				f"Unknown team '{team_name}'. Use Team A, Team B, or Unpicked."
+			)
+
+	# Direct manipulation — bypasses draft.put\'s name-lookup to guarantee
+	# the right team is picked even when both teams share a Hogwarts name.
+	target_team = match.teams[target_idx]
+
+	# Player must already be in the match
+	current_loc = next(
+		((t, i) for t in match.teams for i in [t.index(player)] if player in t),
+		None
+	)
+	if current_loc is None:
+		raise bot.Exc.NotFoundError(
+			f"**{player.display_name}** is not in match {match_id}."
+		)
+	current_team, _ = current_loc
+
+	if current_team is target_team:
+		await ctx.success(f"**{player.display_name}** is already in **{target_team.name}**.")
+		return
+
+	# Pull from old team, append to new team
+	current_team.remove(player)
+	target_team.append(player)
+
+	# Refresh the draft / final embed so everyone sees the change
+	if match.state == match.WAITING_REPORT:
+		await ctx.notice(embed=match.embeds.final_message())
+	elif match.state == match.DRAFT:
+		await match.draft.print(ctx)
+
+	label = 'Unpicked' if target_idx == 2 else f"Team {'AB'[target_idx]} ({target_team.name})"
+	await ctx.success(f"Moved **{player.display_name}** to **{label}**.")
 
 
 async def report_admin(ctx, match_id: int, winner_team=None, draw=False, abort=False):
