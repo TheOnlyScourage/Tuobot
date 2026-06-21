@@ -6,6 +6,7 @@ import random
 from nextcord import DiscordException, Embed, Colour
 
 import bot
+from bot.constants import HOUSE_ROLES, ALL_HOUSES
 from core.utils import find, get, iter_to_dict, join_and, get_nick  # noqa: F401
 from core.console import log  # noqa: F401
 from core.client import dc
@@ -15,38 +16,7 @@ from .draft import Draft
 from .embeds import Embeds
 
 
-# Custom rank emojis for Q6 server
-RANK_EMOJIS = [
-	(0,    "<:CHAD:1471923932558000270>"),
-	(800,  "<:Q6Wood:1514727440692547685>"),
-	(1000, "<:Q6Iron:1514727400200470820>"),
-	(1200, "<:Q6Bronze:1514727471205847170>"),
-	(1400, "<:Q6Silver:1514727221808332800>"),
-	(1600, "<:Q6Gold:1514727359461462076>"),
-	(1800, "<:Q6Diamond:1514727335549472930>"),
-	(2000, "<:Q6Champion:1514727158596112464>"),
-	(2200, "<:Q6Star:1514727286132441238>"),
-]
-
-
-def get_rank_emoji(rating):
-	"""Return the custom emoji for a given rating."""
-	emoji = RANK_EMOJIS[0][1]
-	for threshold, e in RANK_EMOJIS:
-		if rating >= threshold:
-			emoji = e
-	return emoji
-
-
-
-# ── Hogwarts house roles → team names ─────────────────────────────────────────
-# Captain's Discord role determines their team name.
-HOUSE_ROLES = {
-	1468807660760596593: 'Hufflepuff',
-	1467995936621068308: 'Slytherin',
-	1468807395659485265: 'Gryffindor',
-	1468807668197097711: 'Ravenclaw',
-}
+# House roles centralized in bot/constants.py — imported below
 
 
 # ── Smart captain selection constants ─────────────────────────────────────────
@@ -329,7 +299,7 @@ class Match:
 		if len(self.captains) < 2:
 			return
 
-		all_houses = list(HOUSE_ROLES.values())  # Hufflepuff, Slytherin, Gryffindor, Ravenclaw
+		all_houses = ALL_HOUSES  # Hufflepuff, Slytherin, Gryffindor, Ravenclaw
 
 		house_a = self._get_house(self.captains[0])
 		house_b = self._get_house(self.captains[1])
@@ -694,7 +664,7 @@ class Match:
 	async def _post_house_award_embed(self, ctx, awarded):
 		"""Brief announcement listing house point awards from this match."""
 		from nextcord import Embed, Colour
-		from bot.match.embeds import HOUSE_EMOJIS
+		from bot.constants import HOUSE_EMOJIS
 
 		lines = []
 		for house, pts in sorted(awarded.items(), key=lambda kv: -kv[1]):
