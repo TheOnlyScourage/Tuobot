@@ -127,11 +127,12 @@ class PickupQueue:
 				"pick_captains",
 				display="Pick captains",
 				section="Teams",
-				options=["smart", "by role and rating", "fair pairs", "random with role preference", "random", "no captains"],
+				options=["smart", "captain_role", "by role and rating", "fair pairs", "random with role preference", "random", "no captains"],
 				default="smart",
 				description="\n".join([
 					"Set how captains should be picked:",
 					"  smart - score all pairs by MMR similarity, Quidditch role, captain role, recent penalty",
+					"  captain_role - require the Captain role; falls back to smart if <2 holders in queue",
 					"  by role and rating - sort by captain role and rating",
 					"  fair pairs - random pair with closest ratings",
 					"  random with role preference - random with captain role priority",
