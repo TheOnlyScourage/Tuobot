@@ -63,9 +63,7 @@ async def _send_q_ping_embed(message) -> None:
 	)
 	await message.channel.send(embed=embed)
 
-from bot.elo_sync import process_elo_sync
-from bot.civ_sync import parse_lobby_embed, buffer_lobby_result, persist_lobby_civs
-from bot.message_logger import log_channel_message, log_bot_message
+# AoE2 civ/elo sync removed (NammaPUBobot leftover, not used for Q6 Drafts)
 from bot.match.party_code import handle_code_input
 
 
@@ -168,71 +166,6 @@ async def on_message(message):
 		await bot.enable_channel(message)
 	elif message.content == '!disable_pubobot':
 		await bot.disable_channel(message)
-
-	# ++ / -- shorthand add/remove
-	if message.content in ('++', '--'):
-		if (qc := bot.queue_channels.get(message.channel.id)) is not None and bot.bot_ready:
-			from bot.context.message import MessageContext
-			ctx = MessageContext(qc, message)
-			try:
-				if message.content == '++':
-					await bot.commands.add(ctx)
-				else:
-					await bot.commands.remove(ctx)
-			except bot.Exc.PubobotException as e:
-				await ctx.error(str(e), title=e.__class__.__name__)
-			except Exception as e:
-				log.error(f"Error processing '{message.content}': {e}\n{traceback.format_exc()}")
-		return
-
-	# ── Party code collection ─────────────────────────────────────────────────
-	# Check if this message is a captain typing their lobby code.
-	# Must happen before ELO sync checks to avoid conflicts.
-	if (
-		not message.author.bot
-		and message.channel.id in bot.queue_channels
-		and bot.bot_ready
-	):
-		try:
-			if await handle_code_input(message):
-				return
-		except Exception as e:
-			log.error(f"PartyCode handle_code_input error: {e}\n{traceback.format_exc()}")
-
-	# Sync ELO from original Pubobot
-	pubobot_id = getattr(cfg, 'PUBOBOT_USER_ID', None)
-	if (pubobot_id
-		and message.author.id == pubobot_id
-		and message.author.bot
-		and '```markdown' in message.content
-		and 'results' in message.content):
-		try:
-			log_bot_message(message, 'Pubobot')
-			await process_elo_sync(message)
-		except Exception as e:
-			log.error(f"ELO sync error: {e}\n{traceback.format_exc()}")
-
-	# Buffer AOE2LobbyBOT match results for civ sync
-	lobbybot_id = getattr(cfg, 'LOBBYBOT_USER_ID', None)
-	if (lobbybot_id
-		and message.author.id == lobbybot_id
-		and message.author.bot
-		and message.embeds):
-		try:
-			log_bot_message(message, 'AOE2LobbyBOT')
-			parsed = parse_lobby_embed(message)
-			if parsed:
-				buffer_lobby_result(parsed)
-				await persist_lobby_civs(message.channel.id, parsed)
-		except Exception as e:
-			log.error(f"Civ sync buffer error: {e}\n{traceback.format_exc()}")
-
-	# Log all channel messages in queue channels
-	if message.channel.id in bot.queue_channels:
-		try:
-			log_channel_message(message)
-		except Exception:
-			pass
 
 
 @dc.event
