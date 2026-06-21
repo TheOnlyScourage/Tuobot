@@ -6,6 +6,14 @@ import time
 import signal
 import asyncio
 import traceback
+import warnings
+
+# Silence MySQL "Duplicate entry ... for key qc_players.PRIMARY" warnings —
+# these are emitted on every `INSERT ... ON DUPLICATE KEY IGNORE` even though
+# the IGNORE clause means the duplicate is correctly skipped (no data lost).
+# Pure log noise, hidden here to keep Railway logs readable.
+warnings.filterwarnings("ignore", message=".*Duplicate entry.*for key.*", category=Warning)
+warnings.filterwarnings("ignore", category=Warning, module=r"aiomysql.*")
 from asyncio import sleep as asleep
 
 _sentry_dsn = os.environ.get('SENTRY_DSN', '').strip()
@@ -34,15 +42,10 @@ async def _fix_null_deviations():
     )
 loop.run_until_complete(_fix_null_deviations())
 
-# Initialize tracker tables before loading the bot.
-from bot.stats.checkin_tracker import init_checkin_tracker_table
-from bot.stats.season import init_season_table
-from bot.main import init_saved_state_table
-loop.run_until_complete(init_checkin_tracker_table())
-loop.run_until_complete(init_season_table())
-loop.run_until_complete(init_saved_state_table())
-from bot.stats.house_points import init_house_points_table
-loop.run_until_complete(init_house_points_table())
+# Initialize all Tuobot-specific MySQL tables in one consolidated call.
+# See bot/db_init.py for the full list and ordering.
+from bot.db_init import init_all_tables
+loop.run_until_complete(init_all_tables())
 
 # Load bot
 import bot
