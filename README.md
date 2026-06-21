@@ -1,49 +1,166 @@
-# PUBobot2
-**PUBobot2** is a Discord bot for pickup games organisation. PUBobot2 have a remarkable list of features such as rating matches, rank roles, drafts, map votepolls and more!
+# Tuobot Command Reference — Q6 Drafts
 
-### Some screenshots
-![screenshots](https://cdn.discordapp.com/attachments/824935426228748298/836978698321395712/screenshots.png)
+A guide to every slash command available in Tuobot, grouped by who uses them and what they do.
 
-### Using the public bot instance
-If you want to test the bot, feel free to join [**Pubobot2-dev** discord server](https://discord.gg/rjNt9nC).  
-All the bot settings can be found and configured on the [Web interface](https://pubobot.leshaka.xyz/).  
-For the complete list of commands see [COMMANDS.md](https://github.com/Leshaka/PUBobot2/blob/main/COMMANDS.md).  
-You can invite the bot to your discord server from the [web interface](https://pubobot.leshaka.xyz/) or use the direct [invite link](https://discord.com/oauth2/authorize?client_id=177021948935667713&scope=bot).
+---
 
-### Support
-Hosting the service for everyone is not free, not mentioning the actual time and effort to develop the project. If you enjoy the bot please subscribe on [Boosty](https://boosty.to/leshaka).
+## 🎮 Player Commands (Everyone)
 
-## Hosting the bot yourself
+### Queue Management
+| Command | What it does |
+|---|---|
+| `/add` | Add yourself to a queue. Without a queue name it adds you to the default. |
+| `/remove` | Remove yourself from a queue. Without a name it removes you from all the queues you're in on this channel. |
+| `/remove_all` | Remove yourself from **every queue across the entire server** (all channels). Mods can pass a player name to remove someone else. |
+| `/who` | List the players currently added to each queue on this channel. |
+| `/matches` | Show all active matches on this channel. |
+| `/teams` | Show the teams for the match you're currently in. |
 
-### Requirements
-* **Python 3.9+** 
-* **MySQL**.
-* **gettext** for multilanguage support.
+### During Check-in & Draft
+| Command | What it does |
+|---|---|
+| `/ready` | Confirm participation during the check-in stage. Same as reacting ✅ on the check-in message. |
+| `/notready` | Abort participation during the check-in stage. Same as reacting ❌. |
+| `/capfor` | Volunteer to be captain on the team you choose. |
+| `/capme` | Step down from the captain position you were assigned. |
+| `/pick` | Captains only — pick a player from the unpicked pool. The dropdown shows only valid choices. |
 
-### Installing
-* Create mysql user and database for PUBobot2:
-* * `sudo mysql`
-* * `CREATE USER 'pubobot'@'localhost' IDENTIFIED BY 'your-password';`
-* * `CREATE DATABASE pubodb CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;`
-* * `GRANT ALL PRIVILEGES ON pubodb.* TO 'pubobot'@'localhost';`
-* Install required modules and configure PUBobot2:
-* * `git clone https://github.com/Leshaka/PUBobot2`
-* * `cd PUBobot2`
-* * `pip3 install -r requirements.txt`
-* * `cp config.example.cfg config.cfg`
-* * `nano config.cfg` - Fill config file with your discord bot instance credentials and mysql settings and save.
-* * Optionally, if you want to use other languages, run script to compile translations: `./compile_locales.sh`.
-* * `python3 PUBobot2.py` - If everything is installed correctly the bot should launch without any errors and give you CLI.
+### Substitutes
+| Command | What it does |
+|---|---|
+| `/subme` | Request to be substituted out of your current match. |
+| `/subauto` | Replace yourself with the next player in the queue. Teams get rebalanced by rating. |
+| `/subfor` | Volunteer to take someone else's spot as a substitute. |
 
-## Credits
-Developer: **Leshaka**. Contact: leshkajm@ya.ru.  
-Used libraries: [discord.py](https://github.com/Rapptz/discord.py), [aiomysql](https://github.com/aio-libs/aiomysql), [emoji](https://github.com/carpedm20/emoji/), [glicko2](https://github.com/deepy/glicko2), [TrueSkill](https://trueskill.org/), [prettytable](https://github.com/jazzband/prettytable).
+### Personal Settings
+| Command | What it does |
+|---|---|
+| `/auto_ready [duration]` | Auto-confirm check-in for the next match. Default 10 minutes. Useful if you're going AFK but still want to play if the queue pops. |
+| `/allow_offline` | Toggle whether the bot ignores your offline/idle status when adding you to queues. |
+| `/switch_dms` | Toggle whether the bot sends you a DM when a queue starts. |
+| `/nick [name]` | Change your server nickname while keeping the `[rating]` prefix. |
 
-## License
-Copyright (C) 2020 **Leshaka**.
+### Stats & Info
+| Command | What it does |
+|---|---|
+| `/rank [player]` | Show a player's rating profile — current rating, W/L/D, win rate, and recent matches. Defaults to yourself. |
+| `/leaderboard [page]` | Show the rating leaderboard (paged, 12 per page). |
+| `/season_leaderboard [page]` | Leaderboard filtered to players with 15+ matches this season. |
+| `/lastgame` | Show details of the most recent finished match. |
+| `/top` | Show top players ranked by match count. |
+| `/activity` | Activity heatmap (weekday × hour, IST). |
+| `/house_points` | Hogwarts House Cup standings — points are earned by winning matches with players from each house. |
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License version 3 as published by the Free Software Foundation.
+### Maps & Server
+| Command | What it does |
+|---|---|
+| `/server <queue>` | Show the configured server for a queue. |
+| `/maps <queue>` | List all maps configured for a queue. |
+| `/map <queue>` | Pick one random map from the queue's map pool. |
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+### Reporting Results
+| Command | What it does |
+|---|---|
+| `/report <result>` | Report a match result. Choices: `loss`, `draw`, `abort`. The other team confirms by also reporting. |
 
-See 'GNU GPLv3.txt' for GNU General Public License.
+### Misc / Fun
+| Command | What it does |
+|---|---|
+| `/cointoss` | Flip a coin. |
+| `/help` | Show channel or queue help text. |
+| `/commands` | Show the full command list. |
+| `/don` | Pings @Don with the L_Don emoji. |
+
+---
+
+## 🛡️ Moderator Commands
+
+### `/admin queue` — Queue Management
+| Command | What it does |
+|---|---|
+| `/admin queue add_player <player> <queue>` | Force-add a player to a queue. If a match is in check-in, they go to standby instead. |
+| `/admin queue remove_player <player> [queue]` | Force-remove a player from a queue (or all queues if none specified). |
+| `/admin queue clear [queue]` | Empty a queue (or all queues if none specified). |
+| `/admin queue start <queue>` | Manually start a queue even if not full. |
+| `/admin queue split <queue> [group_size] [by_rating]` | Split queue players into multiple matches. Optionally sort by rating first. |
+| `/admin queue list` | List every queue on the channel. |
+| `/admin queue show <queue>` | Show a queue's full configuration. |
+
+### `/admin match` — Match Management
+| Command | What it does |
+|---|---|
+| `/admin match force_checkin <match_id>` | Force all players in a match to ready up immediately. |
+| `/admin match sub_player <player1> <player2>` | Sub player1 out, player2 in. **If their team loses, the rating penalty goes to player1** (the original who committed). |
+| `/swap <player1> <player2>` | Swap two players. Auto-detects what you want: <br>• Both in the same match → swap their team positions<br>• One in the match, one outside → bring outsider in, send insider out (no penalty redirect)<br>• Both queued together → swap queue positions |
+| `/admin match put <player> <team>` | Manually put a player on a specific team (or `unpicked`). |
+| `/admin match report <match_id> <winner>` | Force a match result as a moderator. |
+| `/admin match create` | Manually record a finished rating match. |
+
+### `/admin stats` — Stats & Season Management
+| Command | What it does |
+|---|---|
+| `/admin stats season_start` | Start a new season — turns ranked back ON for all queues, announces in the channel. |
+| `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights, disables ranked, resets all stats. Default 15 minimum matches. |
+| `/admin stats house_points_reset` | Reset all four Hogwarts house point totals to zero. |
+| `/admin stats reset` | Wipe all stats data for the channel (be careful!). |
+| `/admin stats reset_player <player>` | Reset one player's stats. |
+| `/admin stats stats_replace_player <player1> <player2>` | Replace player1's stats history with player2 (used when someone changes accounts). |
+| `/admin stats undo_match <match_id>` | Undo a finished match — reverses all rating changes. |
+| `/admin stats show [player]` | Show channel or per-player stats. |
+
+### `/admin noadds` — Bans
+| Command | What it does |
+|---|---|
+| `/admin noadds add <player> <duration> [reason]` | Ban a player from joining queues. |
+| `/admin noadds remove <player>` | Remove a player from the noadds list. |
+| `/admin noadds list` | Show everyone currently banned. |
+
+### `/admin rating` — Rating Adjustments
+| Command | What it does |
+|---|---|
+| `/admin rating seed <player> <rating> [deviation]` | Set a player's rating manually. |
+| `/admin rating penality <player> <amount>` | Subtract points from a player's rating. |
+| `/admin rating hide_player <player>` | Hide a player from the leaderboard. |
+| `/admin rating unhide_player <player>` | Show a hidden player on the leaderboard again. |
+| `/admin rating reset` | Reset all rating data on the channel. |
+| `/admin rating snap` | Snap players' ratings to their rank thresholds. |
+
+---
+
+## 👑 Admin Commands
+
+### `/admin channel` — Channel Setup
+| Command | What it does |
+|---|---|
+| `/admin channel enable` | Enable the bot on a new channel. |
+| `/admin channel disable` | Disable the bot on a channel. |
+| `/admin channel delete` | Delete all configs and stats, and disable the bot. **Destructive.** |
+| `/admin channel show` | Show the channel configuration. |
+| `/admin channel set <variable> <value>` | Set a channel config variable. |
+
+### `/admin queue` — Queue Creation/Config (Admin)
+| Command | What it does |
+|---|---|
+| `/admin queue create_pickup <name> <size>` | Create a new pickup queue. |
+| `/admin queue set <queue> <variable> <value>` | Set a queue config variable (e.g. `priority`, `check_in_timeout`, `ranked`). |
+| `/admin queue delete <queue>` | Delete a queue. |
+
+### `/admin phrases` — Player Phrases
+| Command | What it does |
+|---|---|
+| `/admin phrases add <player> <phrase>` | Add a custom phrase that gets shown when this player adds to a queue. |
+| `/admin phrases clear <player>` | Remove all phrases for a player. |
+
+---
+
+## 📌 Key Concepts
+
+**Queue priority**: Set via `/admin queue set <queue> priority <number>`. When a lower-priority queue pops, players stay in higher-priority queues. Recommended: `6v6-ranked = 100`, `bonanza = 80`, others = `0`.
+
+**Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
+
+**Hogwarts houses**: Captains' Discord house roles determine team names. Winning team awards house points: captain = 10, other players = 5. Players with no house role contribute nothing.
+
+**Seasons**: Each season tracks ratings/stats independently. `season_end` resets everything, posts highlights, and turns ranked off. `season_start` re-enables ranked and starts the new season counter.
+
+**Fill-in subs**: When using `/admin match sub_player`, the sub plays for free if they win, but losses are charged to the original player. Use `/swap` instead if you want a clean penalty-less swap.
