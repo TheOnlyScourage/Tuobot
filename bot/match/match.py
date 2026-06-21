@@ -72,8 +72,38 @@ class Match:
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
 		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
+		# Pre-fetch captain streaks if this queue uses captain_role mode.
+		# The selection runs synchronously, so we read streaks ahead of time and
+		# stash them on the match for the sync code to consult.
+		match._captain_streaks = {}
+		if match.cfg['pick_captains'] == 'captain_role':
+			try:
+				from bot.stats.captain_streak import get_streak
+				for p in players:
+					match._captain_streaks[p.id] = await get_streak(ctx.qc.id, p.id)
+			except Exception as exc:
+				from core.console import log
+				log.error(f"[captain_streak] prefetch failed: {exc}")
+
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
 		match.init_teams(match.cfg['pick_teams'])
+
+		# Update streaks now that captains are locked in. Picked captains get
+		# their counter incremented; everyone else who was role-eligible but
+		# not picked gets reset to 0.
+		if match.cfg['pick_captains'] == 'captain_role':
+			try:
+				from bot.stats.captain_streak import record_captain, reset_streak
+				captain_ids = {c.id for c in match.captains}
+				for p in players:
+					has_role = CAPTAIN_ROLE_ID in {r.id for r in p.roles}
+					if p.id in captain_ids:
+						await record_captain(ctx.qc.id, p.id)
+					elif has_role:
+						await reset_streak(ctx.qc.id, p.id)
+			except Exception as exc:
+				from core.console import log
+				log.error(f"[captain_streak] post-pick update failed: {exc}")
 		match._assign_house_names()  # Name teams from captain house roles
 
 		# Stash the current season number on the match so embeds can show it in the footer.
@@ -320,28 +350,32 @@ class Match:
 	def _captain_role_selection(self):
 		"""Pick captains from players holding the Captain role.
 
-		If at least 2 players in the queue have the Captain role:
-		  - Score every pair of role-holders by Quidditch role match
-		    (same role +300, Flex+specialist +200, otherwise 0)
-		  - Tie-break by MMR similarity (closer ratings preferred)
-		  - Return the highest-scoring pair
-		  - If no scoring pair beats 0 (e.g. 4 chasers), pick 2 random
-		    role-holders so we still honour the role preference.
-
-		If fewer than 2 players hold the Captain role, fall back to the
-		full smart-captain selection across the entire queue.
+		Step 1: collect every queue player with the Captain role
+		Step 2: filter OUT anyone who hit the streak cooldown
+		        (2 consecutive captain duties → forced rest)
+		Step 3: if 2+ eligible role-holders remain, score pairs by
+		        Quidditch role match (primary) and MMR similarity (tie-break)
+		Step 4: if fewer than 2 eligible remain, fall back to smart selection
+		        across the entire queue (which ignores the streak cooldown)
 		"""
 		from itertools import combinations
 		import random
+		from bot.stats.captain_streak import is_capped
 
 		role_holders = [
 			p for p in self.players
 			if CAPTAIN_ROLE_ID in {r.id for r in p.roles}
 		]
 
-		if len(role_holders) < 2:
-			# Not enough captains — defer to smart selection
+		# Streak filter — players who captained the last N matches are skipped
+		streaks = getattr(self, '_captain_streaks', {}) or {}
+		eligible = [p for p in role_holders if not is_capped(streaks.get(p.id, 0))]
+
+		if len(eligible) < 2:
+			# Not enough fresh captains — defer to smart selection
 			return self._smart_captain_selection()
+
+		role_holders = eligible  # only score pairs of eligible players
 
 		def score(p1, p2):
 			role1 = self._get_quidditch_role(p1)
