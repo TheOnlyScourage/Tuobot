@@ -11,15 +11,11 @@ from collections import Counter, defaultdict
 from nextcord import Embed, Colour
 from core.console import log
 from core.database import db
-from bot.match.embeds import HOUSE_EMOJIS
+from bot.constants import HOUSE_EMOJIS, SPECIALTY_ROLES as _SPECIALTY_ROLES
 
 
 # Quidditch specialty role IDs (must match values used elsewhere)
-_SPECIALTY_ROLES = {
-	1478503988562235595: 'Seeker',
-	1478503991737585735: 'Beater',
-	1478503986205036655: 'Keeper',
-}
+# Specialty roles centralized in bot/constants.py — imported below
 
 
 def _member_role_set(member):
