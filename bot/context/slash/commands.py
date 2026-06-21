@@ -263,14 +263,17 @@ async def _swap_players(
 
 
 
-@groups.admin_match.subcommand(name='put', description='Put a player in a team.')
+@groups.admin_match.subcommand(name='put', description='Put a player on Team A, Team B, or back to the unpicked pool.')
 async def _put(
 		interaction: Interaction,
 		match_id: int,
 		player: Member,
-		team_name: str = SlashOption(name='team', description='Team name or unpicked')
-): await run_slash(bot.commands.put, interaction=interaction, match_id=match_id, player=player, team_name=team_name)
-_put.on_autocomplete('team_name')(autocomplete.teams_by_match_id)
+		team: str = SlashOption(
+			name='team',
+			description='Team A (1) / Team B (2) / Unpicked',
+			choices=['Team A', 'Team B', 'Unpicked'],
+		)
+): await run_slash(bot.commands.put, interaction=interaction, match_id=match_id, player=player, team_name=team)
 _put.on_autocomplete('match_id')(autocomplete.match_ids)
 
 
@@ -552,46 +555,14 @@ async def _pick(
 	await run_slash(bot.commands.pick, interaction=interaction, players=[member])
 
 
+# Hook the new autocomplete helper for /pick — unpicked players only.
 @_pick.on_autocomplete("player")
 async def _pick_autocomplete(interaction: Interaction, current: str):
-	"""Autocomplete the unpicked players for the active draft on this channel.
-
-	Wrapped in a broad try/except so a single error here never leaves the
-	Discord client showing "Loading options failed" — we always send something
-	back, even an empty list.
-	"""
+	choices = await autocomplete.unpicked_players(interaction, current)
 	try:
-		qc = bot.queue_channels.get(interaction.channel_id)
-		candidates = []
-		if qc is not None:
-			for m in bot.active_matches:
-				if m.qc != qc:
-					continue
-				if m.state != m.DRAFT:
-					continue
-				if len(m.teams) > 2 and m.teams[2]:
-					candidates = list(m.teams[2])
-					break
-
-		cur = (current or "").lower().strip()
-		# Build {display_name: user_id_string} — nextcord renders this as the
-		# autocomplete dropdown and sends the user_id back to the command handler.
-		choices = {}
-		for p in candidates:
-			name = p.display_name[:100]
-			if cur and cur not in name.lower():
-				continue
-			choices[name] = str(p.id)
-			if len(choices) >= 25:
-				break
-
 		await interaction.response.send_autocomplete(choices)
-	except Exception as exc:
-		log.error(f"[_pick_autocomplete] failed: {exc}")
-		try:
-			await interaction.response.send_autocomplete({})
-		except Exception:
-			pass
+	except Exception:
+		pass
 
 
 @dc.slash_command(name='report', description='Report match result.', **guild_kwargs)
