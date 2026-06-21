@@ -63,6 +63,12 @@ KEEPERS_NEEDED = 2
 Q_PING_ROLE_ID = 1340717895449186324
 
 
+# ── Captain role ─────────────────────────────────────────────────────────────
+# Players with this role are eligible to be picked as captains when a queue
+# is configured with pick_captains="captain_role".
+CAPTAIN_ROLE_ID = 1365601313525596200
+
+
 # ── Rank emojis ──────────────────────────────────────────────────────────────
 # Tuples of (minimum_rating, emoji). The thresholds are walked in ascending
 # order; the highest threshold a player meets is their rank.
