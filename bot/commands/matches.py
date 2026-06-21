@@ -155,14 +155,21 @@ async def put(ctx, match_id: int, player: Member, team_name: str):
 	current_team.remove(player)
 	target_team.append(player)
 
-	# Refresh the draft / final embed so everyone sees the change
+	# Confirmation first so the mod sees the result even if a state advance happens
+	label = 'Unpicked' if target_idx == 2 else f"Team {'AB'[target_idx]} ({target_team.name})"
+	await ctx.success(f"Moved **{player.display_name}** to **{label}**.")
+
+	# If we just emptied the unpicked pool during DRAFT, advance the match
+	# the same way a normal /pick would.
+	if match.state == match.DRAFT and len(match.teams) > 2 and not match.teams[2]:
+		await match.next_state(ctx)
+		return
+
+	# Otherwise refresh the visible embed so everyone sees the change
 	if match.state == match.WAITING_REPORT:
 		await ctx.notice(embed=match.embeds.final_message())
 	elif match.state == match.DRAFT:
 		await match.draft.print(ctx)
-
-	label = 'Unpicked' if target_idx == 2 else f"Team {'AB'[target_idx]} ({target_team.name})"
-	await ctx.success(f"Moved **{player.display_name}** to **{label}**.")
 
 
 async def report_admin(ctx, match_id: int, winner_team=None, draw=False, abort=False):
