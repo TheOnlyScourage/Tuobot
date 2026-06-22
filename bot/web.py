@@ -1,6 +1,5 @@
-"""NammaPUBobot Web Dashboard — OAuth2, civ stats, channel/queue configuration."""
+"""NammaPUBobot Web Dashboard — OAuth2 + channel/queue configuration + health check."""
 
-import csv
 import json
 import os
 import secrets
@@ -20,25 +19,14 @@ from core.database import db
 import bot
 
 # --- Paths ---
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
 HTML_PATH = os.path.join(os.path.dirname(__file__), 'web_page.html')
-MIN_GAMES = 50
 
-# --- Session store (Layer 5: migrated from in-memory dicts to MySQL) ---
-#
-# Previously `_sessions` and `_oauth_states` were module-level dicts. Every
-# Railway redeploy (which is every commit to main) blew them away, so all
-# OAuth-logged-in admins had to log back in any time we shipped a fix. Moving
-# them to MySQL means sessions survive deploys, and an `expires_at`-indexed
-# DELETE in _get_session keeps the tables self-cleaning without a cron.
+# --- Session store (MySQL-backed so logins survive Railway redeploys) ---
 SESSION_LIFETIME = 86400  # 24 hours
 OAUTH_STATE_LIFETIME = 300  # 5 minutes
 COOKIE_NAME = "pubobot_session"
 
-# Opportunistic cleanup — run a single DELETE of expired rows at most once
-# every 5 minutes. Gated on a module-level timestamp so a burst of requests
-# doesn't hammer the DB with the same delete. Amortized cost is essentially
-# zero (hits an indexed column) and avoids a dedicated cleanup job.
+# Opportunistic cleanup throttle
 _last_session_cleanup = 0.0
 _SESSION_CLEANUP_INTERVAL = 300  # seconds
 
@@ -48,7 +36,7 @@ db.ensure_table(dict(
 		dict(cname="session_id", ctype=db.types.str),
 		dict(cname="user_id", ctype=db.types.int, notnull=True),
 		dict(cname="username", ctype=db.types.str, notnull=True),
-		dict(cname="avatar", ctype=db.types.str),  # nullable — not every Discord user has an avatar
+		dict(cname="avatar", ctype=db.types.str),
 		dict(cname="csrf", ctype=db.types.str, notnull=True),
 		dict(cname="expires_at", ctype=db.types.int, notnull=True),
 	],
@@ -66,11 +54,6 @@ db.ensure_table(dict(
 
 
 async def _cleanup_expired_sessions():
-	"""Best-effort cleanup of expired sessions and OAuth states.
-
-	Called inline at read/write boundaries so we don't need a dedicated cron
-	job. Returns silently on DB errors — an unavailable DB would already have
-	prevented the surrounding auth flow from working."""
 	global _last_session_cleanup
 	now = time.time()
 	if now - _last_session_cleanup < _SESSION_CLEANUP_INTERVAL:
@@ -81,7 +64,6 @@ async def _cleanup_expired_sessions():
 		await db.execute("DELETE FROM `web_sessions` WHERE `expires_at` < %s", (cutoff,))
 		await db.execute("DELETE FROM `web_oauth_states` WHERE `expires_at` < %s", (cutoff,))
 	except Exception:
-		# Don't let cleanup errors bubble into auth flow — next tick will retry
 		pass
 
 # --- Discord API ---
@@ -95,9 +77,7 @@ SKIP_TYPES = (RoleVar, TextChanVar, MemberVar)
 # --- HTML cache ---
 _html_cache = None
 
-# Process boot time — used by /health's uptime_seconds field. Set at module
-# import (which happens during asyncio bootstrap, before any task starts),
-# so it's a reasonable proxy for "when the bot process started".
+# Process boot time for /health uptime_seconds
 _boot_time = time.time()
 
 
@@ -115,7 +95,6 @@ def _oauth_enabled():
 
 
 def _get_root_url(request):
-	"""Get public root URL from config or request headers."""
 	if hasattr(cfg, 'WS_ROOT_URL') and cfg.WS_ROOT_URL:
 		return cfg.WS_ROOT_URL.rstrip('/')
 	scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
@@ -124,15 +103,6 @@ def _get_root_url(request):
 
 
 async def _get_session(request):
-	"""Get session data from cookie, or None if invalid/expired.
-
-	Layer 5: reads from `web_sessions` in MySQL instead of a process-local dict
-	so that OAuth logins survive Railway redeploys. Async because DB calls are
-	awaitable — all call sites have been updated to `await _get_session(...)`.
-
-	Piggybacks on the request to run opportunistic cleanup of expired
-	sessions/oauth states at most once every 5 minutes.
-	"""
 	await _cleanup_expired_sessions()
 	session_id = request.cookies.get(COOKIE_NAME)
 	if not session_id:
@@ -145,15 +115,11 @@ async def _get_session(request):
 	if not row:
 		return None
 	if row['expires_at'] < int(time.time()):
-		# Stale cookie — drop the row so cleanup stays accurate
 		try:
 			await db.delete('web_sessions', where={'session_id': session_id})
 		except Exception:
 			pass
 		return None
-	# Map the DB row shape to the legacy dict shape that downstream handlers
-	# expect. `expires` is kept for backwards compatibility with any code that
-	# reads it, even though _get_session already filters on expires_at.
 	return {
 		'session_id': row['session_id'],
 		'user_id': row['user_id'],
@@ -165,21 +131,14 @@ async def _get_session(request):
 
 
 def _should_skip(var):
-	"""Check if a variable should be excluded from the web UI."""
 	if isinstance(var, SKIP_TYPES):
 		return True
 	if isinstance(var, VariableTable):
-		# Show mixed tables like the rating-ranks table, which has a RoleVar
-		# "role" column. The frontend renders skip-type columns as plain text
-		# cells (matching Leshaka's UI), so only skip a table whose columns are
-		# ALL skip-types. Previously this used any(), which hid the entire
-		# Rating ranks editor just because of its optional role column.
 		return all(isinstance(v, SKIP_TYPES) for v in var.variables.values())
 	return False
 
 
 def _var_type(var):
-	"""Map a Variable subclass to a frontend type string."""
 	for cls, name in [
 		(BoolVar, "bool"), (SliderVar, "slider"), (IntVar, "int"),
 		(OptionVar, "option"), (DurationVar, "duration"),
@@ -191,7 +150,6 @@ def _var_type(var):
 
 
 def _var_meta(var, value):
-	"""Build metadata dict for a variable (for the frontend)."""
 	meta = {
 		"type": _var_type(var),
 		"display": var.display,
@@ -214,27 +172,14 @@ def _var_meta(var, value):
 
 
 def _check_admin(qc, member):
-	"""Check if a guild member has admin access for a queue channel.
-
-	Mirrors the permission model used by slash admin commands in
-	bot/context/slash/ and by enable_channel/disable_channel in
-	bot/main.py: the bot owner, the guild owner, or any member with the
-	Manage Guild permission is treated as an admin. Until 2026-04-11
-	this returned True unconditionally (see the old TODO comment),
-	which meant any OAuth-logged-in Discord user could mutate the
-	channel and queue config of every channel the bot manages.
-	"""
 	if member is None:
 		return False
-	# Bot owner (global override, mirrors context.Context.check_perms)
 	owner_id = getattr(cfg, 'DC_OWNER_ID', 0)
 	if owner_id and member.id == owner_id:
 		return True
-	# Guild owner of the guild this member is in
 	guild = getattr(member, 'guild', None)
 	if guild is not None and member.id == getattr(guild, 'owner_id', 0):
 		return True
-	# Anyone with Manage Guild permission
 	perms = getattr(member, 'guild_permissions', None)
 	if perms is not None and getattr(perms, 'manage_guild', False):
 		return True
@@ -242,15 +187,6 @@ def _check_admin(qc, member):
 
 
 def _check_csrf(request, session):
-	"""Validate X-CSRF-Token header against the session CSRF token.
-
-	Uses constant-time compare to avoid timing oracles. Returns True only
-	when the session has a csrf token AND the header exactly matches.
-	Dashboard POST endpoints that don't gate on this are vulnerable to
-	cross-site request forgery: a malicious page could trick a logged-in
-	admin's browser into POSTing to /api/channels/<id>/config because the
-	session cookie rides along automatically.
-	"""
 	if not session:
 		return False
 	expected = session.get('csrf')
@@ -275,34 +211,15 @@ async def handle_health(request):
 
 	Returns 200 only when the Discord client is connected AND the DB pool
 	answers a trivial query. Returns 503 in every other state.
-
-	This is what prevents the zombie-bot failure mode: previously a
-	Discord 1015 rate limit would kill the Discord task while the web
-	task kept the container "alive" from Railway's point of view (it fell
-	back to a TCP probe because no healthcheckPath was configured). With
-	this endpoint + healthcheckPath = "/health" in railway.toml, Railway
-	restarts the container whenever Discord is actually dead.
-
-	The payload also carries non-gating observability fields:
-	  - active_matches: current in-flight match count
-	  - last_tick_age_seconds: seconds since the last think() tick
-	    (>5 with bot_ready=true means the think loop is stalled)
-	  - last_elo_sync_at: unix timestamp of the last successful ELO sync,
-	    0 if none yet this process run
-	  - uptime_seconds: process uptime since import
-	These let the Railway dashboard / future `/metrics` scrape see
-	degradation before it becomes an outage.
 	"""
 	import asyncio as _asyncio
 	from core.database import db as _db
 	from bot import events as _events
-	from bot import elo_sync as _elo_sync
 
 	discord_ok = bool(getattr(bot, 'bot_ready', False)) and dc.is_ready()
 
 	db_ok = False
 	try:
-		# Cap the query at 2s so a slow DB doesn't hang the healthcheck
 		await _asyncio.wait_for(_db.fetchone("SELECT 1 AS ok"), timeout=2.0)
 		db_ok = True
 	except Exception:
@@ -310,9 +227,7 @@ async def handle_health(request):
 
 	now = time.time()
 	last_tick = getattr(_events, 'last_tick_at', 0.0) or 0.0
-	# If we've never ticked, report None rather than a misleading huge delta
 	last_tick_age = int(now - last_tick) if last_tick > 0 else None
-	last_elo_sync = getattr(_elo_sync, 'last_elo_sync_at', 0.0) or 0.0
 
 	healthy = discord_ok and db_ok
 	payload = {
@@ -322,53 +237,9 @@ async def handle_health(request):
 		"bot_ready": bool(getattr(bot, 'bot_ready', False)),
 		"active_matches": len(getattr(bot, 'active_matches', []) or []),
 		"last_tick_age_seconds": last_tick_age,
-		"last_elo_sync_at": int(last_elo_sync) if last_elo_sync > 0 else 0,
 		"uptime_seconds": int(now - _boot_time),
 	}
 	return web.json_response(payload, status=200 if healthy else 503)
-
-
-# ─── Civ stats API (public, unchanged) ───
-
-async def handle_civ_stats(request):
-	csv_path = os.path.join(DATA_DIR, 'civ_elo_stats.csv')
-	if not os.path.exists(csv_path):
-		return web.json_response({'error': 'civ_elo_stats.csv not found'}, status=404)
-
-	rows = []
-	with open(csv_path, 'r') as f:
-		reader = csv.DictReader(f)
-		player_threshold = 1000
-		team_threshold = 1100
-		for name in (reader.fieldnames or []):
-			if name.startswith('games_player_elo_above_'):
-				player_threshold = int(name.split('_')[-1])
-			elif name.startswith('games_team_elo_above_'):
-				team_threshold = int(name.split('_')[-1])
-		pt, tt = player_threshold, team_threshold
-		for row in reader:
-			games = int(row['games'])
-			if games < MIN_GAMES:
-				continue
-			rows.append({
-				'civ': row['civ'],
-				'games': games,
-				'winrate': float(row['winrate']),
-				'games_player_above': int(row.get(f'games_player_elo_above_{pt}', 0)),
-				'winrate_player_above': float(row.get(f'winrate_player_elo_above_{pt}', 0)),
-				'games_player_below': int(row.get(f'games_player_elo_below_{pt}', 0)),
-				'winrate_player_below': float(row.get(f'winrate_player_elo_below_{pt}', 0)),
-				'games_team_above': int(row.get(f'games_team_elo_above_{tt}', 0)),
-				'winrate_team_above': float(row.get(f'winrate_team_elo_above_{tt}', 0)),
-				'games_team_below': int(row.get(f'games_team_elo_below_{tt}', 0)),
-				'winrate_team_below': float(row.get(f'winrate_team_elo_below_{tt}', 0)),
-			})
-
-	return web.json_response({
-		'civs': rows,
-		'player_threshold': player_threshold,
-		'team_threshold': team_threshold,
-	})
 
 
 # ─── Auth routes ───
@@ -378,8 +249,6 @@ async def handle_auth_login(request):
 		raise web.HTTPBadRequest(text="OAuth not configured")
 	root_url = _get_root_url(request)
 	state = secrets.token_urlsafe(16)
-	# Persist the OAuth state in MySQL so we survive a redeploy that happens
-	# between the user clicking "Login" and Discord redirecting them back.
 	await _cleanup_expired_sessions()
 	await db.insert('web_oauth_states', {
 		'state': state,
@@ -410,14 +279,12 @@ async def handle_auth_callback(request):
 		('state', 'expires_at'), 'web_oauth_states', where={'state': state}
 	)
 	if not state_row or state_row['expires_at'] < int(time.time()):
-		# Clean up the stale row if it exists — keeps the table tight
 		if state_row:
 			try:
 				await db.delete('web_oauth_states', where={'state': state})
 			except Exception:
 				pass
 		raise web.HTTPBadRequest(text="Invalid or expired state parameter")
-	# Single-use — delete immediately to prevent replay
 	try:
 		await db.delete('web_oauth_states', where={'state': state})
 	except Exception:
@@ -427,7 +294,6 @@ async def handle_auth_callback(request):
 	redirect_uri = f"{root_url}/auth/callback"
 
 	async with aiohttp_client.ClientSession() as http:
-		# Exchange code for token
 		resp = await http.post(DISCORD_OAUTH_TOKEN, data={
 			"client_id": str(cfg.DC_CLIENT_ID),
 			"client_secret": cfg.DC_CLIENT_SECRET,
@@ -439,7 +305,6 @@ async def handle_auth_callback(request):
 			raise web.HTTPBadRequest(text="Failed to exchange code for token")
 		token_data = await resp.json()
 
-		# Get user info
 		resp = await http.get(f"{DISCORD_API}/users/@me", headers={
 			"Authorization": f"Bearer {token_data['access_token']}"
 		})
@@ -453,9 +318,6 @@ async def handle_auth_callback(request):
 		'user_id': int(user["id"]),
 		'username': user.get("global_name") or user["username"],
 		'avatar': user.get("avatar"),
-		# Per-session CSRF token — required on all POST endpoints via the
-		# X-CSRF-Token header. Generated once at login so the dashboard JS
-		# can fetch it from /api/me and cache it for the session.
 		'csrf': secrets.token_urlsafe(32),
 		'expires_at': int(time.time()) + SESSION_LIFETIME,
 	}, on_dublicate='replace')
@@ -484,20 +346,12 @@ async def handle_api_me(request):
 	session = await _get_session(request)
 	if not session:
 		return web.json_response({"logged_in": False, "oauth_enabled": _oauth_enabled()})
-	# Lazily issue a CSRF token for any session missing one (e.g. legacy
-	# rows from before the CSRF feature landed). Safe because this endpoint
-	# requires a valid same-origin session cookie — an attacker without
-	# that cookie can't trigger the issuance, and cross-origin JS can't
-	# read the response under the browser's same-origin policy.
 	if not session.get('csrf'):
 		new_csrf = secrets.token_urlsafe(32)
 		try:
 			await db.update('web_sessions', {'csrf': new_csrf}, keys={'session_id': session['session_id']})
 			session['csrf'] = new_csrf
 		except Exception:
-			# If the update fails, fall back to an ephemeral token for this
-			# response — it won't match on the next POST but at least /api/me
-			# still returns a usable payload.
 			session['csrf'] = new_csrf
 	return web.json_response({
 		"logged_in": True,
@@ -517,7 +371,6 @@ async def handle_api_guilds(request):
 	user_id = session["user_id"]
 	guilds = []
 	for guild in dc.guilds:
-		# Only show guilds with configured queue channels
 		qc_ids = [ch_id for ch_id, qc in bot.queue_channels.items() if qc.guild_id == guild.id]
 		if not qc_ids:
 			continue
@@ -599,11 +452,6 @@ async def handle_api_channel_config(request):
 			"is_admin": is_admin,
 		})
 
-	# POST — update config
-	# CSRF check first: reject cross-site POSTs before running any admin
-	# or config-mutation logic. Pre-CSRF this endpoint accepted any POST
-	# with a valid session cookie, so a malicious page could rewrite a
-	# logged-in admin's channel config with no interaction.
 	if not _check_csrf(request, session):
 		return web.json_response({"error": "Invalid or missing CSRF token"}, status=403)
 	if not is_admin:
@@ -615,7 +463,6 @@ async def handle_api_channel_config(request):
 			var = qc.cfg_factory.variables.get(key)
 			if not var or _should_skip(var):
 				continue
-			# VariableTable expects list; all others expect strings
 			if isinstance(var, VariableTable):
 				filtered[key] = value if isinstance(value, list) else json.dumps(value)
 			elif value is None:
@@ -642,10 +489,6 @@ async def handle_api_queues(request):
 	if not channel:
 		return web.json_response({"error": "Channel not found"}, status=404)
 	try:
-		# We don't use the member object — we only call fetch_member for
-		# its side effect: raising if the caller isn't actually in the
-		# guild. Assigning to `_` is what tells the linter "the name is
-		# unused on purpose" without losing the membership check.
 		_ = channel.guild.get_member(session["user_id"]) or await channel.guild.fetch_member(session["user_id"])
 	except Exception:
 		return web.json_response({"error": "Not a guild member"}, status=403)
@@ -695,8 +538,6 @@ async def handle_api_queue_config(request):
 			"is_admin": is_admin,
 		})
 
-	# POST
-	# CSRF check first — see handle_api_channel_config for rationale.
 	if not _check_csrf(request, session):
 		return web.json_response({"error": "Invalid or missing CSRF token"}, status=403)
 	if not is_admin:
@@ -720,10 +561,9 @@ async def handle_api_queue_config(request):
 		return web.json_response({"error": str(e)}, status=400)
 
 
-# ─── Debug endpoint (temporary) ───
+# ─── Debug endpoint ───
 
 async def handle_api_debug(request):
-	"""Temporary debug endpoint to diagnose guild/channel state."""
 	return web.json_response({
 		"bot_guilds": [{"id": str(g.id), "name": g.name} for g in dc.guilds],
 		"queue_channels": {
@@ -739,16 +579,11 @@ async def handle_api_debug(request):
 def create_app():
 	app = web.Application()
 	app.router.add_get('/', handle_index)
-	# Health check (Railway healthcheckPath)
 	app.router.add_get('/health', handle_health)
-	# Auth
 	app.router.add_get('/auth/login', handle_auth_login)
 	app.router.add_get('/auth/callback', handle_auth_callback)
 	app.router.add_get('/auth/logout', handle_auth_logout)
-	# Public API
-	app.router.add_get('/api/civ-stats', handle_civ_stats)
 	app.router.add_get('/api/me', handle_api_me)
-	# Dashboard API
 	app.router.add_get('/api/debug', handle_api_debug)
 	app.router.add_get('/api/guilds', handle_api_guilds)
 	app.router.add_get('/api/guilds/{guild_id}/channels', handle_api_channels)
@@ -761,7 +596,6 @@ def create_app():
 
 
 async def start_web_server(port=None):
-	"""Start the web server. Returns the runner for cleanup."""
 	if port is None:
 		port = int(os.environ.get('PORT', 8080))
 	_load_html()
