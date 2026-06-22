@@ -22,14 +22,24 @@ class Draft:
 		if self.m.cfg['pick_teams'] == "draft":
 			self.m.states.append(self.m.DRAFT)
 
+	async def _refresh_ratings(self):
+		# Rebuild self.m.ratings from the current roster. Called after any roster
+		# change (put/sub) so downstream matchmaking and rating math see correct ELOs.
+		self.m.ratings = {
+			p['user_id']: p['rating']
+			for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
+		}
+
 	async def start(self, ctx):
 		await self.refresh(ctx)
 
 	async def print(self, ctx):
 		try:
 			await ctx.notice(embed=self.m.embeds.draft())
-		except DiscordException:
-			pass
+		except DiscordException as e:
+			# Don't crash the match on a failed embed (rate limit / perms), but
+			# surface it in the Railway logs rather than swallowing silently.
+			bot.log.error(f"Draft.print failed for match {self.m.id}: {e}")
 
 	async def refresh(self, ctx):
 		if self.m.state != self.m.DRAFT:  # noqa: SIM114
@@ -70,15 +80,19 @@ class Draft:
 		await self.print(ctx)
 
 	async def pick(self, ctx, author, players):
+		# State and captaincy don't change mid-loop, so validate once up front.
+		if self.m.state != self.m.DRAFT:
+			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
+		elif (team := find(lambda t: author in t[:1], self.m.teams[:2])) is None:
+			raise bot.Exc.PermissionError(self.m.gt("You are not a captain."))
+
 		for player in players:
 			pick_step = max(0, (len(self.m.teams[0]) + len(self.m.teams[1]) - 2))
+			# picker_team is None on the final step, which intentionally disables the
+			# turn check below (the last pick is forced / handled by auto last-pick).
 			picker_team = self.m.teams[self.pick_order[pick_step]] if pick_step < len(self.pick_order) - 1 else None
 
-			if self.m.state != self.m.DRAFT:
-				raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
-			elif (team := find(lambda t: author in t[:1], self.m.teams[:2])) is None:
-				raise bot.Exc.PermissionError(self.m.gt("You are not a captain."))
-			elif picker_team is not None and picker_team is not team:
+			if picker_team is not None and picker_team is not team:
 				raise bot.Exc.PermissionError(self.m.gt("Not your turn to pick."))
 			elif player not in self.m.teams[2]:
 				raise bot.Exc.NotFoundError(self.m.gt("Specified player not in the unpicked list."))
@@ -107,9 +121,7 @@ class Draft:
 			old_team.remove(player)
 		else:
 			self.m.players.append(player)
-			self.m.ratings = {
-				p['user_id']: p['rating'] for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
-			}
+			await self._refresh_ratings()
 
 		team.append(player)
 		await self.m.qc.remove_members(player, ctx=ctx)
@@ -138,9 +150,7 @@ class Draft:
 		self.m.players.append(player2)
 		if player1 in self.sub_queue:
 			self.sub_queue.remove(player1)
-		self.m.ratings = {
-			p['user_id']: p['rating'] for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
-		}
+		await self._refresh_ratings()
 		await self.m.qc.remove_members(player2, ctx=ctx)
 		await bot.remove_players(player2, reason="pickup started")
 
@@ -169,9 +179,7 @@ class Draft:
 		self.m.players.append(candidate)
 		if author in self.sub_queue:
 			self.sub_queue.remove(author)
-		self.m.ratings = {
-			p['user_id']: p['rating'] for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
-		}
+		await self._refresh_ratings()
 
 		# Pull the candidate out of the queue and expire timers, like /subfor.
 		await self.m.qc.remove_members(candidate, ctx=ctx)
