@@ -16,6 +16,7 @@ Note: any member of the prompted team may submit the code, not only the
 captain. The first valid 6-char code from any teammate is accepted.
 """
 import re
+import time
 from bot.constants import HOUSE_EMOJIS
 from nextcord import Embed, Colour, DiscordException
 from core.client import dc
@@ -42,6 +43,12 @@ def _team_display(team) -> str:
 # Game codes must be exactly 6 characters, uppercase letters and digits only.
 # We uppercase the input before checking so the captain can type either case.
 CODE_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
+
+# Minimum seconds between two accepted game codes. Each game runs ~8 minutes,
+# so the next game's code legitimately can't exist until the current game is
+# done. This prevents the same code being pasted twice in quick succession
+# from filling two game slots at once (Game 2 + Game 3 instant double-submit).
+_CODE_COOLDOWN_SECONDS = 8 * 60
 
 
 def _is_valid_code(text: str) -> bool:
@@ -70,6 +77,13 @@ async def handle_code_input(message) -> bool:
 	if message.author.id not in pc.pending_team_ids:
 		return False
 
+	# Cooldown gate: if the next game's code window hasn't opened yet, silently
+	# ignore the message (leave the listener in place so the next valid code
+	# AFTER the window opens is still accepted). This stops a code pasted twice
+	# in the same instant from filling two game slots at once.
+	if time.time() < pc.next_code_allowed_at:
+		return False
+
 	if not _is_valid_code(message.content):
 		return False  # not a code — leave the listener in place
 
@@ -90,6 +104,7 @@ class PartyCode:
 		self.second_captain = None        # the captain who handles Games 2 & 3
 		self.pending_captain = None       # captain we're currently waiting on
 		self.pending_team_ids = set()     # user-ids allowed to submit right now
+		self.next_code_allowed_at = 0.0   # epoch secs; codes ignored before this
 		self.pending_game  = 0
 		self.party_message = None         # the ✅ reaction message
 		self.game1_done    = False        # True after Game 1 code is submitted
@@ -190,6 +205,18 @@ class PartyCode:
 
 		team_str = _team_display(captain_team) if captain_team else captain.display_name
 
+		# If a cooldown is active (Game 3 decider), tell players when the code
+		# window opens so a silently-ignored early paste doesn't look broken.
+		wait_left = int(self.next_code_allowed_at - time.time())
+		cooldown_note = ""
+		if wait_left > 0:
+			mins = max(1, round(wait_left / 60))
+			cooldown_note = (
+				f"\n\n*The Game {game_num} code can be submitted once Game "
+				f"{game_num - 1} is done (~{mins} min). Codes sent before then "
+				"are ignored.*"
+			)
+
 		try:
 			if game_num == 1:
 				embed = Embed(
@@ -203,7 +230,10 @@ class PartyCode:
 			else:
 				embed = Embed(
 					colour=Colour(0x2ecc71),
-					description=f"Anyone on {team_str} can reply with the **Game {game_num} code**."
+					description=(
+						f"Anyone on {team_str} can reply with the **Game {game_num} code**."
+						f"{cooldown_note}"
+					)
 				)
 				await channel.send(embed=embed)
 		except DiscordException as e:
@@ -245,6 +275,7 @@ class PartyCode:
 			self.game1_done = True
 			# Always prompt the other team for Game 2 — whether the captain
 			# reacted ✅ or not. The Game 1 embed already told them to reply.
+			# No cooldown here: Game 1 and Game 2 lobbies are created up front.
 			other_cap = next(
 				(t[0] for t in self.m.teams[:2] if t and t[0] != captain), None
 			)
@@ -253,9 +284,13 @@ class PartyCode:
 					self.second_captain = other_cap
 				await self._prompt_code(self.second_captain, game_num=2)
 		elif game_num == 2:
-			# Same second team submits Game 3
+			# Game 3 is the decider and only happens AFTER Games 1 & 2 are
+			# actually played (~8 min each). Gate the Game 3 code window so a
+			# code pasted twice in the same instant can't fill Game 3 off the
+			# back of Game 2. Same team submits the decider code.
+			self.next_code_allowed_at = time.time() + _CODE_COOLDOWN_SECONDS
 			await self._prompt_code(self.second_captain or captain, game_num=3)
-		# game_num == 3 → no further prompts needed
+		# game_num == 3 → series over, no further prompts needed
 
 	# ── Game Code embed (Image 3) ─────────────────────────────────────────────
 
