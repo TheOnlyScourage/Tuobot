@@ -4,13 +4,16 @@ Handles the party-up phase and game code collection after draft ends.
 
 Flow:
   1. PartyCode.start(ctx)   → posts the ✅ party-up embed (Image 2)
-  2. Captain A reacts ✅    → prompted to type Game 1 lobby code
-  3. Captain A types code   → Game 1 Code embed posted (Image 3)
-                              Captain B is told to reply with Game 2 code
+  2. Captain A reacts ✅    → their TEAM is prompted to type Game 1 lobby code
+  3. Any teammate types code → Game 1 Code embed posted (Image 3)
+                              Team B is told to reply with Game 2 code
   4. Captain B reacts ✅    → (can happen any time; code prompt fires when
                               both Game 1 is done AND B has reacted)
-  5. Captain B types code   → Game 2 Code embed posted
-  6. Captain B types code   → Game 3 Code embed posted
+  5. Any teammate on B types code → Game 2 Code embed posted
+  6. Same team types code   → Game 3 Code embed posted
+
+Note: any member of the prompted team may submit the code, not only the
+captain. The first valid 6-char code from any teammate is accepted.
 """
 import re
 from bot.constants import HOUSE_EMOJIS
@@ -32,8 +35,10 @@ def _team_display(team) -> str:
 
 
 
-# Module-level registry: {(channel_id, user_id): PartyCode}
-# Checked by events.py on_message to route captain code inputs.
+# Module-level registry: {channel_id: PartyCode}
+# Checked by events.py on_message to route team code inputs. Keyed by channel
+# alone (not per-user) so ANY teammate on the pending team can submit the code;
+# the PartyCode instance checks team membership itself in handle_code_input.
 # Game codes must be exactly 6 characters, uppercase letters and digits only.
 # We uppercase the input before checking so the captain can type either case.
 CODE_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
@@ -52,21 +57,24 @@ async def handle_code_input(message) -> bool:
 	Called from events.py on_message.
 	Returns True if the message was consumed as a game code, False otherwise.
 
-	Only messages that match the strict 6-char A-Z/0-9 code format are
-	consumed. Anything else (random chatter, "one code pplease", etc.)
-	is ignored so the captain can keep talking while waiting.
+	Only messages that match the strict 6-char A-Z/0-9 code format AND are
+	authored by a member of the currently-prompted team are consumed.
+	Anything else (random chatter, "one code pplease", etc.) is ignored so
+	teammates can keep talking while waiting.
 	"""
-	key = (message.channel.id, message.author.id)
-	pc = _waiting_codes.get(key)
+	pc = _waiting_codes.get(message.channel.id)
 	if pc is None or not pc.active:
+		return False
+
+	# Only a member of the pending team may submit.
+	if message.author.id not in pc.pending_team_ids:
 		return False
 
 	if not _is_valid_code(message.content):
 		return False  # not a code — leave the listener in place
 
-	# Pop BEFORE handing off so a successful submission can\'t double-fire,
-	# but the validation already happened above so this is safe.
-	_waiting_codes.pop(key, None)
+	# Pop BEFORE handing off so a successful submission can't double-fire.
+	_waiting_codes.pop(message.channel.id, None)
 	await pc._receive_code(message)
 	return True
 
@@ -81,6 +89,7 @@ class PartyCode:
 		self.ready_order   = []           # captains in the order they reacted ✅
 		self.second_captain = None        # the captain who handles Games 2 & 3
 		self.pending_captain = None       # captain we're currently waiting on
+		self.pending_team_ids = set()     # user-ids allowed to submit right now
 		self.pending_game  = 0
 		self.party_message = None         # the ✅ reaction message
 		self.game1_done    = False        # True after Game 1 code is submitted
@@ -105,9 +114,9 @@ class PartyCode:
 		self.active = False
 		if self.party_message:
 			bot.waiting_reactions.pop(self.party_message.id, None)
-		if self.pending_captain:
-			_waiting_codes.pop((self.m.qc.id, self.pending_captain.id), None)
-			self.pending_captain = None
+		_waiting_codes.pop(self.m.qc.id, None)
+		self.pending_captain = None
+		self.pending_team_ids = set()
 
 	# ── Party-up embed (Image 2) ──────────────────────────────────────────────
 
@@ -147,10 +156,10 @@ class PartyCode:
 		self.ready_order.append(user)
 
 		if len(self.ready_order) == 1:
-			# First captain ready → they create Game 1 lobby
+			# First captain ready → their team creates Game 1 lobby
 			await self._prompt_code(user, game_num=1)
 		else:
-			# Second captain ready → they create Games 2 & 3
+			# Second captain ready → their team creates Games 2 & 3
 			self.second_captain = user
 			# If Game 1 already submitted, immediately ask for Game 2
 			if self.game1_done:
@@ -158,21 +167,27 @@ class PartyCode:
 
 	# ── Code prompting ────────────────────────────────────────────────────────
 
+	def _team_of(self, captain):
+		"""Return the team list that `captain` leads, or None."""
+		return next((t for t in self.m.teams[:2] if t and captain in t), None)
+
 	async def _prompt_code(self, captain, game_num: int):
-		"""Ask the captain to type their lobby code in the channel."""
+		"""Ask the captain's team to type their lobby code in the channel."""
 		self.pending_captain = captain
 		self.pending_game    = game_num
 
-		# Register message listener
-		_waiting_codes[(self.m.qc.id, captain.id)] = self
+		# Allow ANY member of this captain's team to submit the code.
+		captain_team = self._team_of(captain)
+		self.pending_team_ids = {p.id for p in captain_team} if captain_team else {captain.id}
+
+		# Register message listener (keyed by channel — see _waiting_codes note).
+		_waiting_codes[self.m.qc.id] = self
 
 		channel = dc.get_channel(self.m.qc.id)
 		if channel is None:
 			log.error(f"PartyCode: could not find channel {self.m.qc.id}")
 			return
 
-		# Determine which team this captain leads for the display string
-		captain_team = next((t for t in self.m.teams[:2] if t and captain in t), None)
 		team_str = _team_display(captain_team) if captain_team else captain.display_name
 
 		try:
@@ -181,14 +196,14 @@ class PartyCode:
 					colour=Colour(0x2ecc71),
 					description=(
 						f"✅ {captain.mention}'s team ({team_str}) is ready!\n"
-						f"{captain.mention}, reply to this message with the **Game 1 code**."
+						f"Anyone on {team_str} can reply with the **Game 1 code**."
 					)
 				)
 				await channel.send(embed=embed)
 			else:
 				embed = Embed(
 					colour=Colour(0x2ecc71),
-					description=f"{captain.mention}, reply to this message with the **Game {game_num} code**."
+					description=f"Anyone on {team_str} can reply with the **Game {game_num} code**."
 				)
 				await channel.send(embed=embed)
 		except DiscordException as e:
@@ -197,7 +212,7 @@ class PartyCode:
 	# ── Code reception ────────────────────────────────────────────────────────
 
 	async def _receive_code(self, message):
-		"""Called by handle_code_input when a captain types their code."""
+		"""Called by handle_code_input when a teammate types their code."""
 		if not self.active:
 			return
 
@@ -216,17 +231,20 @@ class PartyCode:
 			except Exception:
 				pass
 			return
+
 		game_num  = self.pending_game
 		captain   = self.pending_captain
+		submitter = message.author          # actual person who typed the code
 		self.pending_captain = None
+		self.pending_team_ids = set()
 
-		# Post the code embed
-		await self._post_code_embed(message.channel, code, game_num, captain)
+		# Post the code embed, crediting the actual submitter.
+		await self._post_code_embed(message.channel, code, game_num, submitter)
 
 		if game_num == 1:
 			self.game1_done = True
-			# Always prompt the other captain for Game 2 — whether they reacted ✅ or not.
-			# The Game 1 embed already told them to reply, so the listener must be ready.
+			# Always prompt the other team for Game 2 — whether the captain
+			# reacted ✅ or not. The Game 1 embed already told them to reply.
 			other_cap = next(
 				(t[0] for t in self.m.teams[:2] if t and t[0] != captain), None
 			)
@@ -235,23 +253,28 @@ class PartyCode:
 					self.second_captain = other_cap
 				await self._prompt_code(self.second_captain, game_num=2)
 		elif game_num == 2:
-			# Same second captain submits Game 3
-			await self._prompt_code(captain, game_num=3)
+			# Same second team submits Game 3
+			await self._prompt_code(self.second_captain or captain, game_num=3)
 		# game_num == 3 → no further prompts needed
 
 	# ── Game Code embed (Image 3) ─────────────────────────────────────────────
 
-	async def _post_code_embed(self, channel, code: str, game_num: int, captain):
+	async def _post_code_embed(self, channel, code: str, game_num: int, submitter):
 		captains      = [t[0] for t in self.m.teams[:2] if t]
-		other_captain = next((c for c in captains if c != captain), None)
+		# Figure out which team the submitter belongs to, to address the other.
+		submitter_team = next(
+			(t for t in self.m.teams[:2] if t and submitter in t), None
+		)
+		submitter_cap = submitter_team[0] if submitter_team else submitter
+		other_captain = next((c for c in captains if c != submitter_cap), None)
 
 		if game_num == 1 and other_captain:
 			next_line = (
-				f"{other_captain.mention}, reply to this message when you create the **Game 2 code**."
+				f"{other_captain.mention}, reply to this message when your team creates the **Game 2 code**."
 			)
 		elif game_num == 2:
 			next_line = (
-				f"{captain.mention}, reply to this message when you create the **Game 3 code**."
+				f"{submitter_cap.mention}, your team will create the **Game 3 code**."
 			)
 		else:
 			next_line = ""
@@ -267,7 +290,7 @@ class PartyCode:
 			colour=Colour(0x992d22),
 		)
 		embed.set_footer(
-			text=f"Match {str(self.m.id).zfill(6)} · Code set by {get_nick(captain)}"
+			text=f"Match {str(self.m.id).zfill(6)} · Code set by {get_nick(submitter)}"
 		)
 
 		try:
