@@ -420,6 +420,15 @@ class QueueChannel:
 		for q in (q for q in self.queues if q.length):
 			affected.update(q.pop_members(*members))
 
+		# Queue priority can keep a player physically in a queue even when a
+		# match starts elsewhere (e.g. 6v6-ranked with max priority). In that
+		# case they're still added to at least one queue here, so announcing
+		# "removed from all queues" would be a lie and makes players leave.
+		# Only announce members who are genuinely no longer in ANY queue on
+		# this channel after the pops above.
+		still_queued = {m for m in affected if any(q.is_added(m) for q in self.queues)}
+		announce = affected - still_queued
+
 		if len(affected):
 			if not ctx:
 				try:
@@ -428,13 +437,17 @@ class QueueChannel:
 					return
 
 			for m in affected:
-				bot.expire.cancel(self, m)
-			if reason:
+				# Only cancel the expire timer for players actually gone from all
+				# queues; priority-retained players keep their timer running.
+				if m not in still_queued:
+					bot.expire.cancel(self, m)
+
+			if reason and len(announce):
 				await ctx.notice(self.topic)
 				if highlight:
-					mention = join_and([m.mention for m in affected])
+					mention = join_and([m.mention for m in announce])
 				else:
-					mention = join_and(['**' + get_nick(m) + '**' for m in affected])
+					mention = join_and(['**' + get_nick(m) + '**' for m in announce])
 				if reason == "expire":
 					reason = self.gt("expire time ran off")
 				elif reason == "offline":
@@ -448,7 +461,7 @@ class QueueChannel:
 				elif reason == "moderator":
 					reason = self.gt("removed by a moderator")
 
-				if len(affected) == 1:
+				if len(announce) == 1:
 					await ctx.notice(self.gt("{member} were removed from all queues ({reason}).").format(
 						member=mention,
 						reason=reason
