@@ -158,6 +158,15 @@ async def on_message(message):
 	if message.channel.type != ChannelType.text:
 		return
 
+	# Ignore the bot's own messages so its prompt embeds can't be parsed as codes.
+	if message.author.id == dc.user.id:
+		return
+
+	# Party-up game code: if a teammate on the prompted team typed a valid
+	# 6-char code, consume it here and stop. Returns False for normal chatter.
+	if await handle_code_input(message):
+		return
+
 	# @Q ping role mention → specialty status embed
 	if any(r.id == _Q_PING_ROLE_ID for r in message.role_mentions):
 		await _send_q_ping_embed(message)
