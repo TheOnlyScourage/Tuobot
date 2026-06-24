@@ -78,7 +78,7 @@ async def sub_force(ctx, player1: Member, player2: Member):
 			f"**{player2.display_name}** is already in an active match."
 		))
 
-	# Capture player1\'s team index BEFORE the swap so we can redirect the
+	# Capture player1's team index BEFORE the swap so we can redirect the
 	# penalty to player1 if the team ends up losing.
 	team_idx = next(
 		(i for i, t in enumerate(match.teams[:2]) if player1 in t), None
@@ -135,12 +135,12 @@ async def put(ctx, match_id: int, player: Member, team_name: str):
 				f"Unknown team '{team_name}'. Use Team A, Team B, or Unpicked."
 			)
 
-	# Direct manipulation — bypasses draft.put\'s name-lookup to guarantee
+	# Direct manipulation — bypasses draft.put's name-lookup to guarantee
 	# the right team is picked even when both teams share a Hogwarts name.
 	target_team = match.teams[target_idx]
 
 	# Player must already be in the match — check membership FIRST, then index,
-	# otherwise .index() raises ValueError on teams the player isn\'t on.
+	# otherwise .index() raises ValueError on teams the player isn't on.
 	current_team = next((t for t in match.teams if player in t), None)
 	if current_team is None:
 		raise bot.Exc.NotFoundError(
@@ -217,6 +217,30 @@ async def force_checkin(ctx, match_id: int):
 	if match.state != bot.Match.CHECK_IN:
 		raise bot.Exc.MatchStateError(ctx.qc.gt("Match is not in the check-in phase."))
 
+	# ── Block during an active standby race ───────────────────────────────
+	# When standby players have been pulled in (at 2/3 of check-in), the roster
+	# is temporarily bigger than the queue size and players are RACING to ready
+	# up — first to react wins the open slot (see bot/match/standby.py).
+	# force_checkin marks everyone ready at once, which collapses that race
+	# nondeterministically and can advance the WRONG player into the draft
+	# while bouncing a legitimate standby racer back to the queue.
+	# The roster being larger than queue_size is the precise signal that a
+	# standby race is in progress; standby_pulled is a secondary guard.
+	queue_size = match.queue.cfg.size
+	standby_race_active = (
+		len(match.players) > queue_size
+		or getattr(match.check_in, 'standby_pulled', False)
+		and any(p not in match.check_in.ready_players for p in match.players)
+		and len(getattr(match.queue, 'standby', []) or []) > 0
+	)
+	if standby_race_active:
+		raise bot.Exc.MatchStateError(ctx.qc.gt(
+			"Can't force check-in during an active standby race \u2014 players are "
+			"competing to ready up for the open slot(s). Wait for the race to "
+			"resolve, or use `/admin match sub_player` / `/swap` to set the roster "
+			"manually."
+		))
+
 	# Mark all players as ready and advance the match
 	for player in match.players:
 		match.check_in.ready_players.add(player)
@@ -261,7 +285,7 @@ async def swap_players(ctx, player1: Member, player2: Member):
 				"Swap is only available during the draft or waiting-report phase."
 			))
 
-		# Find each player\'s location across ALL team slots (incl. unpicked pool)
+		# Find each player's location across ALL team slots (incl. unpicked pool)
 		loc1 = next(((t, t.index(player1)) for t in match.teams if player1 in t), None)
 		loc2 = next(((t, t.index(player2)) for t in match.teams if player2 in t), None)
 		if loc1 is None or loc2 is None:
@@ -300,12 +324,12 @@ async def swap_players(ctx, player1: Member, player2: Member):
 				f"**{outsider.display_name}** is already in an active match."
 			))
 
-		# Pull outsider out of any queues so they don\'t double-add
+		# Pull outsider out of any queues so they don't double-add
 		for q in ctx.qc.queues:
 			if q.is_added(outsider):
 				q.pop_members(outsider)
 
-		# Find insider\'s slot in the match and replace
+		# Find insider's slot in the match and replace
 		loc = next(((t, t.index(insider)) for t in match.teams if insider in t), None)
 		if loc is None:
 			raise bot.Exc.NotFoundError(ctx.qc.gt(
@@ -318,7 +342,7 @@ async def swap_players(ctx, player1: Member, player2: Member):
 		if insider in match.players:
 			match.players[match.players.index(insider)] = outsider
 
-		# Add the outsider\'s rating into the match dict so embeds don\'t KeyError
+		# Add the outsider's rating into the match dict so embeds don't KeyError
 		if outsider.id not in match.ratings:
 			try:
 				rows = await match.qc.rating.get_players([outsider.id])
