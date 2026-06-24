@@ -149,6 +149,16 @@ async def finalize_race_results(ci, ctx):
 	# Rebuild ready_order to match the trimmed roster, preserving relative order.
 	ci.ready_order = [p for p in ci.ready_order if p in ci.ready_players]
 
+	# Clear offline-immunity for players who made the final roster, mirroring
+	# what queue_channel.queue_started() does for normally-filled matches.
+	# Without this, a player pulled in from standby keeps allow_offline set
+	# after their match, because the standby path never goes through
+	# queue_started. Losers are intentionally NOT cleared — they're back on
+	# standby waiting, so their immunity should persist like anyone else's.
+	for p in kept:
+		if p.id in bot.allow_offline:
+			bot.allow_offline.remove(p.id)
+
 	if losers:
 		await ctx.notice(match.gt(
 			"{losers} didn\u2019t make the cut and have been returned to standby."
