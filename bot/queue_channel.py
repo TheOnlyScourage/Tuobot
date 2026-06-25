@@ -415,7 +415,15 @@ class QueueChannel:
 		else:
 			return "> [" + " | ".join([f"**{q.name}** ({q.status})" for q in populated]) + "]"
 
-	async def remove_members(self, *members, ctx=None, reason=None, highlight=False):
+	async def remove_members(self, *members, ctx=None, reason=None, highlight=False, exclude=None):
+		# exclude: optional set of user-IDs that must NOT be removed (queue
+		# priority protection). Filter them out BEFORE popping so they're never
+		# removed from any queue here and never appear in the removal message.
+		if exclude:
+			members = tuple(m for m in members if m.id not in exclude)
+		if not members:
+			return
+
 		affected = set()
 		for q in (q for q in self.queues if q.length):
 			affected.update(q.pop_members(*members))
@@ -539,15 +547,18 @@ class QueueChannel:
 
 			await asyncio.sleep(1)
 
-	async def queue_started(self, ctx, members, message=None):
-		await self.remove_members(*members, ctx=ctx)
+	async def queue_started(self, ctx, members, message=None, exclude=None):
+		# exclude: user-IDs protected by queue priority — never remove them and
+		# never clear their offline immunity (they stay queued for the next match).
+		exclude = exclude or set()
+		await self.remove_members(*members, ctx=ctx, exclude=exclude)
 
-		for m in filter(lambda m: m.id in bot.allow_offline, members):
+		for m in filter(lambda m: m.id in bot.allow_offline and m.id not in exclude, members):
 			bot.allow_offline.remove(m.id)
 		if message:
 			asyncio.create_task(self._dm_members(members, message))
 
-		await bot.remove_players(*members, reason="pickup started")
+		await bot.remove_players(*members, reason="pickup started", exclude=exclude)
 
 	async def _dm_members(self, members, *args, **kwargs):
 		for m in members:
