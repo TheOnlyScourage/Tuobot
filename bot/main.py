@@ -171,9 +171,16 @@ async def load_state():
 			log.error(f"Failed to load expire state: {e}")
 
 
-async def remove_players(*users, reason=None):
+async def remove_players(*users, reason=None, exclude=None):
+	"""Remove users from every active queue's channel.
+
+	`exclude` is an optional set of user-IDs that must NOT be removed — used by
+	the queue-priority system so players protected by a higher-priority queue
+	are never pulled out (and never trigger the "removed from all queues"
+	message). It's forwarded to each channel's remove_members.
+	"""
 	for qc in set((q.qc for q in bot.active_queues)):
-		await qc.remove_members(*users, reason=reason)
+		await qc.remove_members(*users, reason=reason, exclude=exclude)
 
 
 async def expire_auto_ready(frame_time):
