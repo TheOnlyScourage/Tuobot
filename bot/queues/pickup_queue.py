@@ -404,10 +404,10 @@ class PickupQueue:
 			return bot.Qr.NotAllowed
 
 		# ── Standby pool ─────────────────────────────────────────────────────
-		# Standby only applies during the CHECK_IN phase — that\'s the only
+		# Standby only applies during the CHECK_IN phase — that's the only
 		# stage where late joiners can still claim a slot. Once a match reaches
 		# DRAFT or WAITING_REPORT, new adders go straight into the normal queue
-		# so they\'re ready for the next match.
+		# so they're ready for the next match.
 		active_match = next(
 			(
 				m for m in bot.active_matches
@@ -428,7 +428,7 @@ class PickupQueue:
 			log.info(f"[add_member] {member.display_name} added to standby (now {len(self.standby)} players)")
 			return bot.Qr.Success
 
-		# If there\'s no check-in but standby has stale entries (e.g. from a
+		# If there's no check-in but standby has stale entries (e.g. from a
 		# previous match that already finished), flush them back into the queue
 		# proper so they can join the next match normally.
 		if self.standby:
@@ -479,19 +479,27 @@ class PickupQueue:
 		saved_offline    = {uid for uid in bot.allow_offline if uid in player_ids}
 		saved_auto_ready = {uid: t for uid, t in bot.auto_ready.items() if uid in player_ids}
 
-		# ── Cross-queue memberships ───────────────────────────────────────────
-		# Save EVERY other-queue membership these players had. queue_started()
-		# below will yank them from all queues; we restore them all immediately
-		# after so they stay queued during check-in. The match itself will
-		# pull them out when it transitions into the DRAFT phase.
-		cross_q_members = {}  # {PickupQueue: [Member, ...]}
+		# ── Queue-priority protection ─────────────────────────────────────────
+		# A player who is also in a queue with STRICTLY HIGHER priority than this
+		# one is protected: they must NOT be removed from any queue when this
+		# queue starts, and must not trigger the "removed from all queues"
+		# message. Priority protection is permanent — they stay queued in the
+		# higher-priority queue through and beyond this match.
+		# We collect those user-IDs and pass them as `exclude` so the removal
+		# chain (queue_started → remove_players → remove_members) skips them
+		# entirely. This replaces the old remove-everyone-then-readd approach,
+		# which briefly removed them and fired the misleading message.
+		my_priority = getattr(self.cfg, 'priority', None) or 0
+		protected_ids = set()
 		for qc in bot.queue_channels.values():
 			for q in qc.queues:
 				if q is self:
 					continue
-				kept = [p for p in self.queue if q.is_added(p)]
-				if kept:
-					cross_q_members[q] = kept
+				q_priority = getattr(q.cfg, 'priority', None) or 0
+				if q_priority > my_priority:
+					for p in self.queue:
+						if q.is_added(p):
+							protected_ids.add(p.id)
 
 		players = list(self.queue)
 		dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
@@ -502,7 +510,8 @@ class PickupQueue:
 				queue=self.name,
 				channel=ctx.channel.mention,
 				server=self.cfg.server
-			))
+			)),
+			exclude=protected_ids
 		)
 
 		if self.cfg.team_size:
@@ -517,25 +526,6 @@ class PickupQueue:
 			if uid not in bot.allow_offline:
 				bot.allow_offline.append(uid)
 		bot.auto_ready.update(saved_auto_ready)
-
-		# Re-add players to every queue they were in. The MATCH will trigger
-		# the actual removal when it transitions into the draft phase, applying
-		# the priority rules at that point (only remove from queues with
-		# priority <= this queue's priority).
-		for q, members in cross_q_members.items():
-			for p in members:
-				if p not in q.queue:
-					q.queue.append(p)
-			if q not in bot.active_queues and q.length:
-				bot.active_queues.append(q)
-
-		# Stash the priority for the match draft-phase cleanup.
-		newest_match = next(
-			(m for m in bot.active_matches if m.queue is self), None
-		)
-		if newest_match is not None:
-			newest_match._my_priority = getattr(self.cfg, 'priority', None) or 0
-			newest_match._priority_cleanup_done = False
 
 	async def split(self, ctx, group_size: int = None, sort_by_rating: bool = False):
 		group_size = group_size or len(self.queue)//2
