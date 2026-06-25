@@ -149,6 +149,38 @@ async def finalize_race_results(ci, ctx):
 	# Rebuild ready_order to match the trimmed roster, preserving relative order.
 	ci.ready_order = [p for p in ci.ready_order if p in ci.ready_players]
 
+	# ── Rebuild teams from the final roster ───────────────────────────────────
+	# CRITICAL: match.teams (captains + unpicked pool) was built back in
+	# Match.new() from the ORIGINAL roster, before standby. Trimming
+	# match.players above does NOT update match.teams, so without this the
+	# draft would show the pre-standby roster — a bounced original would still
+	# appear in the unpicked pool and the standby winner would be missing
+	# (the exact winner/loser swap seen in-game), and match.players /
+	# match.teams would disagree (causing the "already in an active match"
+	# lockout for the standby winner).
+	#
+	# Rule:
+	#   - If BOTH original captains survived (are in kept), keep them and just
+	#     rebuild the unpicked pool from the final roster.
+	#   - If EITHER captain was bounced, re-pick both captains fresh from the
+	#     kept roster (standby winners are eligible), then rebuild teams.
+	if match.cfg.get('pick_teams') == 'draft':
+		original_captains = list(match.captains)
+		captains_survived = (
+			len(original_captains) >= 2
+			and all(c in kept for c in original_captains[:2])
+		)
+		if captains_survived:
+			# Keep captains; rebuild teams so the unpicked pool matches `kept`.
+			match.teams[0].set(original_captains[:1])
+			match.teams[1].set(original_captains[1:2])
+			match.teams[2].set([p for p in match.players if p not in original_captains[:2]])
+		else:
+			# A captain was bounced — re-pick fresh from the final roster.
+			match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
+			match.init_teams('draft')
+			match._assign_house_names()
+
 	# Clear offline-immunity for players who made the final roster, mirroring
 	# what queue_channel.queue_started() does for normally-filled matches.
 	# Without this, a player pulled in from standby keeps allow_offline set
