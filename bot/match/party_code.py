@@ -41,7 +41,11 @@ def _team_display(team) -> str:
 # alone (not per-user) so ANY teammate on the pending team can submit the code;
 # the PartyCode instance checks team membership itself in handle_code_input.
 # Game codes must be exactly 6 characters, uppercase letters and digits only.
-# We uppercase the input before checking so the captain can type either case.
+# Codes must be EXACTLY 6 chars, uppercase letters and digits only. We do NOT
+# uppercase the input before matching: real lobby codes are entered in caps, and
+# requiring caps is what stops ordinary lowercase chatter ("report", "agreed")
+# from being misread as a code. Codes can be all-letters (e.g. CJLVSY), so we
+# can't require a digit — the all-caps requirement is the distinguishing filter.
 CODE_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
 
 # Minimum seconds between two accepted game codes. Each game runs ~8 minutes,
@@ -52,8 +56,13 @@ _CODE_COOLDOWN_SECONDS = 8 * 60
 
 
 def _is_valid_code(text: str) -> bool:
-	"""Return True if `text` (after strip+upper) is a valid 6-char code."""
-	return bool(CODE_PATTERN.match(text.strip().upper()))
+	"""Return True if `text` is a valid 6-char code typed in ALL CAPS.
+
+	Only strips surrounding whitespace — it does NOT uppercase the input, so a
+	lowercase or mixed-case word (normal chat) is rejected. Players must type
+	lobby codes in capitals.
+	"""
+	return bool(CODE_PATTERN.match(text.strip()))
 
 
 _waiting_codes: dict = {}
@@ -246,16 +255,17 @@ class PartyCode:
 		if not self.active:
 			return
 
-		code = message.content.strip().upper()
+		code = message.content.strip()
 
-		# Defensive re-check — handle_code_input filters out non-matching
-		# messages, but if somehow an invalid one gets through, bail without
-		# clearing the pending captain so they can retry.
+		# Defensive re-check — handle_code_input already validated the raw
+		# message (6-char, ALL CAPS) before calling us; this mirrors that exact
+		# check so the two can't drift. We do NOT uppercase here — a code must
+		# be typed in caps to count.
 		if not _is_valid_code(code):
 			try:
 				await message.channel.send(
 					f"{message.author.mention} that code doesn\u2019t look right. "
-					"Codes must be exactly **6 characters** using "
+					"Codes must be exactly **6 characters** in **CAPS** using "
 					"**A-Z and 0-9** only (e.g. `AB12C3`)."
 				)
 			except Exception:
