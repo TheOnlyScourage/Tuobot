@@ -14,16 +14,17 @@ from core.client import dc
 from .check_in import CheckIn
 from .draft import Draft
 from .embeds import Embeds
+from .captain_selection import (
+	select_smart_captains,
+	select_captain_role_captains,
+	CAPTAIN_HISTORY_SIZE as _CAPTAIN_HISTORY_SIZE,
+)
 
 
-# House roles centralized in bot/constants.py — imported below
-
-
-# ── Smart captain selection constants ─────────────────────────────────────────
-_QUIDDITCH_ROLES = ['chaser', 'beater', 'seeker', 'keeper', 'flex']
-_FLEX_COMPATIBLE = {'keeper', 'seeker', 'beater'}
-# How many past matches to remember for the recent captain penalty
-_CAPTAIN_HISTORY_SIZE = 5
+# House roles centralized in bot/constants.py — imported above.
+# Captain-selection scoring/strategies live in captain_selection.py; init_captains
+# below is a thin dispatcher that delegates the 'smart' and 'captain_role' modes
+# there and keeps the simpler inline modes here.
 
 
 class Match:
@@ -233,84 +234,6 @@ class Match:
 			reverse=True
 		)
 
-
-	# ── Smart captain helpers ──────────────────────────────────────────────────
-
-	def _get_quidditch_role(self, player):
-		"""Return the player's Quidditch role from their Discord roles. Defaults to chaser."""
-		role_names = {r.name.lower() for r in player.roles}
-		for role in _QUIDDITCH_ROLES:
-			if role in role_names:
-				return role
-		return 'chaser'
-
-	@staticmethod
-	def _role_bonus(role1, role2):
-		"""Role compatibility bonus: +300 same role, +200 flex+specialist, +0 otherwise."""
-		if role1 == role2:
-			return 300
-		if role1 == 'flex' and role2 in _FLEX_COMPATIBLE:
-			return 200
-		if role2 == 'flex' and role1 in _FLEX_COMPATIBLE:
-			return 200
-		return 0
-
-	@staticmethod
-	def _mmr_bonus(mmr1, mmr2):
-		"""MMR similarity bonus — max +300 for identical MMR, 0 for 1000+ gap."""
-		return max(0, int(300 * (1 - abs(mmr1 - mmr2) / 1000)))
-
-	def _captain_role_bonus(self, p1, p2):
-		"""Captain role bonus: +1000 both have role, +300 one has role, +0 neither."""
-		cap_role_id = self.cfg.get('captains_role_id')
-		if not cap_role_id:
-			return 0
-		p1_has = cap_role_id in {r.id for r in p1.roles}
-		p2_has = cap_role_id in {r.id for r in p2.roles}
-		if p1_has and p2_has:
-			return 1000
-		if p1_has or p2_has:
-			return 300
-		return 0
-
-	def _smart_captain_selection(self):
-		"""Score every candidate pair and return the highest-scoring two players as captains.
-
-		Scoring per pair:
-		  MMR similarity  : max(0, int(300 * (1 - |mmr_a - mmr_b| / 1000)))
-		  Role bonus      : +300 same Quidditch role, +200 Flex+specialist, +0 otherwise
-		  Captain role    : +1000 both have role, +300 one has role
-		  Recent penalty  : -300 × appearances in last _CAPTAIN_HISTORY_SIZE matches each
-		"""
-		last_captains = getattr(self.qc, '_last_captains', frozenset())
-		captain_history = getattr(self.qc, '_captain_history', deque(maxlen=_CAPTAIN_HISTORY_SIZE))
-
-		def recent_count(pid):
-			return sum(1 for match_caps in captain_history if pid in match_caps)
-
-		def score_pair(p1, p2):
-			mmr1 = self.ratings.get(p1.id, 1500)
-			mmr2 = self.ratings.get(p2.id, 1500)
-			role1 = self._get_quidditch_role(p1)
-			role2 = self._get_quidditch_role(p2)
-			return (
-				self._mmr_bonus(mmr1, mmr2)
-				+ self._role_bonus(role1, role2)
-				+ self._captain_role_bonus(p1, p2)
-				+ (recent_count(p1.id) + recent_count(p2.id)) * -300
-			)
-
-		# Prefer players who weren't captains last match
-		non_recent = [p for p in self.players if p.id not in last_captains]
-		candidates = non_recent if len(non_recent) >= 2 else self.players
-
-		if len(candidates) < 2:
-			return sorted(self.players, key=lambda p: self.ratings.get(p.id, 0), reverse=True)[:2]
-
-		best = max(combinations(candidates, 2), key=lambda pair: score_pair(pair[0], pair[1]))
-		return list(best)
-
-
 	# ── House name assignment ──────────────────────────────────────────────────
 
 	@staticmethod
@@ -347,61 +270,29 @@ class Match:
 		self.teams[0].name = house_a
 		self.teams[1].name = house_b
 
-	def _captain_role_selection(self):
-		"""Pick captains from players holding the Captain role.
-
-		Step 1: collect every queue player with the Captain role
-		Step 2: filter OUT anyone who hit the streak cooldown
-		        (2 consecutive captain duties → forced rest)
-		Step 3: if 2+ eligible role-holders remain, score pairs by
-		        Quidditch role match (primary) and MMR similarity (tie-break)
-		Step 4: if fewer than 2 eligible remain, fall back to smart selection
-		        across the entire queue (which ignores the streak cooldown)
-		"""
-		from itertools import combinations
-		import random
-		from bot.stats.captain_streak import is_capped
-
-		role_holders = [
-			p for p in self.players
-			if CAPTAIN_ROLE_ID in {r.id for r in p.roles}
-		]
-
-		# Streak filter — players who captained the last N matches are skipped
-		streaks = getattr(self, '_captain_streaks', {}) or {}
-		eligible = [p for p in role_holders if not is_capped(streaks.get(p.id, 0))]
-
-		if len(eligible) < 2:
-			# Not enough fresh captains — defer to smart selection
-			return self._smart_captain_selection()
-
-		role_holders = eligible  # only score pairs of eligible players
-
-		def score(p1, p2):
-			role1 = self._get_quidditch_role(p1)
-			role2 = self._get_quidditch_role(p2)
-			role_score = self._role_bonus(role1, role2)
-			mmr_score = self._mmr_bonus(
-				self.ratings.get(p1.id, 1500),
-				self.ratings.get(p2.id, 1500),
-			)
-			# Role match is the primary signal — MMR similarity is the tie-break
-			return (role_score, mmr_score)
-
-		best_pair = max(combinations(role_holders, 2), key=lambda pair: score(*pair))
-		best_role_score, _ = score(*best_pair)
-
-		if best_role_score == 0:
-			# No pair shares roles — fall back to random among role-holders
-			return random.sample(role_holders, 2)
-
-		return list(best_pair)
-
 	def init_captains(self, pick_captains, captains_role_id):
+		# 'smart' and 'captain_role' delegate to captain_selection.py; the simpler
+		# modes are trivial one-liners tied to match helpers, kept inline here.
 		if pick_captains == "smart":
-			self.captains = self._smart_captain_selection()
+			self.captains = select_smart_captains(
+				self.players,
+				self.ratings,
+				captains_role_id=captains_role_id,
+				last_captains=getattr(self.qc, '_last_captains', frozenset()),
+				captain_history=getattr(self.qc, '_captain_history', None),
+			)
 		elif pick_captains == "captain_role":
-			self.captains = self._captain_role_selection()
+			from bot.stats.captain_streak import is_capped
+			self.captains = select_captain_role_captains(
+				self.players,
+				self.ratings,
+				CAPTAIN_ROLE_ID,
+				is_capped,
+				captain_streaks=getattr(self, '_captain_streaks', {}),
+				captains_role_id=captains_role_id,
+				last_captains=getattr(self.qc, '_last_captains', frozenset()),
+				captain_history=getattr(self.qc, '_captain_history', None),
+			)
 		elif pick_captains == "by role and rating":
 			self.captains = self.sort_players(self.players)[:2]
 		elif pick_captains == "fair pairs":
@@ -521,11 +412,11 @@ class Match:
 			await self.finish_match(ctx)
 
 	async def _priority_cross_queue_cleanup(self, ctx):
-		"""Remove this match\'s players from other queues, respecting priority.
+		"""Remove this match's players from other queues, respecting priority.
 
 		Called when the match transitions from check-in into the next phase
 		(DRAFT or WAITING_REPORT for queues without a draft). Players are
-		only removed from queues whose priority is <= this queue\'s priority.
+		only removed from queues whose priority is <= this queue's priority.
 		Higher-priority queues keep them, matching the documented behaviour.
 		Also flushes the standby pool back into the queue, since standby
 		only applies during the check-in window.
