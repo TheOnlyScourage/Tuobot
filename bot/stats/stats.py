@@ -11,102 +11,41 @@ from core.utils import iter_to_dict, find, get_nick
 # ══════════════════════════════════════════════════════════════════════════════
 #  Custom MMR engine
 # ══════════════════════════════════════════════════════════════════════════════
-
-_MAX_TEAM_DIFF  = 1000.0   # rating point difference treated as maximum
-_BASE_EQUAL     = 50.0     # base MMR for equal teams
-_BASE_MIN       = 10.0     # base MMR when heavy favourite wins (expected)
-_BASE_MAX       = 200.0    # base MMR when heavy underdog wins (upset)
-_HARD_CAP       = 200      # absolute max MMR change after all factors
-_CAPTAIN_BONUS  = 10       # flat extra MMR for the captain win OR loss
-_STREAK_STEP    = 0.05     # bonus per streak game beyond 1
-_STREAK_CAP     = 0.25     # maximum streak bonus (reached at 6 games)
-_PICK_STEP      = 2.5      # MMR difference between adjacent pick slots
-
-
-def _streak_multiplier(abs_streak: int) -> float:
-    """1.0 at streak=1, +5% per game, capped at 1.25 (streak=6+)."""
-    if abs_streak <= 1:
-        return 1.0
-    return 1.0 + min((abs_streak - 1) * _STREAK_STEP, _STREAK_CAP)
-
-
-def _team_base_mmr(avg_winner: float, avg_loser: float) -> float:
-    """
-    Base MMR for this match outcome, purely from team average difference.
-
-    Equal teams  (diff = 0)    →  50
-    Max diff, favourite wins   →  10
-    Max diff, underdog wins    → 200
-    """
-    diff  = abs(avg_winner - avg_loser)
-    ratio = min(diff, _MAX_TEAM_DIFF) / _MAX_TEAM_DIFF   # 0.0 – 1.0
-
-    if avg_winner <= avg_loser:                          # underdog or equal
-        return _BASE_EQUAL + (_BASE_MAX - _BASE_EQUAL) * ratio   # 50 → 200
-    else:                                                # favourite
-        return _BASE_EQUAL - (_BASE_EQUAL - _BASE_MIN)  * ratio  # 50 → 10
+# The MMR formula now lives in bot/stats/mmr_engine.py (single source of truth,
+# testable in isolation). This adapter handles the match-level draw case and
+# unpacks the match into the plain lists the engine expects, then delegates the
+# actual math to compute_mmr_changes().
+from bot.stats.mmr_engine import compute_mmr_changes
 
 
 def _calculate_mmr_changes(m, ratings_by_id: dict) -> dict:
     """
     Return {user_id: mmr_change} for every player in the match.
+    Positive = gain (winner), negative = loss (loser). Draw -> 0 for everyone.
 
-    Positive = gain (winner), negative = loss (loser).
-    Draw → 0 for everyone.
-
-    Formula per player:
-      1. team base MMR   (from avg-rating difference)
-      2. pick-order offset (captain gets +, last pick gets -)
-      3. captain flat bonus (+10)
-      4. streak multiplier  (1.0 – 1.25×)
-      5. hard cap at 200
+    The formula lives in mmr_engine.compute_mmr_changes; this adapter only:
+      - short-circuits draws (a match-level concept) to all-zero
+      - unpacks winner/loser teams + captains from the match object
     """
-    if m.winner is None:                        # draw → no rating changes
+    if m.winner is None:                        # draw -> no rating changes
         return {p.id: 0 for p in m.players}
 
-    winner_team = m.teams[m.winner]
-    loser_team  = m.teams[1 - m.winner]
+    winners = m.teams[m.winner]
+    losers  = m.teams[1 - m.winner]
 
-    def avg_r(team):
-        vals = [ratings_by_id.get(p.id, {}).get('rating') or 1500 for p in team]
-        return sum(vals) / max(len(vals), 1)
-
-    base = _team_base_mmr(avg_r(winner_team), avg_r(loser_team))
-    changes = {}
-
-    for team, is_winner in [(winner_team, True), (loser_team, False)]:
-        n    = len(team)
-        half = (n - 1) / 2.0          # centre point so adjustments sum to 0
-
-        for pick_pos, player in enumerate(team):
-            # ── Pick-order offset ──────────────────────────────────────────
-            # captain (pos 0) → +half*step, last pick → -half*step
-            pick_offset    = (half - pick_pos) * _PICK_STEP
-            captain_bonus  = float(_CAPTAIN_BONUS) if pick_pos == 0 else 0.0
-            individual_base = base + pick_offset + captain_bonus
-
-            # ── Streak multiplier ──────────────────────────────────────────
-            cur_streak = (ratings_by_id.get(player.id) or {}).get('streak', 0)
-            if is_winner:
-                new_streak = cur_streak + 1 if cur_streak > 0 else 1
-            else:
-                new_streak = cur_streak - 1 if cur_streak < 0 else -1
-
-            multiplier = _streak_multiplier(abs(new_streak))
-            mmr = individual_base * multiplier
-
-            # ── Hard cap & sign ───────────────────────────────────────────
-            mmr = min(mmr, _HARD_CAP)
-            mmr = max(round(mmr), 1)       # never 0 or negative magnitude
-            changes[player.id] = mmr if is_winner else -mmr
-
-    return changes
+    return compute_mmr_changes(
+        ratings_by_id=ratings_by_id,
+        winners=winners,
+        losers=losers,
+        winner_captain=winners[0],
+        loser_captain=losers[0],
+        streaks_by_id=None,          # read streaks from each player's row
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Table initialisation
 # ══════════════════════════════════════════════════════════════════════════════
-
 async def init_stats_tables():
     await db.ensure_table(dict(
         tname="players",
@@ -211,7 +150,6 @@ async def next_match():
 # ══════════════════════════════════════════════════════════════════════════════
 #  Match registration
 # ══════════════════════════════════════════════════════════════════════════════
-
 async def register_match_unranked(ctx, m):
     await db.insert('qc_matches', dict(
         match_id=m.id, channel_id=m.qc.id,
@@ -235,7 +173,6 @@ async def register_match_unranked(ctx, m):
 
 async def register_match_ranked(ctx, m):
     now = int(time.time())
-
     await db.insert('qc_matches', dict(
         match_id=m.id, channel_id=m.qc.id,
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
@@ -244,7 +181,6 @@ async def register_match_ranked(ctx, m):
         alpha_score=m.scores[0], beta_score=m.scores[1],
         maps="\n".join(m.maps)
     ))
-
     # Ensure all players exist in qc_players
     init_dev = getattr(m.qc.rating, 'init_deviation', 350) or 350
     for channel_id in {m.qc.id, m.qc.rating.channel_id}:
@@ -263,7 +199,6 @@ async def register_match_ranked(ctx, m):
     # ── Build before / after dicts for print_rating_results ───────────────
     before, after = {}, {}
     fill_subs = getattr(m, 'fill_subs', {})
-
     # Zero out fill-in sub changes before building after dict so results
     # embed shows no change for the fill-in player when their team loses.
     for p in m.players:
@@ -281,7 +216,6 @@ async def register_match_ranked(ctx, m):
         team_idx    = 0 if p in m.teams[0] else 1
         is_winner   = (m.winner is not None and m.winner == team_idx)
         change      = changes.get(p.id, 0)
-
         before[p.id] = {
             'rating':    cur_rating,
             'deviation': cur_dev,
@@ -290,7 +224,6 @@ async def register_match_ranked(ctx, m):
             'draws':     b.get('draws', 0),
             'streak':    cur_streak,
         }
-
         if m.winner is None:
             new_streak = 0
             new_wins   = b.get('wins', 0)
@@ -306,7 +239,6 @@ async def register_match_ranked(ctx, m):
             new_wins   = b.get('wins', 0)
             new_losses = b.get('losses', 0) + 1
             new_draws  = b.get('draws', 0)
-
         after[p.id] = {
             'rating':    max(0, cur_rating + change),
             'deviation': cur_dev,
@@ -323,12 +255,10 @@ async def register_match_ranked(ctx, m):
         a        = after[p.id]
         b        = before[p.id]
         change   = a['rating'] - b['rating']
-
         # ── Fill-in sub: team lost → redirect penalty to original player ──
         if p.id in fill_subs:
             orig_id, sub_team_idx = fill_subs[p.id]
             team_won = (m.winner is not None and m.winner == sub_team_idx)
-
             if not team_won:
                 # Apply loss to original (player1), skip player2's rating update
                 p1 = await db.select_one(
@@ -356,14 +286,12 @@ async def register_match_ranked(ctx, m):
                         match_id        = m.id,
                         reason          = f"{m.queue.name} (fill-in sub penalty)"
                     ))
-
                 # Player2: record in match log only, no rating change
                 await db.insert('qc_player_matches', dict(
                     match_id=m.id, channel_id=m.qc.id,
                     user_id=p.id, nick=nick, team=team_idx
                 ))
                 continue   # skip normal update for player2
-
         # ── Normal update ─────────────────────────────────────────────────
         await db.update(
             "qc_players",
@@ -394,7 +322,6 @@ async def register_match_ranked(ctx, m):
             match_id        = m.id,
             reason          = m.queue.name
         ))
-
     await m.qc.update_rating_roles(*m.players)
     await m.print_rating_results(ctx, before, after)
 
@@ -402,7 +329,6 @@ async def register_match_ranked(ctx, m):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Admin operations
 # ══════════════════════════════════════════════════════════════════════════════
-
 async def undo_match(ctx, match_id):
     match = await db.select_one(
         ('ranked', 'winner'), 'qc_matches',
@@ -473,7 +399,6 @@ async def replace_player(channel_id, user_id1, user_id2, new_nick):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Query helpers
 # ══════════════════════════════════════════════════════════════════════════════
-
 async def qc_stats(channel_id):
     data = await db.fetchall(
         "SELECT `queue_name`, COUNT(*) as count FROM `qc_matches` "
@@ -529,9 +454,7 @@ async def last_games(channel_id):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Background jobs
 # ══════════════════════════════════════════════════════════════════════════════
-
 class StatsJobs:
-
     def __init__(self):
         self.next_decay_at = int(self._next_monday().timestamp())
 
