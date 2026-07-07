@@ -7,20 +7,26 @@ internally. We layer a custom MMR delta on top so the user-facing rating
 changes match Q6's "feel": flat rewards for captains, scaled for upset
 wins/losses, multiplied by streaks.
 
-This file owns the formula. stats.py calls `compute_mmr_changes()`
-once per match and applies the deltas. Everything tunable lives in
-bot/constants.py.
+This file owns the formula. stats.py unpacks the match into plain lists and
+calls `compute_mmr_changes()` once per match, then applies the deltas.
+Everything tunable lives in bot/constants.py.
 
-Formula breakdown:
-  1. team_average — mean rating of each team (captain + picks)
-  2. base — 10..200 scaled by team-rating difference (equal teams = 50)
-  3. captain_bonus — captain gets a flat +10 / -10 above the team's base
-  4. pick_offset — earlier picks gain more, later picks gain less,
-       in steps of MMR_PICK_STEP per slot
-  5. streak_multiplier — +5% per consecutive win/loss, capped at +25%
-  6. hard_cap — final value clamped to ±MMR_HARD_CAP
+Formula (canonical — matches the historical live behaviour exactly):
+  1. team average — mean rating of each team (captain + picks)
+  2. base — 10..200 scaled by team-rating difference (equal teams = 50),
+       skewed toward the underdog. Unsigned magnitude; sign applied per team.
+  3. pick offset — CENTERED around the team midpoint so per-team adjustments
+       sum to zero: captain (slot 0) gets +half*step, last pick -half*step.
+  4. captain bonus — flat +CAPTAIN_BONUS folded into the individual base
+       BEFORE the streak multiplier (so streaks scale the captain bonus too).
+  5. streak multiplier — computed from the player's NEW streak (current
+       incremented/decremented toward the outcome), +5%/game capped at +25%.
+  6. hard cap ±HARD_CAP, then floored so magnitude is never below 1.
+
+NOTE ON INTERFACE: takes clean primitives (lists + captains + dicts), NOT a
+match object, so the formula is testable in isolation. Draw handling lives in
+the caller (stats.py) — a draw means no rating change, decided at match level.
 """
-
 from bot.constants import (
 	MMR_MAX_TEAM_DIFF,
 	MMR_BASE_EQUAL,
@@ -35,98 +41,49 @@ from bot.constants import (
 
 
 def team_average(ratings_by_id: dict, members: list) -> float:
-	"""Return the average rating across `members`, with safe default 1500."""
+	"""Return the average rating across `members`, safe default 1500.
+
+	`ratings_by_id` maps user_id -> the player's row dict (as returned by
+	rating.get_players). We read the 'rating' field, defaulting to 1500.
+	"""
 	if not members:
 		return 1500.0
-	vals = [(ratings_by_id.get(m.id) or 1500) for m in members]
+	vals = [((ratings_by_id.get(m.id) or {}).get('rating') or 1500) for m in members]
 	return sum(vals) / len(vals)
 
 
-def _streak_multiplier(streak: int) -> float:
-	"""+5% per streak game beyond 1, capped at +25%.
-
-	A 1-game streak returns 1.0; a 2-game streak returns 1.05; a 6-game
-	streak hits the cap at 1.25; anything beyond also returns 1.25.
-	"""
-	if streak <= 1:
+def _streak_multiplier(abs_streak: int) -> float:
+	"""1.0 at |streak|<=1, +MMR_STREAK_STEP per game beyond 1, capped at CAP."""
+	if abs_streak <= 1:
 		return 1.0
-	bonus = (streak - 1) * MMR_STREAK_STEP
-	return 1.0 + min(bonus, MMR_STREAK_CAP)
+	return 1.0 + min((abs_streak - 1) * MMR_STREAK_STEP, MMR_STREAK_CAP)
 
 
-def _base_mmr_for_outcome(my_team_avg: float, opp_team_avg: float, is_winner: bool) -> float:
-	"""Return the base MMR (10..200) for the team's outcome.
+def _team_base_mmr(avg_winner: float, avg_loser: float) -> float:
+	"""Unsigned base magnitude (10..200) from team-average difference.
 
-	When teams are equal the base is exactly MMR_BASE_EQUAL (50). The
-	farther apart the teams are, the more skewed the base is in favour
-	of the underdog: an underdog win earns close to MMR_BASE_MAX,
-	a favoured win earns close to MMR_BASE_MIN. Symmetric for losses.
+	Equal teams (diff 0) -> MMR_BASE_EQUAL (50).
+	Max diff, underdog wins -> MMR_BASE_MAX (200).
+	Max diff, favourite wins -> MMR_BASE_MIN (10).
 	"""
-	diff = my_team_avg - opp_team_avg
-	# Clamp to ±MAX_TEAM_DIFF and normalize to [-1, +1]
-	norm = max(-1.0, min(1.0, diff / MMR_MAX_TEAM_DIFF))
+	diff  = abs(avg_winner - avg_loser)
+	ratio = min(diff, MMR_MAX_TEAM_DIFF) / MMR_MAX_TEAM_DIFF
+	if avg_winner <= avg_loser:                          # underdog or equal
+		return MMR_BASE_EQUAL + (MMR_BASE_MAX - MMR_BASE_EQUAL) * ratio
+	else:                                                # favourite
+		return MMR_BASE_EQUAL - (MMR_BASE_EQUAL - MMR_BASE_MIN) * ratio
 
+
+def _new_streak(cur_streak: int, is_winner: bool) -> int:
+	"""The streak AFTER this match, used to size the multiplier.
+
+	Winner: extend a positive streak, else start at +1.
+	Loser:  extend a negative streak, else start at -1.
+	"""
 	if is_winner:
-		# Favoured (norm>0) → lean toward MIN. Underdog (norm<0) → lean toward MAX.
-		# At norm = 0 → EQUAL.
-		if norm >= 0:
-			return MMR_BASE_EQUAL + norm * (MMR_BASE_MIN - MMR_BASE_EQUAL)
-		else:
-			return MMR_BASE_EQUAL + (-norm) * (MMR_BASE_MAX - MMR_BASE_EQUAL)
+		return cur_streak + 1 if cur_streak > 0 else 1
 	else:
-		# Losing favoured → lose more. Losing underdog → lose less.
-		if norm >= 0:
-			return -(MMR_BASE_EQUAL + norm * (MMR_BASE_MAX - MMR_BASE_EQUAL))
-		else:
-			return -(MMR_BASE_EQUAL + (-norm) * (MMR_BASE_MIN - MMR_BASE_EQUAL))
-
-
-def compute_mmr_change(
-	*,
-	is_winner: bool,
-	is_captain: bool,
-	pick_slot: int,
-	my_team_avg: float,
-	opp_team_avg: float,
-	streak: int,
-) -> int:
-	"""Compute the MMR delta for one player.
-
-	Args:
-	  is_winner:   True if this player was on the winning team
-	  is_captain:  True if this player was a team captain
-	  pick_slot:   0 = captain (or first to act), 1 = first pick,
-	               2 = second pick, etc. Captains pass 0 here.
-	  my_team_avg: average rating of this player's team
-	  opp_team_avg: average rating of the opposing team
-	  streak:      number of consecutive results (W or L) for this player
-
-	Returns:
-	  Integer MMR change. Positive for gain, negative for loss. Always
-	  within ±MMR_HARD_CAP.
-	"""
-	base = _base_mmr_for_outcome(my_team_avg, opp_team_avg, is_winner)
-
-	# Captain flat bonus (additive). Captain on a winning team: +10 extra.
-	# Captain on a losing team: -10 extra (they accept the leadership cost).
-	captain_extra = MMR_CAPTAIN_BONUS * (1 if is_winner else -1) if is_captain else 0
-
-	# Pick-order offset: earlier picks gain a bit more / lose a bit less.
-	# Slot 0 (captain) gets no offset since they have the captain_extra.
-	pick_offset = -(pick_slot * MMR_PICK_STEP) if is_winner else (pick_slot * MMR_PICK_STEP)
-
-	# Streak multiplier applied to base + offsets (NOT to captain_extra so the
-	# leadership bonus doesn't snowball on long streaks).
-	mult = _streak_multiplier(streak)
-	raw = (base + pick_offset) * mult + captain_extra
-
-	# Hard cap
-	if raw > MMR_HARD_CAP:
-		raw = MMR_HARD_CAP
-	elif raw < -MMR_HARD_CAP:
-		raw = -MMR_HARD_CAP
-
-	return int(round(raw))
+		return cur_streak - 1 if cur_streak < 0 else -1
 
 
 def compute_mmr_changes(
@@ -134,46 +91,52 @@ def compute_mmr_changes(
 	ratings_by_id: dict,
 	winners: list,
 	losers: list,
-	winner_captain,
-	loser_captain,
-	streaks_by_id: dict,
+	winner_captain=None,
+	loser_captain=None,
+	streaks_by_id: dict = None,
 ) -> dict:
-	"""Compute MMR deltas for everyone in a match.
+	"""Compute {user_id: mmr_delta} for a decided match (no draws here).
 
 	Args:
-	  ratings_by_id:  {user_id: current_rating}
-	  winners:        team members in pick order; winners[0] is the captain
-	  losers:         same for losing team
-	  winner_captain: Member object — must equal winners[0]
-	  loser_captain:  Member object — must equal losers[0]
-	  streaks_by_id:  {user_id: current_streak_length} (positive integer)
+	  ratings_by_id: {user_id: player_row_dict}. Row dicts carry 'rating' and
+	                 (optionally) 'streak'. If `streaks_by_id` is given it takes
+	                 precedence for streaks; otherwise streaks come from the row.
+	  winners:       winning team members in pick order; winners[0] is captain.
+	  losers:        losing team members in pick order; losers[0] is captain.
+	  winner_captain/loser_captain: optional explicit captains. Default to
+	                 winners[0] / losers[0] (pick-order captain), matching live
+	                 behaviour where slot 0 is the captain.
+	  streaks_by_id: optional {user_id: current_streak}. If None, streaks are
+	                 read from each player's row in ratings_by_id ('streak', 0).
 
-	Returns:
-	  {user_id: delta_int}
+	Returns {user_id: int_delta}, positive for winners, negative for losers,
+	within ±MMR_HARD_CAP, magnitude floored at 1.
 	"""
-	w_avg = team_average(ratings_by_id, winners)
-	l_avg = team_average(ratings_by_id, losers)
+	avg_w = team_average(ratings_by_id, winners)
+	avg_l = team_average(ratings_by_id, losers)
+	base  = _team_base_mmr(avg_w, avg_l)
 
-	out = {}
+	def _streak_for(player):
+		if streaks_by_id is not None:
+			return streaks_by_id.get(player.id, 0)
+		return (ratings_by_id.get(player.id) or {}).get('streak', 0)
 
-	for i, p in enumerate(winners):
-		out[p.id] = compute_mmr_change(
-			is_winner=True,
-			is_captain=(p == winner_captain),
-			pick_slot=i,
-			my_team_avg=w_avg,
-			opp_team_avg=l_avg,
-			streak=streaks_by_id.get(p.id, 1),
-		)
+	changes = {}
+	for team, is_winner in [(winners, True), (losers, False)]:
+		n    = len(team)
+		half = (n - 1) / 2.0                       # centre so offsets sum to 0
+		for pick_pos, player in enumerate(team):
+			pick_offset     = (half - pick_pos) * MMR_PICK_STEP
+			captain_bonus   = float(MMR_CAPTAIN_BONUS) if pick_pos == 0 else 0.0
+			individual_base = base + pick_offset + captain_bonus
 
-	for i, p in enumerate(losers):
-		out[p.id] = compute_mmr_change(
-			is_winner=False,
-			is_captain=(p == loser_captain),
-			pick_slot=i,
-			my_team_avg=l_avg,
-			opp_team_avg=w_avg,
-			streak=streaks_by_id.get(p.id, 1),
-		)
+			cur_streak = _streak_for(player)
+			new_streak = _new_streak(cur_streak, is_winner)
+			multiplier = _streak_multiplier(abs(new_streak))
 
-	return out
+			mmr = individual_base * multiplier
+			mmr = min(mmr, MMR_HARD_CAP)
+			mmr = max(round(mmr), 1)               # never below magnitude 1
+			changes[player.id] = mmr if is_winner else -mmr
+
+	return changes
