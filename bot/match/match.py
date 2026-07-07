@@ -7,7 +7,7 @@ from nextcord import DiscordException, Embed, Colour
 
 import bot
 from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID
-from core.utils import find, get, iter_to_dict, join_and, get_nick  # noqa: F401
+from core.utils import find, get, join_and, get_nick
 from core.console import log  # noqa: F401
 from core.client import dc
 
