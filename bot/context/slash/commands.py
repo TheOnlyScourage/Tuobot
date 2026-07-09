@@ -2,12 +2,11 @@ from typing import Callable  # noqa: UP035
 from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
 from nextcord.errors import InteractionResponded
-from nextcord import Interaction, SlashOption, Member, TextChannel, Embed, Colour
+from nextcord import Interaction, SlashOption, Member, TextChannel
 import traceback
 import time
 
 from core.client import dc
-from core.database import db
 from core.utils import error_embed, ok_embed, parse_duration, get_nick
 from core.console import log
 from core.config import cfg
