@@ -8,7 +8,7 @@ from nextcord import Member
 from typing import List  # noqa: UP035
 from functools import wraps
 
-from core.utils import get, find, get_nick
+from core.utils import find, get_nick
 
 import bot
 
