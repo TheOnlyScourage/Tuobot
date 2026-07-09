@@ -1,19 +1,40 @@
 # -*- coding: utf-8 -*-
+"""Draft/pick stage controller for a match."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import bot
 from core.utils import find
 from nextcord import DiscordException
 
 from .subbing import pick_available
 
+if TYPE_CHECKING:
+	from nextcord import Member
+
 
 class Draft:
+	"""Manages the draft stage: captains claim or relinquish team slots, then
+	alternately pick from the unpicked pool (teams[2]) following pick_order,
+	with automatic last-picks when one team's remaining turns cover the pool.
+	Also handles manual roster edits (put) and substitutions (sub_me / sub_for /
+	sub_auto) across the CHECK_IN, DRAFT, and WAITING_REPORT stages. All state
+	is mutated on the shared Match object (self.m).
 
+	pick_order is stored as team indices (0/1) translated from the config's
+	letter form via pick_steps; e.g. "abba" -> [0, 1, 1, 0].
+	"""
+
+	# Maps the config's captain-letter pick order ("a"/"b") to team indices.
 	pick_steps = {
 		"a": 0,
 		"b": 1
 	}
 
-	def __init__(self, match, pick_order, captains_role_id):
+	def __init__(self, match: bot.Match, pick_order: str | None, captains_role_id: int | None):
+		"""Translate pick_order into team indices and, for draft-mode configs,
+		append the DRAFT state to the match's state sequence."""
 		self.m = match
 		self.pick_order = [self.pick_steps[i] for i in pick_order] if pick_order else []
 		self.captains_role_id = captains_role_id
@@ -22,18 +43,21 @@ class Draft:
 		if self.m.cfg['pick_teams'] == "draft":
 			self.m.states.append(self.m.DRAFT)
 
-	async def _refresh_ratings(self):
-		# Rebuild self.m.ratings from the current roster. Called after any roster
-		# change (put/sub) so downstream matchmaking and rating math see correct ELOs.
+	async def _refresh_ratings(self) -> None:
+		"""Rebuild self.m.ratings from the current roster. Call after any roster
+		change (put/sub) so downstream matchmaking and rating math see correct
+		ELOs."""
 		self.m.ratings = {
 			p['user_id']: p['rating']
 			for p in await self.m.qc.rating.get_players((p.id for p in self.m.players))
 		}
 
-	async def start(self, ctx):
+	async def start(self, ctx: bot.Context) -> None:
+		"""Entry point for the draft stage: render the initial board."""
 		await self.refresh(ctx)
 
-	async def print(self, ctx):
+	async def print(self, ctx: bot.Context) -> None:
+		"""Render the draft board embed."""
 		try:
 			await ctx.notice(embed=self.m.embeds.draft())
 		except DiscordException as e:
@@ -41,7 +65,10 @@ class Draft:
 			# surface it in the Railway logs rather than swallowing silently.
 			bot.log.error(f"Draft.print failed for match {self.m.id}: {e}")
 
-	async def refresh(self, ctx):
+	async def refresh(self, ctx: bot.Context) -> None:
+		"""Redraw the board or advance the state machine: reprint while not in
+		DRAFT, or while players remain unpicked and any team is still short;
+		once the pool empties and teams are full, advance to the next state."""
 		if self.m.state != self.m.DRAFT:  # noqa: SIM114
 			await self.print(ctx)
 		elif len(self.m.teams[2]) and any((len(t) < self.m.cfg['team_size'] for t in self.m.teams)):
@@ -49,7 +76,9 @@ class Draft:
 		else:
 			await self.m.next_state(ctx)
 
-	async def cap_me(self, ctx, author):
+	async def cap_me(self, ctx: bot.Context, author: Member) -> None:
+		"""Relinquish captaincy: a captain who hasn't picked yet steps back into
+		the unpicked pool. (The claim direction is cap_for.)"""
 		if self.m.state != self.m.DRAFT:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
 
@@ -63,7 +92,10 @@ class Draft:
 		self.m.teams[2].add(author)
 		await self.print(ctx)
 
-	async def cap_for(self, ctx, author, team_name):
+	async def cap_for(self, ctx: bot.Context, author: Member, team_name: str) -> None:
+		"""Claim an empty captain slot on the named team (position 0), moving the
+		caller out of their current team. Requires the captain role if one is
+		configured."""
 		if self.m.state != self.m.DRAFT:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
 		elif self.captains_role_id and self.captains_role_id not in (r.id for r in author.roles):
@@ -79,7 +111,10 @@ class Draft:
 		team.insert(0, author)
 		await self.print(ctx)
 
-	async def pick(self, ctx, author, players):
+	async def pick(self, ctx: bot.Context, author: Member, players: list[Member]) -> None:
+		"""Captain picks one or more players from the unpicked pool, enforcing
+		pick_order turn-taking. When one team's remaining turns cover the rest
+		of the pool, the last picks are auto-assigned."""
 		# State and captaincy don't change mid-loop, so validate once up front.
 		if self.m.state != self.m.DRAFT:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
@@ -111,7 +146,10 @@ class Draft:
 
 		await self.refresh(ctx)
 
-	async def put(self, ctx, player, team_name):
+	async def put(self, ctx: bot.Context, player: Member, team_name: str) -> None:
+		"""Manually place a player on the named team during DRAFT or
+		WAITING_REPORT: move them if already rostered, otherwise add them
+		(refreshing ratings), then remove them from the queue."""
 		if (team := find(lambda t: t.name.lower() == team_name.lower(), self.m.teams)) is None:
 			raise bot.Exc.SyntaxError(self.m.gt("Specified team name not found."))
 		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
@@ -127,7 +165,8 @@ class Draft:
 		await self.m.qc.remove_members(player, ctx=ctx)
 		await self.refresh(ctx)
 
-	async def sub_me(self, ctx, author):
+	async def sub_me(self, ctx: bot.Context, author: Member) -> None:
+		"""Toggle whether the caller is listed as looking for a substitute."""
 		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the draft or waiting report stage."))
 
@@ -138,7 +177,10 @@ class Draft:
 			self.sub_queue.append(author)
 			await ctx.success(self.m.gt("You are now looking for a substitute."))
 
-	async def sub_for(self, ctx, player1, player2, force=False):
+	async def sub_for(self, ctx: bot.Context, player1: Member, player2: Member, force: bool = False) -> None:
+		"""Swap player1 out for player2 on their team (force skips the
+		looking-for-sub check), updating the roster, players list, sub queue,
+		and ratings, then refresh the stage-appropriate view."""
 		if self.m.state not in [self.m.CHECK_IN, self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the check-in, draft or waiting report stage."))
 		elif not force and player1 not in self.sub_queue:
@@ -161,7 +203,9 @@ class Draft:
 		else:
 			await self.print(ctx)
 
-	async def sub_auto(self, ctx, author):
+	async def sub_auto(self, ctx: bot.Context, author: Member) -> None:
+		"""Substitute the caller with the next available queued player, then
+		fully re-matchmake both teams (unlike sub_for, which swaps in place)."""
 		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the draft or waiting report stage."))
 
