@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+"""Check-in stage controller for a match: the ready/not-ready reaction flow,
+map voting, race-to-ready finishing, standby fill, and abort/timeout handling.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import random
 import bot
 from nextcord.errors import DiscordException
@@ -7,14 +14,26 @@ from core.utils import join_and
 from core.console import log  # noqa: F401
 from bot.stats.checkin_tracker import record_violation
 
+if TYPE_CHECKING:
+	from nextcord import Member
+
 
 class CheckIn:
+	"""Runs the check-in stage: players react to ready up or abort, and (when
+	map voting is enabled) react with number emojis to vote on maps. Fills empty
+	slots from standby partway through, finishes early once enough players ready
+	(race-to-ready), or aborts and reverts the queue on timeout. All state lives
+	on the shared Match object (self.m).
+	"""
 
 	READY_EMOJI = "✅"
 	NOT_READY_EMOJI = "⛔"
 	INT_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6⃣", "7⃣", "8⃣", "9⃣"]
 
-	def __init__(self, match, timeout):
+	def __init__(self, match: bot.Match, timeout: int):
+		"""Set up check-in state from config: pre-ready any auto-ready players,
+		build the map-vote pool when voting is enabled, and (when a timeout is
+		set) append the CHECK_IN state to the match's state sequence."""
 		self.m = match
 		self.timeout = timeout
 		self.allow_discard = self.m.cfg['check_in_discard']
@@ -40,7 +59,9 @@ class CheckIn:
 		if self.timeout:
 			self.m.states.append(self.m.CHECK_IN)
 
-	async def think(self, frame_time):
+	async def think(self, frame_time: float) -> None:
+		"""Per-frame tick driven by the match loop: fires standby fill at 2/3 of
+		the timeout, then aborts (or finishes) once the full timeout elapses."""
 		# ── Standby fill at 2/3 of the way through check-in ──────────────────
 		# Use the check-in's own clock so the trigger is independent of
 		# self.m.start_time (set at match creation, before INIT \u2192 CHECK_IN).
@@ -69,7 +90,9 @@ class CheckIn:
 			else:
 				await self.finish(ctx)
 
-	async def start(self, ctx):
+	async def start(self, ctx: bot.Context) -> None:
+		"""Post the check-in message, add the ready/abort (and map-vote)
+		reactions, register the reaction handler, and render the board."""
 		# Snapshot originals so standby joiners aren\'t penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
 		text = f"!spawn message {self.m.id}"
@@ -85,7 +108,11 @@ class CheckIn:
 		bot.waiting_reactions[self.message.id] = self.process_reaction
 		await self.refresh(ctx)
 
-	async def refresh(self, ctx):
+	async def refresh(self, ctx: bot.Context) -> None:
+		"""Re-render the board and drive stage transitions: revert the queue if
+		every not-ready player has been discarded, finish early once enough
+		players have readied (race-to-ready), otherwise update the message or
+		finish when everyone is ready."""
 		not_ready = list(filter(lambda m: m not in self.ready_players, self.m.players))
 
 		if len(self.discarded_players) and len(self.discarded_players) == len(not_ready):
@@ -136,12 +163,14 @@ class CheckIn:
 		else:
 			await self.finish(ctx)
 
-	async def finish_race(self, ctx):
+	async def finish_race(self, ctx: bot.Context) -> None:
 		"""Delegate to bot.match.standby.finalize_race_results."""
 		from bot.match.standby import finalize_race_results
 		await finalize_race_results(self, ctx)
 
-	async def finish(self, ctx):
+	async def finish(self, ctx: bot.Context) -> None:
+		"""Finalize check-in: clear ready state, pick the winning map(s) by vote
+		count (ties broken randomly), clean up auto-ready, and advance state."""
 		bot.waiting_reactions.pop(self.message.id)
 		self.ready_players = set()
 		self.ready_order = []
@@ -157,7 +186,11 @@ class CheckIn:
 
 		await self.m.next_state(ctx)
 
-	async def process_reaction(self, reaction, user, remove=False):
+	async def process_reaction(self, reaction, user: Member, remove: bool = False) -> None:
+		"""Handle a ready/abort/map-vote reaction (add or remove). Number
+		reactions toggle a map vote and ready the user; the ready reaction
+		readies; the abort reaction discards or immediately aborts. Ignored
+		unless in CHECK_IN and the user is a player."""
 		if self.m.state != self.m.CHECK_IN or user not in self.m.players:
 			return
 
@@ -190,7 +223,9 @@ class CheckIn:
 				return await self.abort_member(bot.SystemContext(self.m.queue.qc), user)
 			return await self.discard_member(bot.SystemContext(self.m.queue.qc), user)
 
-	async def set_ready(self, ctx, member, ready):
+	async def set_ready(self, ctx: bot.Context, member: Member, ready: bool) -> None:
+		"""Command-driven ready toggle: mark member ready, or (if allowed)
+		discard / immediately abort them."""
 		if self.m.state != self.m.CHECK_IN:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the check-in stage."))
 		if ready:
@@ -206,14 +241,17 @@ class CheckIn:
 				return await self.abort_member(ctx, member)
 			return await self.discard_member(ctx, member)
 
-	async def discard_member(self, ctx, member):
+	async def discard_member(self, ctx: bot.Context, member: Member) -> None:
+		"""Mark member as discarded (not ready) and refresh the board."""
 		self.ready_players.discard(member)
 		if member in self.ready_order:
 			self.ready_order.remove(member)
 		self.discarded_players.add(member)
 		await self.refresh(ctx)
 
-	async def abort_member(self, ctx, member):
+	async def abort_member(self, ctx: bot.Context, member: Member) -> None:
+		"""Abort the check-in for one member: delete the message, record a
+		violation (ranked only), and revert the queue to gathering."""
 		bot.waiting_reactions.pop(self.message.id)
 		await self.message.delete()
 
@@ -232,14 +270,17 @@ class CheckIn:
 		bot.active_matches.remove(self.m)
 		await self.m.queue.revert(ctx, [member], [m for m in self.m.players if m != member])
 
-	async def pull_standby(self, ctx):
+	async def pull_standby(self, ctx: bot.Context) -> None:
 		"""Delegate to bot.match.standby.pull_standby_into_match — kept as a
 		thin shim so existing callers (think()) don\'t need to change."""
 		self.standby_pulled = True
 		from bot.match.standby import pull_standby_into_match
 		await pull_standby_into_match(self, ctx)
 
-	async def abort_timeout(self, ctx):
+	async def abort_timeout(self, ctx: bot.Context) -> None:
+		"""Handle check-in timeout: record 'missed' violations for original
+		ranked players, revert the queue, and return any over-cap ready players
+		to standby."""
 		not_ready = [m for m in self.m.players if m not in self.ready_players]
 		if self.message:
 			bot.waiting_reactions.pop(self.message.id, None)
