@@ -142,7 +142,7 @@ async def remove_all(ctx, player: Member = None):
 
 	lines = []
 	for channel, queue_names in removed_from:
-		chan_str = channel.mention if channel else f"Unknown channel"
+		chan_str = channel.mention if channel else "Unknown channel"
 		lines.append(f"{chan_str} · **{', '.join(queue_names)}**")
 
 	await ctx.success(
