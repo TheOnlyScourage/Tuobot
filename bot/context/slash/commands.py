@@ -3,7 +3,6 @@ from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
 from nextcord.errors import InteractionResponded
 from nextcord import Interaction, SlashOption, Member, TextChannel, Embed, Colour
-import re
 import traceback
 import time
 
@@ -14,7 +13,6 @@ from core.console import log
 from core.config import cfg
 
 import bot
-from bot.redo_teams import parse_embed_match, parse_text_match, captain_matchmaking, Player, embed_contains_match_id, get_all_embed_text
 
 from . import SlashContext, autocomplete, groups
 
@@ -675,152 +673,6 @@ async def _activity(
 		interaction: Interaction,
 		player: Member = SlashOption(required=False, verify=False)
 ): await run_slash(bot.commands.activity, interaction=interaction, player=player)
-
-
-@dc.slash_command(name='test_teams', description='Compare last match teams with captain-based matchmaking.', **guild_kwargs)
-async def _redo_teams(interaction: Interaction):
-	await interaction.response.defer()
-
-	if not bot.bot_ready:
-		await interaction.followup.send(embed=error_embed("Bot is still starting up."))
-		return
-
-	qc = bot.queue_channels.get(interaction.channel_id)
-	if qc is None:
-		await interaction.followup.send(embed=error_embed("Not in a queue channel."))
-		return
-
-	lg = await db.select_one(
-		['match_id'], "qc_matches", where=dict(channel_id=qc.id), order_by="match_id", limit=1
-	)
-	if not lg:
-		await interaction.followup.send(embed=error_embed("No matches found on this channel."))
-		return
-
-	match_id = lg['match_id']
-	target_str = str(match_id)
-	found_msg = None
-	found_embed = None
-	parsed_teams = None
-
-	async for msg in interaction.channel.history(limit=5000):
-		for emb in msg.embeds:
-			if embed_contains_match_id(emb, target_str):
-				parsed_teams = parse_embed_match(emb)
-				if not parsed_teams:
-					parsed_teams = parse_text_match(get_all_embed_text(emb))
-				found_msg = msg
-				found_embed = emb
-				break
-		if found_msg:
-			break
-		content = msg.content or ''
-		if target_str in content and re.search(r'match\s*id', content, re.IGNORECASE):
-			parsed_teams = parse_text_match(content)
-			found_msg = msg
-			break
-
-	if not found_msg:
-		await interaction.followup.send(
-			embed=error_embed(f"Could not find a message with match ID {match_id} in the last 5000 messages.")
-		)
-		return
-
-	if not parsed_teams:
-		debug_parts = []
-		if found_embed:
-			if found_embed.title:
-				debug_parts.append(f"Title: {found_embed.title[:100]}")
-			for i, f in enumerate(found_embed.fields):
-				debug_parts.append(f"Field {i} name: {(f.name or '')[:80]}")
-				debug_parts.append(f"Field {i} value: {(f.value or '')[:80]}")
-			if found_embed.footer:
-				debug_parts.append(f"Footer: {(found_embed.footer.text or '')[:100]}")
-		else:
-			debug_parts.append(f"Content: {(found_msg.content or '')[:200]}")
-		debug_text = "\n".join(debug_parts) or "No parseable content"
-		await interaction.followup.send(
-			embed=error_embed(f"Found the message but couldn't parse teams.\n```\n{debug_text}\n```", title="Parse Error")
-		)
-		return
-
-	guild = interaction.guild
-	all_players = []
-	name_map = {}
-
-	for team in parsed_teams:
-		for p in team['players']:
-			uid = p['user_id']
-			member = guild.get_member(uid)
-			if member is None:
-				try:
-					member = await guild.fetch_member(uid)
-				except Exception:
-					pass
-			name = get_nick(member) if member else f"User#{uid}"
-			name_map[uid] = name
-			all_players.append(Player(id=uid, name=name))
-
-	if len(all_players) < 4:
-		await interaction.followup.send(
-			embed=error_embed(f"Found only {len(all_players)} players. Need at least 4 for team comparison.")
-		)
-		return
-
-	rating_data = await qc.rating.get_players(p.id for p in all_players)
-	ratings = {p['user_id']: p['rating'] for p in rating_data}
-	new_team_a, new_team_b, captains, method = captain_matchmaking(all_players, ratings)
-
-	def format_old_team(team_data):
-		lines = []
-		for p in team_data['players']:
-			uid = p['user_id']
-			rank = p['rank']
-			name = name_map.get(uid, '?')
-			rating = ratings.get(uid, '?')
-			lines.append(f"`〈{rank}〉` {name} ({rating})")
-		total = sum(ratings.get(p['user_id'], 0) for p in team_data['players'])
-		avg = total // len(team_data['players']) if team_data['players'] else 0
-		return "\n".join(lines), total, avg
-
-	def format_new_team(team_players, cap_ids):
-		lines = []
-		for p in team_players:
-			r = ratings[p.id]
-			cap = " **[C]**" if p.id in cap_ids else ""
-			lines.append(f"{p.name} ({r}){cap}")
-		total = sum(ratings[p.id] for p in team_players)
-		avg = total // len(team_players) if team_players else 0
-		return "\n".join(lines), total, avg
-
-	captain_ids = {c.id for c in captains}
-	old_a_text, old_a_total, old_a_avg = format_old_team(parsed_teams[0])
-	old_b_text, old_b_total, old_b_avg = format_old_team(parsed_teams[1])
-	old_diff = abs(old_a_total - old_b_total)
-	new_a_text, new_a_total, new_a_avg = format_new_team(new_team_a, captain_ids)
-	new_b_text, new_b_total, new_b_avg = format_new_team(new_team_b, captain_ids)
-	new_diff = abs(new_a_total - new_b_total)
-
-	embed = Embed(
-		title=f"⚠️ TEST — Team Comparison — Match {match_id}",
-		description="This is a test comparison only. These teams were **not** used in the actual match.",
-		colour=Colour(0x7289DA)
-	)
-	embed.add_field(name=f"{parsed_teams[0]['emoji']} Old {parsed_teams[0]['name']} 〈{old_a_avg}〉", value=old_a_text, inline=True)
-	embed.add_field(name=f"{parsed_teams[1]['emoji']} Old {parsed_teams[1]['name']} 〈{old_b_avg}〉", value=old_b_text, inline=True)
-	embed.add_field(name="\u200b", value=f"**Elo diff: {old_diff}**", inline=False)
-	embed.add_field(name=f"🔵 New A 〈{new_a_avg}〉", value=new_a_text, inline=True)
-	embed.add_field(name=f"🔴 New B 〈{new_b_avg}〉", value=new_b_text, inline=True)
-	embed.add_field(name="\u200b", value=f"**Elo diff: {new_diff}** ({method})", inline=False)
-
-	if new_diff < old_diff:
-		embed.set_footer(text=f"TEST ONLY | Captain matchmaking improves balance by {old_diff - new_diff} rating points")
-	elif new_diff > old_diff:
-		embed.set_footer(text=f"TEST ONLY | Captain matchmaking is {new_diff - old_diff} rating points worse")
-	else:
-		embed.set_footer(text="TEST ONLY | Same balance")
-
-	await interaction.followup.send(embed=embed)
 
 
 @dc.slash_command(name='auto_ready', description='Confirm next match check-in automatically.', **guild_kwargs)
