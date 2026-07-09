@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Match object: the per-match state machine (INIT -> CHECK_IN -> DRAFT ->
+WAITING_REPORT), team/captain setup and matchmaking, result reporting, and
+rating/house-point finalization. Owns the CheckIn, Draft, and Embeds
+sub-controllers.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from time import time
 from itertools import combinations
 from collections import deque
@@ -19,6 +28,9 @@ from .captain_selection import (
 	select_captain_role_captains,
 	CAPTAIN_HISTORY_SIZE as _CAPTAIN_HISTORY_SIZE,
 )
+
+if TYPE_CHECKING:
+	from nextcord import Member
 
 
 # House roles centralized in bot/constants.py — imported above.
@@ -48,27 +60,32 @@ class Match:
 	)
 
 	class Team(list):
-		def __init__(self, name=None, emoji=None, players=None, idx=-1):
+		"""A team roster (a list of Members) with a name, emoji, board index (0 or
+		1 for the two teams, -1 for the unpicked pool), and a draw flag."""
+		def __init__(self, name: str | None = None, emoji: str | None = None, players: list[Member] | None = None, idx: int = -1):
 			super().__init__(players or [])
 			self.name = name
 			self.emoji = emoji
 			self.draw_flag = False
 			self.idx = idx
 
-		def set(self, players):
+		def set(self, players: list[Member]) -> None:
 			self.clear()
 			self.extend(players)
 
-		def add(self, p):
+		def add(self, p: Member) -> None:
 			if p not in self:
 				self.append(p)
 
-		def rem(self, p):
+		def rem(self, p: Member) -> None:
 			if p in self:
 				self.remove(p)
 
 	@classmethod
-	async def new(cls, ctx, queue, players, **kwargs):
+	async def new(cls, ctx: bot.Context, queue: bot.Queue, players: list[Member], **kwargs) -> None:
+		"""Create a match: fetch ratings, run captain selection and team setup,
+		update captain streaks (captain_role mode), assign house names, stash the
+		season number, and register it in bot.active_matches."""
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
@@ -119,7 +136,9 @@ class Match:
 		bot.active_matches.append(match)
 
 	@classmethod
-	async def fake_ranked_match(cls, ctx, queue, qc, winners, losers, draw=False, **kwargs):
+	async def fake_ranked_match(cls, ctx: bot.Context, queue: bot.Queue, qc: bot.QueueChannel, winners: list[Member], losers: list[Member], draw: bool = False, **kwargs) -> None:
+		"""Build a match with a pre-decided winner/loser and register it as ranked
+		(used to inject a result without a live match, e.g. admin fixes)."""
 		players = winners + losers
 		if len(set(players)) != len(players):
 			raise bot.Exc.ValueError("Players list can not contains duplicates.")
@@ -135,7 +154,9 @@ class Match:
 			match.scores[match.winner] = 1
 		await bot.stats.register_match_ranked(ctx, match)
 
-	def serialize(self):
+	def serialize(self) -> dict:
+		"""Return a JSON-serializable snapshot of match state (ids, not objects)
+		for persistence across restarts."""
 		return dict(
 			match_id=self.id,
 			queue_id=self.queue.id,
@@ -151,7 +172,9 @@ class Match:
 		)
 
 	@classmethod
-	async def from_json(cls, data):
+	async def from_json(cls, data: dict) -> None:
+		"""Rebuild a match from a serialized snapshot: re-resolve members, teams,
+		and ready players, restore state, and re-register it as active."""
 		if (qc := bot.queue_channels.get(data['channel_id'])) is None:
 			raise bot.Exc.ValueError('QueueChannel not found.')
 		if (queue := get(qc.queues, id=data['queue_id'])) is None:
@@ -183,7 +206,9 @@ class Match:
 
 		bot.active_matches.append(match)
 
-	def __init__(self, match_id, queue, qc, players, ratings, **cfg):
+	def __init__(self, match_id: int, queue: bot.Queue, qc: bot.QueueChannel, players: list[Member], ratings: dict, **cfg):
+		"""Initialize match state from merged config: build the two teams plus the
+		unpicked pool, and create the CheckIn, Draft, and Embeds sub-controllers."""
 		self.queue = queue
 		self.qc = qc
 		self.gt = qc.gt
@@ -221,13 +246,19 @@ class Match:
 		self.fill_subs: dict = {}  # {player2_id: (player1_id, team_idx)} for 'Match in progress' subs
 
 	@staticmethod
-	def random_maps(maps, map_count, last_maps=None):
+	def random_maps(maps: list, map_count: int, last_maps: list | None = None) -> list:
+		"""Pick map_count maps at random, avoiding recently played ones (last_maps).
+
+		NOTE: mutates the passed maps list in place (removes recent maps before
+		sampling), so a caller passing a shared/persistent list will see it shrink."""
 		for last_map in (last_maps or [])[::-1]:
 			if last_map in maps and map_count < len(maps):
 				maps.remove(last_map)
 		return random.sample(maps, min(map_count, len(maps)))
 
-	def sort_players(self, players):
+	def sort_players(self, players: list[Member]) -> list[Member]:
+		"""Sort players by captain-role eligibility first, then rating (both
+		descending)."""
 		return sorted(
 			players,
 			key=lambda p: [self.cfg['captains_role_id'] in [role.id for role in p.roles], self.ratings[p.id]],
@@ -237,14 +268,14 @@ class Match:
 	# ── House name assignment ──────────────────────────────────────────────────
 
 	@staticmethod
-	def _get_house(player):
+	def _get_house(player: Member) -> str | None:
 		"""Return the player's Hogwarts house name from their Discord roles, or None."""
 		for role in player.roles:
 			if role.id in HOUSE_ROLES:
 				return HOUSE_ROLES[role.id]
 		return None
 
-	def _assign_house_names(self):
+	def _assign_house_names(self) -> None:
 		"""Rename teams from captain house roles.
 		If a captain has no house role, a house is chosen at random.
 		Always tries to give both teams different houses.
@@ -270,9 +301,10 @@ class Match:
 		self.teams[0].name = house_a
 		self.teams[1].name = house_b
 
-	def init_captains(self, pick_captains, captains_role_id):
-		# 'smart' and 'captain_role' delegate to captain_selection.py; the simpler
-		# modes are trivial one-liners tied to match helpers, kept inline here.
+	def init_captains(self, pick_captains: str, captains_role_id: int | None) -> None:
+		"""Select two captains from the current roster per pick_captains mode.
+		'smart' and 'captain_role' delegate to captain_selection.py; the simpler
+		modes are trivial one-liners kept inline here."""
 		if pick_captains == "smart":
 			self.captains = select_smart_captains(
 				self.players,
@@ -307,7 +339,11 @@ class Match:
 				rand, key=lambda p: self.cfg['captains_role_id'] in [role.id for role in p.roles], reverse=True
 			)[:2]
 
-	def init_teams(self, pick_teams):
+	def init_teams(self, pick_teams: str) -> None:
+		"""Populate teams[0], teams[1], and the unpicked pool (teams[2]) per
+		pick_teams mode: 'draft' seats captains and pools the rest; the matchmaking
+		modes split players into the most rating-balanced teams; 'random teams'
+		splits at random."""
 		if pick_teams == "draft":
 			self.teams[0].set(self.captains[:1])
 			self.teams[1].set(self.captains[1:])
@@ -380,7 +416,9 @@ class Match:
 			self.teams[1].set([p for p in self.players if p not in self.teams[0]][:self.cfg['team_size']])
 			self.teams[2].set([p for p in self.players if p not in [*self.teams[0], *self.teams[1]]])
 
-	async def think(self, frame_time):
+	async def think(self, frame_time: float) -> None:
+		"""Per-frame tick: advance out of INIT, drive check-in, or cancel the match
+		once it outlives its lifetime."""
 		if self.state == self.INIT:
 			await self.next_state(bot.SystemContext(self.qc))
 		elif self.state == self.CHECK_IN:
@@ -395,7 +433,9 @@ class Match:
 				pass
 			await self.cancel(ctx)
 
-	async def next_state(self, ctx):
+	async def next_state(self, ctx: bot.Context) -> None:
+		"""Advance the state machine: pop the next queued state and start its
+		handler, or finish the match when no states remain."""
 		if len(self.states):
 			self.state = self.states.pop(0)
 			if self.state == self.CHECK_IN:
@@ -411,7 +451,7 @@ class Match:
 				await self.final_message(ctx)
 			await self.finish_match(ctx)
 
-	async def _priority_cross_queue_cleanup(self, ctx):
+	async def _priority_cross_queue_cleanup(self, ctx: bot.Context) -> None:
 		"""Remove this match's players from other queues, respecting priority.
 
 		Called when the match transitions from check-in into the next phase
@@ -453,10 +493,12 @@ class Match:
 				if not q.queue and q in bot.active_queues:
 					bot.active_queues.remove(q)
 
-	def rank_str(self, member):
+	def rank_str(self, member: Member) -> str:
 		return self.queue.qc.rating_rank(self.ratings[member.id])['rank']
 
-	async def start_waiting_report(self, ctx):
+	async def start_waiting_report(self, ctx: bot.Context) -> None:
+		"""Enter the waiting-report stage: drop any unpicked players, post the final
+		message, and (for draft matches) start party-code collection."""
 		if len(self.teams[2]):
 			for p in self.teams[2]:
 				self.players.remove(p)
@@ -478,7 +520,10 @@ class Match:
 				except Exception as e:
 					log.error(f"PartyCode start error: {e}")
 
-	async def report_loss(self, ctx, member, draw_flag):
+	async def report_loss(self, ctx: bot.Context, member: Member, draw_flag: int) -> None:
+		"""Captain reports their team's loss/draw/abort. draw_flag: 0 = loss, 1 =
+		draw offer, 2 = abort offer; a draw or abort needs the other captain to
+		confirm."""
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -507,7 +552,9 @@ class Match:
 			self.scores[self.winner] = 1
 		await self.finish_match(ctx)
 
-	async def report_win(self, ctx, team_name, draw=False):
+	async def report_win(self, ctx: bot.Context, team_name: str | None, draw: bool = False) -> None:
+		"""Captain reports a win by team_name (or a draw), then finalizes the
+		match."""
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -521,7 +568,8 @@ class Match:
 
 		await self.finish_match(ctx)
 
-	async def report_scores(self, ctx, scores):
+	async def report_scores(self, ctx: bot.Context, scores: list[int]) -> None:
+		"""Record explicit scores, derive the winner (or draw), then finalize."""
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -535,7 +583,7 @@ class Match:
 		self.scores = scores
 		await self.finish_match(ctx)
 
-	async def print_rating_results(self, ctx, before, after):
+	async def print_rating_results(self, ctx: bot.Context, before: dict, after: dict) -> None:
 		"""Post a rich embed matching the Q6Bot results style."""
 		if self.winner is not None:
 			winners = self.teams[self.winner]
@@ -597,13 +645,16 @@ class Match:
 		embed.set_footer(text=f"Match id: {self.id}")
 		await ctx.notice(embed=embed)
 
-	async def final_message(self, ctx):
+	async def final_message(self, ctx: bot.Context) -> None:
 		try:
 			await ctx.notice(embed=self.embeds.final_message())
 		except DiscordException:
 			pass
 
-	async def finish_match(self, ctx):
+	async def finish_match(self, ctx: bot.Context) -> None:
+		"""Finalize the match: record captains for future selection, roll the map
+		cooldown, register the result (ranked/unranked), and award house points to
+		the winner."""
 		bot.active_matches.remove(self)
 
 		# Track captains for smart captain selection in future matches
@@ -634,7 +685,7 @@ class Match:
 				bot_log = __import__("core.console", fromlist=["log"]).log
 				bot_log.error(f"[house_points] award_for_win failed: {e}")
 
-	async def _post_house_award_embed(self, ctx, awarded):
+	async def _post_house_award_embed(self, ctx: bot.Context, awarded: dict) -> None:
 		"""Brief announcement listing house point awards from this match."""
 		from nextcord import Embed, Colour
 		from bot.constants import HOUSE_EMOJIS
@@ -654,10 +705,12 @@ class Match:
 		except Exception:
 			pass
 
-	def print(self):
+	def print(self) -> str:
 		return f"> *({self.id})* **{self.queue.name}** | `{join_and([get_nick(p) for p in self.players])}`"
 
-	async def cancel(self, ctx):
+	async def cancel(self, ctx: bot.Context) -> None:
+		"""Cancel the match: tear down check-in reactions and party code, notify
+		players, and remove it from active matches."""
 		if self.check_in.message and self.check_in.message.id in bot.waiting_reactions.keys():
 			bot.waiting_reactions.pop(self.check_in.message.id)
 		if self.party_code:
