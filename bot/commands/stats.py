@@ -212,9 +212,9 @@ async def leaderboard(ctx, page: int = 1):
 	for i, row in enumerate(data):
 		pos   = (page * 12) + i + 1
 		nick  = _table_nick(row["nick"])
-		w, l  = row["wins"], row["losses"]
-		wr    = int(w * 100 / ((w + l) or 1))
-		wl    = f"{w}-{l}"
+		w, losses = row["wins"], row["losses"]
+		wr    = int(w * 100 / ((w + losses) or 1))
+		wl    = f"{w}-{losses}"
 		emoji = get_rank_emoji(row["rating"])
 		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
@@ -336,9 +336,9 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 	for i, row in enumerate(data):
 		pos   = (page * 12) + i + 1
 		nick  = _table_nick(row["nick"])
-		w, l  = row["wins"], row["losses"]
-		wr    = int(w * 100 / ((w + l) or 1))
-		wl    = f"{w}-{l}"
+		w, losses = row["wins"], row["losses"]
+		wr    = int(w * 100 / ((w + losses) or 1))
+		wl    = f"{w}-{losses}"
 		emoji = get_rank_emoji(row["rating"])
 		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
 		rows.append(f"{text}  {emoji} {row['rating']}")
@@ -391,8 +391,8 @@ async def season_end(ctx, min_matches: int = 15):
 		for i, row in enumerate(qualified):
 			pos = SEASON_MEDALS[i] if i < 3 else f"{i + 1}."
 			emoji = get_rank_emoji(row['rating'])
-			w, l = row['wins'], row['losses']
-			lines.append(f"{pos} **{row['nick'].strip()}** — {emoji} {row['rating']} ({w}-{l})")
+			w, losses = row['wins'], row['losses']
+			lines.append(f"{pos} **{row['nick'].strip()}** — {emoji} {row['rating']} ({w}-{losses})")
 	else:
 		lines.append(f"*No players with {min_matches}+ matches this season.*")
 
@@ -402,8 +402,8 @@ async def season_end(ctx, min_matches: int = 15):
 			lines.append(f"• {q.name}")
 
 	lines.append(
-		f"\nRatings and stats have been reset. "
-		f"MMR is now off until `/season_start` is used here."
+		"\nRatings and stats have been reset. "
+		"MMR is now off until `/season_start` is used here."
 	)
 
 	embed = Embed(colour=Colour(0x7289DA), description="\n".join(lines))
