@@ -79,7 +79,7 @@ async def unpicked_players(interaction: Interaction, current: str) -> Dict[str, 
 				break
 
 		cur = (current or "").lower().strip()
-		out: Dict[str, str] = {}
+		out: dict[str, str] = {}
 		for p in candidates:
 			name = p.display_name[:100]
 			if cur and cur not in name.lower():
@@ -106,7 +106,7 @@ async def players_in_match(interaction: Interaction, current: str) -> Dict[str, 
 		if qc is None:
 			return {}
 
-		seen: Dict[int, str] = {}  # user_id → display_name (dedupe across matches)
+		seen: dict[int, str] = {}  # user_id → display_name (dedupe across matches)
 		for m in bot.active_matches:
 			if m.qc != qc:
 				continue
@@ -114,7 +114,7 @@ async def players_in_match(interaction: Interaction, current: str) -> Dict[str, 
 				seen.setdefault(p.id, p.display_name)
 
 		cur = (current or "").lower().strip()
-		out: Dict[str, str] = {}
+		out: dict[str, str] = {}
 		for uid, name in seen.items():
 			label = name[:100]
 			if cur and cur not in label.lower():
