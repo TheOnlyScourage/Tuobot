@@ -229,13 +229,12 @@ class Embeds:
 			embed.add_field(name="—", value=self.m.cfg['start_msg'] + "\n\u200b", inline=False)
 
 		# ── Streamers ──────────────────────────────────────────────────────────
-		if self.m.cfg['show_streamers']:
-			if len(streamers := [p for p in self.m.players if isinstance(p.activity, Streaming)]):
-				embed.add_field(
-					name=self.m.qc.gt("Player streams"),
-					inline=False,
-					value="\n".join([f"{p.mention}: {p.activity.url}" for p in streamers]) + "\n\u200b"
-				)
+		if self.m.cfg['show_streamers'] and len(streamers := [p for p in self.m.players if isinstance(p.activity, Streaming)]):
+			embed.add_field(
+				name=self.m.qc.gt("Player streams"),
+				inline=False,
+				value="\n".join([f"{p.mention}: {p.activity.url}" for p in streamers]) + "\n\u200b"
+			)
 
 		embed.set_footer(**self._make_footer())
 		return embed
