@@ -89,7 +89,7 @@ async def pull_standby_into_match(ci, ctx):
 
 	jump = ci.message.jump_url if ci.message else None
 	lines = [
-		f"\U0001f6a8 **STANDBY PULLED IN!** \U0001f6a8",
+		"\U0001f6a8 **STANDBY PULLED IN!** \U0001f6a8",
 		f"{added_mentions} \u2014 you have a chance to claim a spot!",
 		f"You\u2019re now competing with {not_ready_mentions} for the remaining slots.",
 		f"**First to react {ci.READY_EMOJI} on the check-in message wins their spot.**",
