@@ -1,7 +1,14 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from bot.constants import HOUSE_EMOJIS, get_rank_emoji as _rank_emoji
 from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
 from core.utils import get_nick, join_and
+
+if TYPE_CHECKING:
+	import bot
 
 # Rank emoji lookup — duplicated here to avoid circular import with match.py
 
@@ -10,7 +17,7 @@ from core.utils import get_nick, join_and
 # HOUSE_EMOJIS centralized in bot/constants.py — imported below
 
 
-def _house_team_label(team, avg_rating=None, ranked=False) -> str:
+def _house_team_label(team, avg_rating: int | None = None, ranked: bool = False) -> str:
 	"""Return the team header: {house_emoji} HOUSENAME (N) {rank_emoji} 〈avg〉
 	Falls back to the default emoji + team name for non-house teams."""
 	house_emoji = HOUSE_EMOJIS.get(team.name, '')
@@ -26,14 +33,14 @@ def _house_team_label(team, avg_rating=None, ranked=False) -> str:
 class Embeds:
 	""" This class generates discord embeds for various match states """
 
-	def __init__(self, match):
+	def __init__(self, match: bot.Match):
+		"""Bind this embed generator to a match. The footer is built lazily via
+		_make_footer() so a season number stashed later (in Match.new) is included."""
 		self.m = match
-		# Footer is rebuilt lazily via _make_footer() so the season number
-		# (stashed on the match in Match.new) is included if available.
 		self._icon_url = dc.user.avatar.with_size(32).url if dc.user.avatar else None
 		self.footer = self._make_footer()
 
-	def _make_footer(self):
+	def _make_footer(self) -> dict:
 		"""Build the footer dict. Includes 'Season N' if match.season_number is set."""
 		text = f"Match id: {str(self.m.id).zfill(6)}"
 		season = getattr(self.m, 'season_number', None)
@@ -48,7 +55,7 @@ class Embeds:
 			return f"{_rank_emoji(rating)} 〈{rating}〉 {p.mention}"
 		return p.mention
 
-	def _ranked_nick(self, p: Member):
+	def _ranked_nick(self, p: Member) -> str:
 		"""Draft stage player label — custom rank emoji + name in code span."""
 		if self.m.ranked:
 			rating = self.m.ratings.get(p.id)
@@ -56,14 +63,18 @@ class Embeds:
 			return f'{emoji}`{get_nick(p)}`'
 		return f'`{get_nick(p)}`'
 
-	def _ranked_mention(self, p: Member):
+	def _ranked_mention(self, p: Member) -> str:
+		"""Draft-ready player mention: a rank prefix (emoji or code) plus the
+		mention when ranked, else a plain mention."""
 		if self.m.ranked:
 			if self.m.qc.cfg.emoji_ranks:
 				return f'{self.m.rank_str(p)}{p.mention}'
 			return f'`{self.m.rank_str(p)}`{p.mention}'
 		return p.mention
 
-	def check_in(self, not_ready):
+	def check_in(self, not_ready: list[Member]) -> Embed:
+		"""Build the check-in stage embed: the waiting-on list plus ready/abort
+		(and map-vote) instructions."""
 		embed = Embed(
 			colour=Colour(0xf5d858),
 			title=self.m.gt("__**{queue}** is now on the check-in stage!__").format(
@@ -104,7 +115,9 @@ class Embeds:
 		embed.set_footer(**self._make_footer())
 		return embed
 
-	def draft(self):
+	def draft(self) -> Embed:
+		"""Build the draft stage embed: team rosters, the unpicked pool, and whose
+		turn it is to pick."""
 		embed = Embed(
 			colour=Colour(0x8758f5),
 			title=self.m.gt("__**{queue}** is now on the draft stage!__").format(
@@ -154,7 +167,9 @@ class Embeds:
 		embed.set_footer(**self._make_footer())
 		return embed
 
-	def final_message(self):
+	def final_message(self) -> Embed:
+		"""Build the match-start embed: 1v1, team-vs-team, or plain player-list
+		layout, plus maps, server, start message, and streamers."""
 		# ── Title: ALL CAPS queue name (Q6Bot style) ───────────────────────────
 		embed = Embed(
 			colour=Colour(0x27b75e),
