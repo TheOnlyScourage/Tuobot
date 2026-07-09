@@ -14,11 +14,17 @@ ready/not-ready flow. The standby system has its own moving parts:
 Each function takes the check-in handler as `ci` so it can access ready
 state and post messages. They're called from check_in.py's think()/refresh().
 """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import asyncio
 from core.console import log
 from core.utils import join_and
 import bot
+
+if TYPE_CHECKING:
+	from bot.match.check_in import CheckIn
 
 
 # Roster size of the standby cushion above check-in. Standby is unlimited
@@ -26,7 +32,7 @@ import bot
 _MAX_STANDBY_PULL = 6
 
 
-async def pull_standby_into_match(ci, ctx):
+async def pull_standby_into_match(ci: CheckIn, ctx: bot.Context) -> None:
 	"""At 2/3 of check-in time, add standby players as additional candidates.
 
 	Nobody is kicked out. The standby players join the ready race —
@@ -119,7 +125,7 @@ async def pull_standby_into_match(ci, ctx):
 	await ci.refresh(ctx)
 
 
-async def finalize_race_results(ci, ctx):
+async def finalize_race_results(ci: CheckIn, ctx: bot.Context) -> None:
 	"""Called when at least `queue_size` players have readied.
 
 	Trims the roster down to `queue_size` based on who readied FIRST
