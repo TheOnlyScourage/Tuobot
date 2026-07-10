@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """Check-in stage controller for a match: the ready/not-ready reaction flow,
-map voting, race-to-ready finishing, standby fill, and abort/timeout handling.
+race-to-ready finishing, standby fill, and abort/timeout handling.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import random
 import bot
 from nextcord.errors import DiscordException
 
@@ -19,8 +18,7 @@ if TYPE_CHECKING:
 
 
 class CheckIn:
-	"""Runs the check-in stage: players react to ready up or abort, and (when
-	map voting is enabled) react with number emojis to vote on maps. Fills empty
+	"""Runs the check-in stage: players react to ready up or abort. Fills empty
 	slots from standby partway through, finishes early once enough players ready
 	(race-to-ready), or aborts and reverts the queue on timeout. All state lives
 	on the shared Match object (self.m).
@@ -28,12 +26,11 @@ class CheckIn:
 
 	READY_EMOJI = "✅"
 	NOT_READY_EMOJI = "⛔"
-	INT_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6⃣", "7⃣", "8⃣", "9⃣"]
 
 	def __init__(self, match: bot.Match, timeout: int):
-		"""Set up check-in state from config: pre-ready any auto-ready players,
-		build the map-vote pool when voting is enabled, and (when a timeout is
-		set) append the CHECK_IN state to the match's state sequence."""
+		"""Set up check-in state from config: pre-ready any auto-ready players and
+		(when a timeout is set) append the CHECK_IN state to the match's state
+		sequence."""
 		self.m = match
 		self.timeout = timeout
 		self.allow_discard = self.m.cfg['check_in_discard']
@@ -48,13 +45,6 @@ class CheckIn:
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			self.ready_players.add(p)
-
-		if len(self.m.cfg['maps']) > 1 and self.m.cfg['vote_maps']:
-			self.maps = self.m.random_maps(self.m.cfg['maps'], self.m.cfg['vote_maps'], self.m.queue.last_maps)
-			self.map_votes = [set() for i in self.maps]
-		else:
-			self.maps = []
-			self.map_votes = []
 
 		if self.timeout:
 			self.m.states.append(self.m.CHECK_IN)
@@ -91,15 +81,14 @@ class CheckIn:
 				await self.finish(ctx)
 
 	async def start(self, ctx: bot.Context) -> None:
-		"""Post the check-in message, add the ready/abort (and map-vote)
-		reactions, register the reaction handler, and render the board."""
+		"""Post the check-in message, add the ready/abort reactions, register the
+		reaction handler, and render the board."""
 		# Snapshot originals so standby joiners aren\'t penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
 		text = f"!spawn message {self.m.id}"
 		self.message = await ctx.channel.send(text)
 
 		emojis = [self.READY_EMOJI, '🔸', self.NOT_READY_EMOJI] if self.allow_discard else [self.READY_EMOJI]
-		emojis += [self.INT_EMOJIS[n] for n in range(len(self.maps))]
 		try:
 			for emoji in emojis:
 				await self.message.add_reaction(emoji)
@@ -169,16 +158,11 @@ class CheckIn:
 		await finalize_race_results(self, ctx)
 
 	async def finish(self, ctx: bot.Context) -> None:
-		"""Finalize check-in: clear ready state, pick the winning map(s) by vote
-		count (ties broken randomly), clean up auto-ready, and advance state."""
+		"""Finalize check-in: clear ready state, clean up auto-ready, and advance
+		state."""
 		bot.waiting_reactions.pop(self.message.id)
 		self.ready_players = set()
 		self.ready_order = []
-		if len(self.maps):
-			order = list(range(len(self.maps)))
-			random.shuffle(order)
-			order.sort(key=lambda n: len(self.map_votes[n]), reverse=True)
-			self.m.maps = [self.maps[n] for n in order[:self.m.cfg['map_count']]]
 		await self.message.delete()
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
@@ -187,28 +171,13 @@ class CheckIn:
 		await self.m.next_state(ctx)
 
 	async def process_reaction(self, reaction, user: Member, remove: bool = False) -> None:
-		"""Handle a ready/abort/map-vote reaction (add or remove). Number
-		reactions toggle a map vote and ready the user; the ready reaction
+		"""Handle a ready or abort reaction (add or remove). The ready reaction
 		readies; the abort reaction discards or immediately aborts. Ignored
 		unless in CHECK_IN and the user is a player."""
 		if self.m.state != self.m.CHECK_IN or user not in self.m.players:
 			return
 
-		if str(reaction) in self.INT_EMOJIS:
-			idx = self.INT_EMOJIS.index(str(reaction))
-			if idx <= len(self.maps):
-				if remove:
-					self.map_votes[idx].discard(user.id)
-					self.ready_players.discard(user)
-				else:
-					self.map_votes[idx].add(user.id)
-					self.discarded_players.discard(user)
-					self.ready_players.add(user)
-					if user not in self.ready_order:
-						self.ready_order.append(user)
-				await self.refresh(bot.SystemContext(self.m.queue.qc))
-
-		elif str(reaction) == self.READY_EMOJI:
+		if str(reaction) == self.READY_EMOJI:
 			if remove:
 				self.ready_players.discard(user)
 			else:
