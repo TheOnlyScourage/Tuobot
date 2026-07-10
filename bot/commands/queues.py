@@ -1,10 +1,9 @@
 __all__ = [
 	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start', 'split',
-	'reset', 'server', 'maps', 'remove_all'
+	'reset', 'server', 'remove_all'
 ]
 
 import time
-from random import choice
 from nextcord import Member
 from core.utils import error_embed, join_and, find, seconds_to_str, get_nick
 import bot
@@ -284,20 +283,3 @@ async def server(ctx, queue: str):
 	await ctx.success(q.cfg.server, title=ctx.qc.gt("Server for **{queue}**").format(
 		queue=q.name
 	))
-
-
-async def maps(ctx, queue: str, one: bool = False):
-	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
-		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
-	if not len(q.cfg.maps):
-		raise bot.Exc.NotFoundError(ctx.qc.gt("No maps is set for **{queue}**.").format(
-			queue=q.name
-		))
-
-	if one:
-		await ctx.success(f"`{choice(q.cfg.maps)['name']}`")
-	else:
-		await ctx.success(
-			", ".join((f"`{i['name']}`" for i in q.cfg.maps)),
-			title=ctx.qc.gt("Maps for **{queue}**").format(queue=q.name)
-		)
