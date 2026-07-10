@@ -432,6 +432,18 @@ async def _remove_all(
 	player: Member = SlashOption(required=False, verify=False, description="Player to remove (moderator only).")
 ): await run_slash(bot.commands.remove_all, interaction=interaction, player=player)
 
+
+@dc.slash_command(name='remove_after', description='Auto-remove yourself from the channel queues after a set time.', **guild_kwargs)
+async def _remove_after(
+	interaction: Interaction,
+	time: str = SlashOption(name="time", description="How long to stay in queue, e.g. 30m, 1h, 90s, 1:30:00.")
+):
+	async def _run(ctx, _duration=None):
+		if _duration:
+			_duration = _parse_duration(ctx, _duration)
+		await bot.commands.expire(ctx, duration=_duration)
+	await run_slash(_run, interaction=interaction, _duration=time)
+
 @dc.slash_command(name='who', description='List added players.', **guild_kwargs)
 async def _who(
 	interaction: Interaction,
