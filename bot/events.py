@@ -249,8 +249,6 @@ async def on_presence_update(before, after):
 	for qc in filter(lambda i: i.guild_id == after.guild.id, bot.queue_channels.values()):
 		if after.raw_status == "offline" and qc.cfg.remove_offline:
 			await qc.remove_members(after, reason="offline")
-		if after.raw_status == "idle" and qc.cfg.remove_afk and bot.expire.get(qc, after) is None:
-			await qc.remove_members(after, reason="afk", highlight=True)
 
 
 @dc.event
