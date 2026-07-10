@@ -460,22 +460,6 @@ async def server(
 server.on_autocomplete("queue")(autocomplete.queues)
 
 
-@dc.slash_command(name='maps', description='List a queue maps.', **guild_kwargs)
-async def maps(
-		interaction: Interaction,
-		queue: str
-): await run_slash(bot.commands.maps, interaction=interaction, queue=queue, one=False)
-maps.on_autocomplete("queue")(autocomplete.queues)
-
-
-@dc.slash_command(name='map', description='Print a random map.', **guild_kwargs)
-async def _map(
-		interaction: Interaction,
-		queue: str
-): await run_slash(bot.commands.maps, interaction=interaction, queue=queue, one=True)
-_map.on_autocomplete("queue")(autocomplete.queues)
-
-
 @dc.slash_command(name='matches', description='Show active matches on the channel.', **guild_kwargs)
 async def _matches(interaction: Interaction
 ): await run_slash(bot.commands.show_matches, interaction=interaction)
