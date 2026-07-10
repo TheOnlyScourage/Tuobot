@@ -673,8 +673,8 @@ class Match:
 		else:
 			await bot.stats.register_match_unranked(ctx, self)
 
-		# Award Hogwarts house points to the winning team (no-op on draws/cancels)
-		if self.winner is not None and self.winner in (0, 1):
+		# Award Hogwarts house points to the winning team (ranked wins only; no-op on draws/cancels)
+		if self.ranked and self.winner is not None and self.winner in (0, 1):
 			try:
 				from bot.stats.house_points import award_for_win
 				winning_team = self.teams[self.winner]
