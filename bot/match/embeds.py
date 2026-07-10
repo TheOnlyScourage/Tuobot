@@ -73,8 +73,7 @@ class Embeds:
 		return p.mention
 
 	def check_in(self, not_ready: list[Member]) -> Embed:
-		"""Build the check-in stage embed: the waiting-on list plus ready/abort
-		(and map-vote) instructions."""
+		"""Build the check-in stage embed: the waiting-on list plus ready/abort instructions."""
 		embed = Embed(
 			colour=Colour(0xf5d858),
 			title=self.m.gt("__**{queue}** is now on the check-in stage!__").format(
@@ -86,32 +85,14 @@ class Embeds:
 			value="\n".join((f" \u200b {'❌ ' if p in self.m.check_in.discarded_players else ''}<@{p.id}>" for p in not_ready)),
 			inline=False
 		)
-		if not len(self.m.check_in.maps):
-			embed.add_field(
-				name="—",
-				value=self.m.gt(
-					"Please react with {ready_emoji} to **check-in** or {not_ready_emoji} to **abort**!").format(
-					ready_emoji=self.m.check_in.READY_EMOJI, not_ready_emoji=self.m.check_in.NOT_READY_EMOJI
-				) + "\n\u200b",
-				inline=False
-			)
-		else:
-			embed.add_field(
-				name="—",
-				value="\n".join([
-					self.m.gt("Please react with {ready_emoji} or vote for a map to **check-in**.").format(
-						ready_emoji=self.m.check_in.READY_EMOJI
-					),
-					self.m.gt("React with {not_ready_emoji} to **abort**!").format(
-						not_ready_emoji=self.m.check_in.NOT_READY_EMOJI
-					) + "\n\u200b\nMaps:",
-					"\n".join([
-						f" \u200b \u200b {self.m.check_in.INT_EMOJIS[i]} \u200b {self.m.check_in.maps[i]}"
-						for i in range(len(self.m.check_in.maps))
-					])
-				]),
-				inline=False
-			)
+		embed.add_field(
+			name="\u2014",
+			value=self.m.gt(
+				"Please react with {ready_emoji} to **check-in** or {not_ready_emoji} to **abort**!").format(
+				ready_emoji=self.m.check_in.READY_EMOJI, not_ready_emoji=self.m.check_in.NOT_READY_EMOJI
+			) + "\n\u200b",
+			inline=False
+		)
 		embed.set_footer(**self._make_footer())
 		return embed
 
@@ -169,7 +150,7 @@ class Embeds:
 
 	def final_message(self) -> Embed:
 		"""Build the match-start embed: 1v1, team-vs-team, or plain player-list
-		layout, plus maps, server, start message, and streamers."""
+		layout, plus server, start message, and streamers."""
 		# ── Title: ALL CAPS queue name (Q6Bot style) ───────────────────────────
 		embed = Embed(
 			colour=Colour(0x27b75e),
@@ -225,13 +206,7 @@ class Embeds:
 					inline=False
 				)
 
-		# ── Maps / Server ──────────────────────────────────────────────────────
-		if len(self.m.maps):
-			embed.add_field(
-				name=self.m.qc.gt("Map" if len(self.m.maps) == 1 else "Maps"),
-				value="\n".join((f"**{i}**" for i in self.m.maps)),
-				inline=True
-			)
+		# ── Server ──────────────────────────────────────────────────────
 		if self.m.cfg['server']:
 			embed.add_field(
 				name=self.m.qc.gt("Server"),
