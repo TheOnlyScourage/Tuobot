@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-End-of-season highlights: interesting stats pulled from match history.
+End-of-season embeds: interesting stats pulled from match history, plus the
+standalone House Cup announcement.
 
 Called from /admin stats season_end right BEFORE the channel reset deletes
-the underlying data. Returns a single embed that gets posted to the
-channel alongside the standings embed.
+the underlying data. build_highlights_embed() and build_house_cup_embed()
+each return an embed that gets posted to the channel alongside the standings.
 
 Each query runs independently (see _safe) so one failing query can't take
 down the whole highlights embed.
@@ -203,18 +204,6 @@ async def _query_role_winners(channel_id: int, guild):
 	return result
 
 
-async def _query_house_winner():
-	"""House with the most cumulative points (global, not per-channel)."""
-	try:
-		from bot.stats.house_points import get_standings
-		standings = await get_standings()
-		if standings:
-			return standings[0]   # highest-points house
-	except Exception as e:
-		log.error(f"[season_highlights] house lookup failed: {e}")
-	return None
-
-
 async def _safe(label, fn, *args):
 	"""Run one highlight query, logging and swallowing its error so a single
 	failing query can't take down the whole highlights embed."""
@@ -227,7 +216,8 @@ async def _safe(label, fn, *args):
 
 async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 	"""Build and return the season-highlights embed. Returns None if every
-	section is empty (or every query failed)."""
+	section is empty (or every query failed). The House Cup is posted
+	separately via build_house_cup_embed()."""
 	channel_id = ctx.qc.id
 	guild      = ctx.channel.guild if hasattr(ctx, 'channel') else None
 
@@ -237,7 +227,6 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 	improved     = await _safe("most_improved", _query_most_improved, channel_id)
 	streaks      = await _safe("streaks",       _query_streaks,       channel_id)
 	role_winners = await _safe("role_winners",  _query_role_winners,  channel_id, guild)
-	house_winner = await _safe("house_winner",  _query_house_winner)
 
 	lines = []
 
@@ -286,13 +275,6 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 				icon = role_icons.get(role, '\u2b50')
 				lines.append(f"{icon} **Best {role}** \u2014 `{w['nick']}` with **{w['wins']}** wins")
 
-	if house_winner:
-		emoji = HOUSE_EMOJIS.get(house_winner['house'], '')
-		lines.append(
-			f"{emoji} **House Cup Winner** \u2014 **{house_winner['house']}** "
-			f"with **{house_winner['points']}** points"
-		)
-
 	if not lines:
 		return None
 
@@ -300,4 +282,40 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 		colour=Colour(0xe67e22),
 		title=f"\u2728 Season {season_num} Highlights",
 		description="\n".join(lines)
+	)
+
+
+async def build_house_cup_embed(season_num: int) -> Embed | None:
+	"""Standalone House Cup announcement: the winning house with its emblem,
+	plus the final standings of all four houses. Built from current totals, so
+	it MUST be called before the season reset zeroes house points."""
+	from bot.stats.house_points import get_standings
+	try:
+		standings = await get_standings()
+	except Exception as e:
+		log.error(f"[house_cup] get_standings failed: {e}")
+		return None
+
+	# Nothing to celebrate if no points were earned this season
+	if not standings or all((h['points'] or 0) == 0 for h in standings):
+		return None
+
+	winner = standings[0]
+	winner_emblem = HOUSE_EMOJIS.get(winner['house'], '')
+
+	medals = ['\U0001f947', '\U0001f948', '\U0001f949']   # gold / silver / bronze
+	rows = []
+	for i, h in enumerate(standings):
+		place = medals[i] if i < len(medals) else '\u2003'   # em-space aligns 4th place
+		emblem = HOUSE_EMOJIS.get(h['house'], '')
+		rows.append(f"{place} {emblem} **{h['house']}** \u2014 {h['points']} points")
+
+	return Embed(
+		colour=Colour(0xf1c40f),   # gold
+		title=f"\U0001f3c6 The House Cup \u2014 Season {season_num}",
+		description=(
+			f"Congratulations to {winner_emblem} **{winner['house']}**, "
+			f"champions of Season {season_num} with **{winner['points']}** points!\n\n"
+			f"**Final Standings**\n" + "\n".join(rows)
+		)
 	)
