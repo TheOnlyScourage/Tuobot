@@ -54,7 +54,7 @@ class Match:
 	default_cfg = dict(
 		teams=None, team_names=['Alpha', 'Beta'], team_emojis=None, ranked=False,
 		team_size=1, pick_captains="no captains", captains_role_id=None, pick_teams="draft",
-		pick_order=None, maps=[], vote_maps=0, map_count=0, check_in_timeout=0,
+		pick_order=None, check_in_timeout=0,
 		check_in_discard=True, check_in_discard_immediately=True, match_lifetime=3*60*60, start_msg=None, server=None,
 		show_streamers=True
 	)
@@ -89,7 +89,6 @@ class Match:
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
-		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
 		# Pre-fetch captain streaks if this queue uses captain_role mode.
 		# The selection runs synchronously, so we read streaks ahead of time and
 		# stash them on the match for the sync code to consult.
@@ -164,7 +163,6 @@ class Match:
 			cfg=self.cfg,
 			players=[p.id for p in self.players if p],
 			teams=[[p.id for p in team if p] for team in self.teams],
-			maps=self.maps,
 			state=self.state,
 			states=self.states,
 			ready_players=[p.id for p in self.check_in.ready_players if p],
@@ -197,7 +195,6 @@ class Match:
 		for i in range(len(match.teams)):
 			match.teams[i].set(data['teams'][i])
 		match.check_in.ready_players = set(data['ready_players'])
-		match.maps = data['maps']
 		match.state = data['state']
 		match.states = data['states']
 		if match.state == match.CHECK_IN:
@@ -234,7 +231,6 @@ class Match:
 
 		self.captains = []
 		self.states = []
-		self.maps = []
 		self.lifetime = self.cfg['match_lifetime']
 		self.start_time = int(time())
 		self.state = self.INIT
@@ -244,17 +240,6 @@ class Match:
 		self.embeds = Embeds(self)
 		self.party_code = None   # set after draft when pick_teams=='draft'
 		self.fill_subs: dict = {}  # {player2_id: (player1_id, team_idx)} for 'Match in progress' subs
-
-	@staticmethod
-	def random_maps(maps: list, map_count: int, last_maps: list | None = None) -> list:
-		"""Pick map_count maps at random, avoiding recently played ones (last_maps).
-
-		NOTE: mutates the passed maps list in place (removes recent maps before
-		sampling), so a caller passing a shared/persistent list will see it shrink."""
-		for last_map in (last_maps or [])[::-1]:
-			if last_map in maps and map_count < len(maps):
-				maps.remove(last_map)
-		return random.sample(maps, min(map_count, len(maps)))
 
 	def sort_players(self, players: list[Member]) -> list[Member]:
 		"""Sort players by captain-role eligibility first, then rating (both
@@ -652,9 +637,8 @@ class Match:
 			pass
 
 	async def finish_match(self, ctx: bot.Context) -> None:
-		"""Finalize the match: record captains for future selection, roll the map
-		cooldown, register the result (ranked/unranked), and award house points to
-		the winner."""
+		"""Finalize the match: record captains for future selection, register the
+		result (ranked/unranked), and award house points to the winner."""
 		bot.active_matches.remove(self)
 
 		# Track captains for smart captain selection in future matches
@@ -664,9 +648,6 @@ class Match:
 			if not hasattr(self.qc, '_captain_history'):
 				self.qc._captain_history = deque(maxlen=_CAPTAIN_HISTORY_SIZE)
 			self.qc._captain_history.append(cap_ids)
-
-		self.queue.last_maps += self.maps
-		self.queue.last_maps = self.queue.last_maps[-len(self.maps)*self.queue.cfg.map_cooldown:]
 
 		if self.ranked:
 			await bot.stats.register_match_ranked(ctx, self)
