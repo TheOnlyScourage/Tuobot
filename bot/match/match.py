@@ -82,7 +82,7 @@ class Match:
 				self.remove(p)
 
 	@classmethod
-	async def new(cls, ctx: bot.Context, queue: bot.Queue, players: list[Member], **kwargs) -> None:
+	async def new(cls, ctx: bot.Context, queue: bot.PickupQueue, players: list[Member], **kwargs) -> None:
 		"""Create a match: fetch ratings, run captain selection and team setup,
 		update captain streaks (captain_role mode), assign house names, stash the
 		season number, and register it in bot.active_matches."""
@@ -136,7 +136,7 @@ class Match:
 		bot.active_matches.append(match)
 
 	@classmethod
-	async def fake_ranked_match(cls, ctx: bot.Context, queue: bot.Queue, qc: bot.QueueChannel, winners: list[Member], losers: list[Member], draw: bool = False, **kwargs) -> None:
+	async def fake_ranked_match(cls, ctx: bot.Context, queue: bot.PickupQueue, qc: bot.QueueChannel, winners: list[Member], losers: list[Member], draw: bool = False, **kwargs) -> None:
 		"""Build a match with a pre-decided winner/loser and register it as ranked
 		(used to inject a result without a live match, e.g. admin fixes)."""
 		players = winners + losers
@@ -206,7 +206,7 @@ class Match:
 
 		bot.active_matches.append(match)
 
-	def __init__(self, match_id: int, queue: bot.Queue, qc: bot.QueueChannel, players: list[Member], ratings: dict, **cfg):
+	def __init__(self, match_id: int, queue: bot.PickupQueue, qc: bot.QueueChannel, players: list[Member], ratings: dict, **cfg):
 		"""Initialize match state from merged config: build the two teams plus the
 		unpicked pool, and create the CheckIn, Draft, and Embeds sub-controllers."""
 		self.queue = queue
