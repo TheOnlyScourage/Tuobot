@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-End-of-season highlights — interesting stats pulled from match history.
+End-of-season highlights: interesting stats pulled from match history.
 
 Called from /admin stats season_end right BEFORE the channel reset deletes
 the underlying data. Returns a single embed that gets posted to the
 channel alongside the standings embed.
+
+Each query runs independently (see _safe) so one failing query can't take
+down the whole highlights embed.
 """
 
 from collections import Counter, defaultdict
@@ -14,8 +17,8 @@ from core.database import db
 from bot.constants import HOUSE_EMOJIS, SPECIALTY_ROLES as _SPECIALTY_ROLES
 
 
-# Quidditch specialty role IDs (must match values used elsewhere)
-# Specialty roles centralized in bot/constants.py — imported below
+# Quidditch specialty role IDs (must match values used elsewhere).
+# Specialty roles centralized in bot/constants.py (imported above).
 
 
 def _member_role_set(member):
@@ -32,7 +35,7 @@ def _member_role_set(member):
 async def _query_most_active(channel_id: int):
 	"""User_id with the most matches played this season."""
 	return await db.fetchall(
-		"SELECT pm.user_id, pm.nick, COUNT(*) as games "
+		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as games "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
 		"WHERE pm.channel_id=%s "
@@ -44,7 +47,7 @@ async def _query_most_active(channel_id: int):
 async def _query_most_wins(channel_id: int):
 	"""User_id with the most match wins this season."""
 	return await db.fetchall(
-		"SELECT pm.user_id, pm.nick, COUNT(*) as wins "
+		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as wins "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
 		"WHERE pm.channel_id=%s AND m.ranked=1 AND m.winner = pm.team "
@@ -91,14 +94,18 @@ async def _query_best_duo(channel_id: int):
 
 
 async def _query_most_improved(channel_id: int):
-	"""Player whose rating climbed the most across the season (best comeback)."""
-	# rating_before of their EARLIEST history row vs current rating
+	"""Player whose rating climbed the most across the season (best comeback).
+
+	Compares each player's current rating to the rating_before of their EARLIEST
+	match-linked history row. The min-games and non-null filtering is done in
+	Python to avoid a fragile HAVING-on-alias clause.
+	"""
 	rows = await db.fetchall(
 		"""
 		SELECT
 			p.user_id,
 			p.nick,
-			p.rating       AS current_rating,
+			p.rating AS current_rating,
 			(
 				SELECT h.rating_before
 				FROM qc_rating_history h
@@ -107,16 +114,63 @@ async def _query_most_improved(channel_id: int):
 				  AND h.match_id   IS NOT NULL
 				ORDER BY h.id ASC LIMIT 1
 			) AS first_rating,
-			p.wins + p.losses + p.draws AS games
+			(p.wins + p.losses + p.draws) AS games
 		FROM qc_players p
 		WHERE p.channel_id = %s AND p.rating IS NOT NULL
-		HAVING first_rating IS NOT NULL AND games >= 5
-		ORDER BY (current_rating - first_rating) DESC
-		LIMIT 5
 		""",
 		(channel_id,)
 	)
-	return rows
+	rows = [r for r in rows if r['first_rating'] is not None and r['games'] >= 5]
+	rows.sort(key=lambda r: (r['current_rating'] - r['first_rating']), reverse=True)
+	return rows[:5]
+
+
+async def _query_streaks(channel_id: int):
+	"""Longest win streak and longest losing streak this season (ranked matches).
+
+	Reconstructs each player's ordered W/L/D sequence from match history and
+	tracks the longest consecutive run of each. A draw (or unresolved winner)
+	breaks both streaks.
+	"""
+	rows = await db.fetchall(
+		"SELECT pm.user_id, pm.nick, pm.team, m.winner, m.at, m.match_id "
+		"FROM qc_player_matches pm "
+		"JOIN qc_matches m ON pm.match_id = m.match_id "
+		"WHERE pm.channel_id=%s AND m.ranked=1 "
+		"ORDER BY m.at ASC, m.match_id ASC",
+		(channel_id,)
+	)
+
+	seq = defaultdict(list)   # user_id -> ['W'/'L'/'D', ...] in chronological order
+	nick_of = {}              # user_id -> most recent nick
+	for r in rows:
+		nick_of[r['user_id']] = r['nick']
+		w = r['winner']
+		res = 'W' if w == r['team'] else ('L' if w in (0, 1) else 'D')
+		seq[r['user_id']].append(res)
+
+	best_win = None    # dict(nick, streak)
+	best_loss = None   # dict(nick, streak)
+	for uid, results in seq.items():
+		cur_w = cur_l = max_w = max_l = 0
+		for res in results:
+			if res == 'W':
+				cur_w += 1
+				cur_l = 0
+			elif res == 'L':
+				cur_l += 1
+				cur_w = 0
+			else:
+				cur_w = 0
+				cur_l = 0
+			max_w = max(max_w, cur_w)
+			max_l = max(max_l, cur_l)
+		if max_w and (best_win is None or max_w > best_win['streak']):
+			best_win = dict(nick=nick_of[uid], streak=max_w)
+		if max_l and (best_loss is None or max_l > best_loss['streak']):
+			best_loss = dict(nick=nick_of[uid], streak=max_l)
+
+	return dict(win=best_win, loss=best_loss)
 
 
 async def _query_role_winners(channel_id: int, guild):
@@ -127,7 +181,7 @@ async def _query_role_winners(channel_id: int, guild):
 
 	# Pull win counts per user_id (ranked only)
 	rows = await db.fetchall(
-		"SELECT pm.user_id, pm.nick, COUNT(*) as wins "
+		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as wins "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
 		"WHERE pm.channel_id=%s AND m.ranked=1 AND m.winner = pm.team "
@@ -161,35 +215,43 @@ async def _query_house_winner():
 	return None
 
 
+async def _safe(label, fn, *args):
+	"""Run one highlight query, logging and swallowing its error so a single
+	failing query can't take down the whole highlights embed."""
+	try:
+		return await fn(*args)
+	except Exception as e:
+		log.error(f"[season_highlights] {label} query failed: {e}")
+		return None
+
+
 async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
-	"""Build and return the season-highlights embed. Returns None on total failure."""
+	"""Build and return the season-highlights embed. Returns None if every
+	section is empty (or every query failed)."""
 	channel_id = ctx.qc.id
 	guild      = ctx.channel.guild if hasattr(ctx, 'channel') else None
 
-	try:
-		active        = await _query_most_active(channel_id)
-		winners       = await _query_most_wins(channel_id)
-		duo           = await _query_best_duo(channel_id)
-		improved      = await _query_most_improved(channel_id)
-		role_winners  = await _query_role_winners(channel_id, guild)
-		house_winner  = await _query_house_winner()
-	except Exception as e:
-		log.error(f"[season_highlights] query failed: {e}")
-		return None
+	active       = await _safe("most_active",   _query_most_active,   channel_id)
+	winners      = await _safe("most_wins",     _query_most_wins,     channel_id)
+	duo          = await _safe("best_duo",      _query_best_duo,      channel_id)
+	improved     = await _safe("most_improved", _query_most_improved, channel_id)
+	streaks      = await _safe("streaks",       _query_streaks,       channel_id)
+	role_winners = await _safe("role_winners",  _query_role_winners,  channel_id, guild)
+	house_winner = await _safe("house_winner",  _query_house_winner)
 
 	lines = []
 
 	if active:
 		top = active[0]
-		lines.append(f"\U0001f3c3 **Most Active** — `{top['nick']}` with **{top['games']}** matches")
+		lines.append(f"\U0001f3c3 **Most Active** \u2014 `{top['nick']}` with **{top['games']}** matches")
 
 	if winners:
 		top = winners[0]
-		lines.append(f"\U0001f3c6 **Most Wins** — `{top['nick']}` with **{top['wins']}** wins")
+		lines.append(f"\U0001f3c6 **Most Wins** \u2014 `{top['nick']}` with **{top['wins']}** wins")
 
 	if duo:
 		lines.append(
-			f"\U0001f465 **Best Duo** — `{duo['nick_a']}` & `{duo['nick_b']}` "
+			f"\U0001f465 **Best Duo** \u2014 `{duo['nick_a']}` & `{duo['nick_b']}` "
 			f"won **{duo['wins']}** matches together"
 		)
 
@@ -198,9 +260,23 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 		gain = top['current_rating'] - top['first_rating']
 		if gain > 0:
 			lines.append(
-				f"\U0001f4c8 **Most Improved** — `{top['nick']}` "
+				f"\U0001f4c8 **Most Improved** \u2014 `{top['nick']}` "
 				f"climbed **+{gain}** MMR ({top['first_rating']} \u2192 {top['current_rating']})"
 			)
+
+	if streaks and streaks.get('win') and streaks['win']['streak'] >= 3:
+		w = streaks['win']
+		lines.append(
+			f"\U0001f525 **Longest Win Streak** \u2014 `{w['nick']}` "
+			f"with **{w['streak']}** in a row"
+		)
+
+	if streaks and streaks.get('loss') and streaks['loss']['streak'] >= 3:
+		losing = streaks['loss']
+		lines.append(
+			f"\U0001f9ca **Longest Losing Streak** \u2014 `{losing['nick']}` "
+			f"with **{losing['streak']}** in a row"
+		)
 
 	if role_winners:
 		role_icons = {'Seeker': '\U0001f441\ufe0f', 'Beater': '\U0001f3cf', 'Keeper': '\U0001f945'}
@@ -208,12 +284,12 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 			if role in role_winners:
 				w = role_winners[role]
 				icon = role_icons.get(role, '\u2b50')
-				lines.append(f"{icon} **Best {role}** — `{w['nick']}` with **{w['wins']}** wins")
+				lines.append(f"{icon} **Best {role}** \u2014 `{w['nick']}` with **{w['wins']}** wins")
 
 	if house_winner:
 		emoji = HOUSE_EMOJIS.get(house_winner['house'], '')
 		lines.append(
-			f"{emoji} **House Cup Winner** — **{house_winner['house']}** "
+			f"{emoji} **House Cup Winner** \u2014 **{house_winner['house']}** "
 			f"with **{house_winner['points']}** points"
 		)
 
