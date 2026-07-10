@@ -426,9 +426,27 @@ async def season_end(ctx, min_matches: int = 15):
 		from core.console import log
 		log.error(f"[season_highlights] failed to build/post embed: {e}")
 
+	# Build & post the House Cup winner embed (also before the reset)
+	try:
+		from bot.stats.season_highlights import build_house_cup_embed
+		house_cup = await build_house_cup_embed(season_num)
+		if house_cup is not None:
+			await ctx.channel.send(embed=house_cup)
+	except Exception as e:
+		from core.console import log
+		log.error(f"[house_cup] failed to build/post embed: {e}")
+
 	# Reset all ratings and match stats for this channel
 	import bot
 	await bot.stats.reset_channel(ctx.qc.id)
+
+	# Reset house points for the new season (mirrors the MMR reset above)
+	try:
+		from bot.stats.house_points import reset_all
+		await reset_all()
+	except Exception as e:
+		from core.console import log
+		log.error(f"[house_points] season reset failed: {e}")
 
 	# Record the season end
 	await record_season_end(ctx.qc.id, season_num)
