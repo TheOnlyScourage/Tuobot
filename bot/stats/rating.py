@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-import glicko2
-import trueskill
+"""Per-channel rating storage and maintenance for a queue: fetching/seeding
+ratings, admin adjustments, weekly decay, rank snapping, and season reset. The
+MMR formula itself lives in bot/stats/mmr_engine.py."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import time
 
 from core.database import db
@@ -8,15 +13,23 @@ from core.utils import find, get_nick
 
 from bot.stats import stats
 
+if TYPE_CHECKING:
+	from nextcord import Member
 
-class BaseRating:
+
+class Rating:
+	"""Per-channel rating store (table qc_players): fetches/seeds player ratings,
+	applies admin rating adjustments, weekly decay, rank snapping, and season
+	reset. The per-match MMR change is computed in bot/stats/mmr_engine.py."""
 
 	table = "qc_players"
 
 	def __init__(
-			self, channel_id, init_rp=1500, init_deviation=300, min_deviation=None, scale=100,
-			loss_scale=100, win_scale=100, draw_bonus=0, ws_boost=False, ls_boost=False
+			self, channel_id: int, init_rp: int = 1500, init_deviation: int = 300, min_deviation: int | None = None, scale: int = 100,
+			loss_scale: int = 100, win_scale: int = 100, draw_bonus: int = 0, ws_boost: bool = False, ls_boost: bool = False
 	):
+		"""Configure the rating store from queue config. The scaling knobs are kept
+		for config compatibility but no longer affect MMR (see mmr_engine.py)."""
 		self.channel_id = channel_id
 		self.init_rp = init_rp
 		self.init_deviation = init_deviation
@@ -28,40 +41,7 @@ class BaseRating:
 		self.ws_boost = ws_boost
 		self.ls_boost = ls_boost
 
-	def _scale_win(self, r_change):
-		return r_change * self.win_scale
-
-	def _scale_loss(self, r_change):
-		return r_change * self.loss_scale
-
-	def _scale_draw(self, r_change):
-		return r_change + (abs(r_change) * self.draw_bonus)
-
-	def _scale_changes(self, player, r_change, d_change, score):
-		p = player.copy()
-
-		if score == -1:
-			r_change = self._scale_loss(r_change) * self.scale
-			p['losses'] += 1
-			p['streak'] = -1 if p['streak'] >= 0 else p['streak'] - 1
-			if self.ls_boost and p['streak'] < -2:
-				r_change = r_change * (min(abs(p['streak']), 6) / 2)
-		elif score == 0:
-			r_change = self._scale_draw(r_change) * self.scale
-			p['draws'] += 1
-			p['streak'] = 0
-		elif score == 1:
-			r_change = self._scale_win(r_change) * self.scale
-			p['wins'] += 1
-			p['streak'] = 1 if p['streak'] <= 0 else p['streak'] + 1
-			if self.ws_boost and p['streak'] > 2:
-				r_change = r_change * (min(p['streak'], 6) / 2)
-
-		p['rating'] = max(0, round(p['rating'] + r_change))
-		p['deviation'] = max(self.min_deviation, round(p['deviation'] + d_change))
-		return p
-
-	async def get_players(self, user_ids):
+	async def get_players(self, user_ids) -> list[dict]:
 		""" Return rating or initial rating for each member """
 		data = await db.select(
 			['user_id', 'rating', 'deviation', 'channel_id', 'wins', 'losses', 'draws', 'streak'], self.table,
@@ -83,7 +63,9 @@ class BaseRating:
 			results.append(d)
 		return results
 
-	async def set_rating(self, member, rating=None, deviation=None, penality=0, reason=None):
+	async def set_rating(self, member: Member, rating: int | None = None, deviation: int | None = None, penality: int = 0, reason: str | None = None) -> None:
+		"""Admin-set a rating (optionally with a penalty), inserting the row if the
+		player is new, and record the change in qc_rating_history."""
 		old = await db.select_one(
 			('rating', 'deviation'), self.table,
 			where=dict(channel_id=self.channel_id, user_id=member.id)
@@ -119,10 +101,13 @@ class BaseRating:
 			)
 		)
 
-	async def hide_player(self, user_id, hide=True):
+	async def hide_player(self, user_id: int, hide: bool = True) -> None:
+		"""Flag a player hidden (excluded from leaderboards) or unhidden."""
 		await db.update(self.table, dict(is_hidden=hide), keys=dict(channel_id=self.channel_id, user_id=user_id))
 
-	async def snap_ratings(self, ranks_table):
+	async def snap_ratings(self, ranks_table: list[dict]) -> None:
+		"""Snap every rating down to the nearest rank threshold at or below it
+		(floored at the lowest rank), recording each change in history."""
 		ranks = [i['rating'] for i in ranks_table if i['rating'] != 0]
 		lowest = min(ranks)
 		data = await db.select(('*',), self.table, where=dict(channel_id=self.channel_id))
@@ -145,7 +130,7 @@ class BaseRating:
 		await db.insert_many(self.table, data, on_dublicate='replace')
 		await db.insert_many('qc_rating_history', history)
 
-	async def apply_decay(self, rating, deviation, ranks_table):
+	async def apply_decay(self, rating: int, deviation: int, ranks_table: list[dict]) -> None:
 		""" Apply weekly rating and deviation decay """
 		now = int(time.time())
 		ranks = [i['rating'] for i in ranks_table if i['rating'] != 0]
@@ -185,7 +170,9 @@ class BaseRating:
 			await db.insert_many('qc_rating_history', history)
 			await db.insert_many(self.table, to_update, on_dublicate='replace')
 
-	async def reset(self):
+	async def reset(self) -> None:
+		"""Clear all ratings/deviations for the channel (set to NULL), recording a
+		reset in history for anyone who had a non-default rating."""
 		data = await db.select(('user_id', 'rating', 'deviation'), self.table, where=dict(channel_id=self.channel_id))
 		history = []
 		now = int(time.time())
@@ -209,145 +196,3 @@ class BaseRating:
 		)
 		if len(history):
 			await db.insert_many('qc_rating_history', history)
-
-
-class FlatRating(BaseRating):
-
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-
-	def _scale_draw(self, r_change):
-		return 10 * self.draw_bonus
-
-	def rate(self, winners, losers, draw=False):
-		r1, r2 = [], []
-		if not draw:
-			for p in winners:
-				new = self._scale_changes(p, 10, 0, 1)
-				r1.append(new)
-
-			for p in losers:
-				new = self._scale_changes(p, -10, 0, -1)
-				r2.append(new)
-		else:
-			r1 = [self._scale_changes(p, 0, 0, 0) for p in winners]
-			r2 = [self._scale_changes(p, 0, 0, 0) for p in losers]
-
-		return [r1, r2]
-
-
-class Glicko2Rating(BaseRating):
-
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-
-	def rate(self, winners, losers, draw=False):
-		score_w = 0.5 if draw else 1
-		score_l = 0.5 if draw else 0
-		r1, r2 = [], []
-		print("Scores:")
-		print(score_l, score_w)
-
-		avg_w = [
-			[int(sum((p['rating'] for p in winners)) / len(winners))],  # average rating
-			[int(sum((p['deviation'] for p in winners)) / len(winners))],  # average deviation
-			[score_l]
-		]
-		avg_l = [
-			[int(sum((p['rating'] for p in losers)) / len(losers))],  # average rating
-			[int(sum((p['deviation'] for p in losers)) / len(losers))],  # average deviation
-			[score_w]
-		]
-
-		po = glicko2.Player()
-		for p in winners:
-			po.setRating(avg_w[0][0])
-			po.setRd(p['deviation'])
-			po.update_player(*avg_l)
-			new = self._scale_changes(p, po.getRating() - avg_w[0][0], po.getRd() - p['deviation'], 0 if draw else 1)
-			r1.append(new)
-
-		for p in losers:
-			po.setRating(avg_l[0][0])
-			po.setRd(p['deviation'])
-			po.update_player(*avg_w)
-			new = self._scale_changes(p, po.getRating() - avg_l[0][0], po.getRd() - p['deviation'], 0 if draw else -1)
-			r2.append(new)
-
-		return [r1, r2]
-
-
-class TrueSkillRating(BaseRating):
-
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.ts = trueskill.TrueSkill(
-			mu=self.init_rp, sigma=self.init_deviation,
-			beta=int(self.init_deviation/2), tau=int(self.init_deviation/100)
-		)
-
-	def rate(self, winners, losers, draw=False):
-		g1 = [self.ts.create_rating(mu=p['rating'], sigma=p['deviation']) for p in winners]
-		g2 = [self.ts.create_rating(mu=p['rating'], sigma=p['deviation']) for p in losers]
-		r1, r2 = [], []
-
-		ranks = [0, 0] if draw else [0, 1]
-		g1, g2 = (list(i) for i in self.ts.rate((g1, g2), ranks=ranks))
-
-		for p in winners:
-			res = g1.pop(0)
-			new = self._scale_changes(p, res.mu - p['rating'], res.sigma - p['deviation'], 0 if draw else 1)
-			r1.append(new)
-
-		for p in losers:
-			res = g2.pop(0)
-			new = self._scale_changes(p, res.mu - p['rating'], res.sigma - p['deviation'], 0 if draw else -1)
-			r2.append(new)
-
-		return [r1, r2]
-
-
-class AoE2Rating(BaseRating):
-	"""AoE2 DE-style Elo: individual rating vs opponent team average, K=32/team_size."""
-
-	BASE_K = 32
-	PLACEMENT_THRESHOLD = 10
-	PLACEMENT_MULTIPLIER = 3
-
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-
-	def rate(self, winners, losers, draw=False):
-		team_size = max(len(winners), len(losers))
-		k = max(self.BASE_K / team_size, 4)
-
-		winner_avg = sum(p['rating'] for p in winners) / len(winners)
-		loser_avg = sum(p['rating'] for p in losers) / len(losers)
-
-		r1, r2 = [], []
-
-		for p in winners:
-			expected = 1.0 / (1.0 + 10.0 ** ((loser_avg - p['rating']) / 400.0))
-			actual = 0.5 if draw else 1.0
-			raw_change = k * (actual - expected)
-
-			games_played = p['wins'] + p['losses'] + p['draws']
-			if games_played < self.PLACEMENT_THRESHOLD:
-				raw_change *= self.PLACEMENT_MULTIPLIER
-
-			new = self._scale_changes(p, raw_change, 0, 0 if draw else 1)
-			r1.append(new)
-
-		for p in losers:
-			expected = 1.0 / (1.0 + 10.0 ** ((winner_avg - p['rating']) / 400.0))
-			actual = 0.5 if draw else 0.0
-			raw_change = k * (actual - expected)
-
-			games_played = p['wins'] + p['losses'] + p['draws']
-			if games_played < self.PLACEMENT_THRESHOLD:
-				raw_change *= self.PLACEMENT_MULTIPLIER
-
-			new = self._scale_changes(p, raw_change, 0, 0 if draw else -1)
-			r2.append(new)
-
-		return [r1, r2]
