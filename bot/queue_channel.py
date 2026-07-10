@@ -12,7 +12,7 @@ from core.database import db
 
 import bot
 from bot.constants import MAX_NICK_LEN
-from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating, AoE2Rating
+from bot.stats.rating import Rating
 
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
@@ -34,13 +34,6 @@ class Perms(Enum):
 
 
 class QueueChannel:
-
-	rating_names = {
-		'flat': FlatRating,
-		'Glicko2': Glicko2Rating,
-		'TrueSkill': TrueSkillRating,
-		'AoE2': AoE2Rating
-	}
 
 	cfg_factory = CfgFactory(
 		table=FactoryTable(name='qc_configs', p_key="channel_id"),
@@ -140,16 +133,6 @@ class QueueChannel:
 				display="Description",
 				section="General",
 				description="Set an answer on '!help' command."
-			),
-			Variables.OptionVar(
-				"rating_system",
-				display="Rating system",
-				section="Rating",
-				description="Set player's rating calculation method.",
-				options=rating_names.keys(),
-				default="AoE2",
-				notnull=True,
-				on_change=bot.update_rating_system
 			),
 			Variables.TextChanVar(
 				"rating_channel",
@@ -345,7 +328,7 @@ class QueueChannel:
 		self.id = text_channel.id
 		self.guild_id = text_channel.guild.id
 		self.gt = locales[self.cfg.lang]
-		self.rating = self.rating_names[self.cfg.rating_system](
+		self.rating = Rating(
 			channel_id=(self.cfg.rating_channel or text_channel).id,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
@@ -370,7 +353,7 @@ class QueueChannel:
 		self.gt = locales[self.cfg.lang]
 
 	def update_rating_system(self):
-		self.rating = self.rating_names[self.cfg.rating_system](
+		self.rating = Rating(
 			channel_id=(self.cfg.rating_channel or self).id,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
