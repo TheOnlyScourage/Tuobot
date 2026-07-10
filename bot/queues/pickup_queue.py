@@ -240,37 +240,6 @@ class PickupQueue:
 				section="General",
 				description="Set a custom match life time before it times out. Default: 3 hours."
 			),
-			Variables.IntVar(
-				"map_count",
-				display="Map count",
-				section="Maps",
-				default=1,
-				verify=lambda n: 0 <= n <= 15,
-				verify_message="Maps number must be between 0 and 5.",
-				description="Number of maps to show on match start."
-			),
-			Variables.IntVar(
-				"map_cooldown",
-				display="Map cooldown",
-				section="Maps",
-				default=1,
-				notnull=True,
-				verify=lambda n: 0 <= n <= 100,
-				verify_message="Map cooldown number must be between 0 and 100.",
-				description="\n".join([
-					"Prefer to not choose last played map(s) for the next specified matches amount.",
-					"Set 0 to disable."
-				])
-			),
-			Variables.IntVar(
-				"vote_maps",
-				display="Vote poll map count",
-				section="Maps",
-				default=None,
-				verify=lambda n: 2 <= n <= 9,
-				verify_message="Vote maps number must be between 2 and 9.",
-				description="Set to enable map voting, this requires check-in timeout to be set."
-			),
 			VariableTable(
 				"aliases", display="Aliases", section="General",
 				description="Other names for this queue.",
@@ -278,13 +247,6 @@ class PickupQueue:
 					Variables.StrVar("alias", notnull=True)
 				]
 			),
-			VariableTable(
-				"maps", display="Maps", section="Maps",
-				description="List of maps to choose from.",
-				variables=[
-					Variables.StrVar("name", notnull=True)
-				]
-			)
 		]
 	)
 
@@ -333,7 +295,6 @@ class PickupQueue:
 		self.id = self.cfg.p_key
 		self.queue = []
 		self.standby = []  # players who add while a match is in check-in or draft
-		self.last_maps = []
 
 	@property
 	def name(self):
@@ -358,8 +319,7 @@ class PickupQueue:
 			ranked=self.cfg.ranked, pick_captains=self.cfg.pick_captains,
 			captains_role_id=self.cfg.captains_role.id if self.cfg.captains_role else None,
 			pick_teams=self.cfg.pick_teams, pick_order=self.cfg.pick_order,
-			maps=[i['name'] for i in self.cfg.maps], vote_maps=self.cfg.vote_maps,
-			map_count=self.cfg.map_count, check_in_timeout=self.cfg.check_in_timeout,
+			check_in_timeout=self.cfg.check_in_timeout,
 			check_in_discard=self.cfg.check_in_discard, check_in_discard_immediately=self.cfg.check_in_discard_immediately,
 			match_lifetime=self.cfg.match_lifetime,
 			start_msg=self.cfg.start_msg, server=self.cfg.server
