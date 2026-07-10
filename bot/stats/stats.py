@@ -103,8 +103,7 @@ async def init_stats_tables():
             dict(cname="ranked",      ctype=db.types.bool),
             dict(cname="winner",      ctype=db.types.bool),
             dict(cname="alpha_score", ctype=db.types.int),
-            dict(cname="beta_score",  ctype=db.types.int),
-            dict(cname="maps",        ctype=db.types.str)
+            dict(cname="beta_score",  ctype=db.types.int)
         ],
         primary_keys=["match_id"]
     ))
@@ -155,7 +154,7 @@ async def register_match_unranked(ctx, m):
         match_id=m.id, channel_id=m.qc.id,
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
         alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
-        at=int(time.time()), ranked=0, winner=None, maps="\n".join(m.maps)
+        at=int(time.time()), ranked=0, winner=None
     ))
     await db.insert_many('qc_players', (
         dict(channel_id=m.qc.id, user_id=p.id)
@@ -178,8 +177,7 @@ async def register_match_ranked(ctx, m):
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
         alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
         at=now, ranked=1, winner=m.winner,
-        alpha_score=m.scores[0], beta_score=m.scores[1],
-        maps="\n".join(m.maps)
+        alpha_score=m.scores[0], beta_score=m.scores[1]
     ))
     # Ensure all players exist in qc_players
     init_dev = getattr(m.qc.rating, 'init_deviation', 350) or 350
