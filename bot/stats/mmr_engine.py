@@ -2,8 +2,8 @@
 """
 Custom Q6 MMR engine.
 
-The base PUBobot stats system uses a TrueSkill / Glicko2 rating model
-internally. We layer a custom MMR delta on top so the user-facing rating
+Q6 replaces the original PUBobot TrueSkill/Glicko2 model entirely with this
+custom MMR delta, so the user-facing rating
 changes match Q6's "feel": flat rewards for captains, scaled for upset
 wins/losses, multiplied by streaks.
 
