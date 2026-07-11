@@ -152,14 +152,20 @@ async def phrases_clear(ctx: bot.Context, player: Member) -> None:
 
 
 async def undo_match(ctx: bot.Context, match_id: int) -> None:
-	"""Reverse a recorded match by id, rolling back its rating changes."""
+	"""Reverse a recorded match by id, rolling back its rating changes and any
+	Hogwarts house points it awarded (via the house_awards ledger)."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 
+	# None = match not found; a dict (possibly empty) = undone, with any
+	# reverted house points listed. `if result:` would misread {} as failure.
 	result = await bot.stats.undo_match(ctx, match_id)
-	if result:
-		await ctx.success(ctx.qc.gt("Done."))
-	else:
+	if result is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id."))
+	msg = ctx.qc.gt("Done.")
+	if result:
+		reverted = ", ".join(f"{house} -{points}" for house, points in result.items())
+		msg += f" House points reverted: {reverted}."
+	await ctx.success(msg)
 
 
 async def douche_add(ctx: bot.Context, player: Member, target: Member) -> None:
