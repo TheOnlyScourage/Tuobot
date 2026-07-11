@@ -1,10 +1,12 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude (and Claude Code) when working with code in this repository.
 
 ## Project
 
-NammaPUBobot — a fork of PUBobot2, a Discord bot for organizing AoE2 pickup games. Built with Python 3.11 (Railway Dockerfile ships 3.11-slim, `ruff.toml` targets py311), nextcord (discord library), aiomysql, and MySQL.
+**Tuobot** — a Discord pickup-queue bot for a **Q6 (Quidditch 6v6)** community, purpose-built for the LEAGUE7 server. It began as a fork of PUBobot2 → NammaPUBobot (an AoE2 pickup bot) and has been progressively reshaped into a Quidditch-specific bot with a custom MMR system, Hogwarts house points, and specialty-role features. Built with **Python 3.11** (Railway `Dockerfile` ships `python:3.11-slim`; `ruff.toml` targets `py311`), **nextcord** (Discord library), **aiomysql**, and **MySQL**.
+
+A sibling bot, **Niffler** (a.k.a. Q6 Cards Bot, maintained by a collaborator), serves the same community; a shared-economy integration between the two is planned but not yet built.
 
 ## Running the Bot
 
@@ -12,27 +14,26 @@ NammaPUBobot — a fork of PUBobot2, a Discord bot for organizing AoE2 pickup ga
 # Install dependencies
 pip3 install -r requirements.txt
 
-# Configure: copy and fill in credentials
+# Configure: copy and fill in credentials (config.cfg is raw Python, loaded via SourceFileLoader)
 cp config.example.cfg config.cfg
 
 # Run directly
 python3 PUBobot2.py
 
-# Or via Railway wrapper (generates config.cfg from env vars, then runs the bot)
+# Or via the Railway wrapper (generates config.cfg from env vars, then runs the bot)
 python3 start.py
 ```
 
-## Linting & Tests
+`PUBobot2.py` is the entrypoint; Railway runs `start.py` (its `Dockerfile` CMD). In practice the bot is edited via the GitHub web editor and auto-deploys to Railway.
+
+## Linting
 
 ```bash
-# Lint (config lives in ruff.toml; line-length 120, tab indent)
+# Lint — config in ruff.toml (line-length 120, TAB indentation, target py311)
 ruff check .
-
-# Run the pytest suite (pure-function tests for elo_sync/civ_sync parsers)
-pytest tests/
 ```
 
-CI runs both on every PR via `.github/workflows/ci.yml`.
+There is **no test suite** (the old pytest/`tests/` for the removed AoE2 civ/elo parsers is gone). CI runs `ruff check .` on every PR via `.github/workflows/ci.yml`. Keep the tree ruff-green.
 
 ## Architecture
 
@@ -40,45 +41,55 @@ CI runs both on every PR via `.github/workflows/ci.yml`.
 `PUBobot2.py` is the entrypoint. It:
 1. Loads `core/config.py` (imports `config.cfg` as a Python module via `SourceFileLoader`)
 2. Connects to MySQL via `core/database.py` → `core/DBAdapters/mysql.py` (aiomysql pool)
-3. Imports `bot/` which registers all commands and event handlers
-4. Starts the asyncio event loop with a 1-second `think()` tick and the Discord client
+3. Imports `bot/`, which registers all commands and event handlers, and runs `bot/db_init.py` to ensure every table exists
+4. Starts the asyncio loop with a 1-second `think()` tick alongside the Discord client
 
 ### Core layer (`core/`)
-- **`config.py`** — Loads `config.cfg` as a Python module (not INI/YAML — it's raw Python)
-- **`client.py`** — `DiscordClient` subclass of `nextcord.Client`. Custom event system allowing multiple handlers per event. Command registry via `@dc.command()` decorator
-- **`database.py`** — Initializes the DB adapter from `DB_URI` (only MySQL adapter exists)
-- **`cfg_factory.py`** — Generic config system: `CfgFactory` manages typed variables stored in MySQL, used by both `QueueChannel` and `PickupQueue` for per-channel/per-queue settings
+- **`config.py`** — loads `config.cfg` as a Python module (not INI/YAML — raw Python)
+- **`client.py`** — `DiscordClient` subclass of `nextcord.Client`; custom event system allowing multiple handlers per event, plus the `@dc.command()` / `@dc.event` registry
+- **`database.py`** → **`DBAdapters/mysql.py`** — async MySQL access (aiomysql pool). The single adapter instance is `core.database.db`
+- **`cfg_factory.py`** — generic typed-config system (`CfgFactory`): per-channel and per-queue settings stored in MySQL, used by both `QueueChannel` and `PickupQueue`
+- **`console.py`** — logging (`log`), **`locales.py`** — translation lookups (`gt`), **`utils.py`** — shared helpers (`find`, `get`, `get_nick`, `seconds_to_str`, `parse_duration`, etc.)
 
 ### Bot layer (`bot/`)
-- **`bot/__init__.py`** — Global state: `queue_channels` dict, `active_queues`, `active_matches`, `waiting_reactions`
-- **`bot/events.py`** — Discord event handlers: `on_ready` loads queue channels from DB, `on_think` runs match/expire/noadds ticks, `on_presence_update` removes offline/afk players
-- **`bot/queue_channel.py`** — `QueueChannel` class: represents a Discord channel with pickup queues. Manages its own `CfgFactory` config and list of `PickupQueue` instances
-- **`bot/queues/pickup_queue.py`** — `PickupQueue`: player queue that starts a `Match` when full
-- **`bot/match/match.py`** — `Match` lifecycle: INIT → CHECK_IN → DRAFT → WAITING_REPORT. Contains `Team`, `CheckIn`, `Draft`, `Embeds` helpers
-- **`bot/commands/`** — Command implementations (config, queues, matches, stats, admin, misc). Imported via `__init__.py` star imports
-- **`bot/context/`** — Command context abstraction:
-  - `slash/` — Slash command definitions in `commands.py`, autocomplete in `autocomplete.py`, command groups in `groups.py`
-  - (The legacy `!command` `bot/context/message/` handler was removed in Layer 5 — every prior `!cmd` has a slash equivalent prefixed `namma_`.)
-- **`bot/stats/`** — Stats tracking, rating systems (Flat, Glicko2, TrueSkill)
-- **`bot/civ_stats.py`** — Loads `data/player_civ_stats.csv` and `data/civ_elo_stats.csv` at import time. Provides `get_player_civs()` lookup, `pick_balanced_teams()` for randomized civ pools, and `get_today_civs()` for channel history scanning
-- **`bot/web.py`** — Web dashboard server (aiohttp). Discord OAuth2 login, session management, REST API for channel/queue config CRUD, civ stats API. Serves `bot/web_page.html`
-- **`bot/web_page.html`** — Self-contained SPA (inline CSS + JS). Two tabs: Civ Stats (public) and Dashboard (authenticated). Config forms auto-generated from CfgFactory variable types
+- **`bot/__init__.py`** — global state: `queue_channels` (the central `channel_id → QueueChannel` dict), `active_matches`, `active_queues`, `expire`, plus re-exports (`Match`, `PickupQueue`, `QueueChannel`, `Context`, `Exc`, `commands`, `stats`, …)
+- **`bot/main.py`** — the run loop and **state persistence**: `save_state()`/`load_state()` write to a MySQL `saved_state` table (survives Railway redeploys) with a local `saved_state.json` fallback; also `update_rating_system()`
+- **`bot/db_init.py`** — one place that ensures all tables exist at startup
+- **`bot/constants.py`** — centralized IDs and tunables: Discord role/emoji IDs, rank-emoji thresholds, MMR params, house-point values, specialty-role maps
+- **`bot/events.py`** — Discord event handlers: `on_ready` loads queue channels from the DB, `on_think` runs match/expire/noadds/alerts ticks, `on_presence_update` removes offline players (the older AFK auto-kick was removed)
+- **`bot/queue_channel.py`** — `QueueChannel`: a Discord channel with pickup queues; owns its `CfgFactory` config, its `Rating` instance, and its list of `PickupQueue`s
+- **`bot/queues/pickup_queue.py`** — `PickupQueue`: a player queue that spawns a `Match` when full (`common.py` holds `QueueResponses`/`Qr`)
+- **`bot/match/`** — the `Match` lifecycle (`INIT → CHECK_IN → DRAFT → WAITING_REPORT`):
+  - `match.py` (`Match` + `Team`), `check_in.py` (ready-up / race-to-ready / standby fill / abort), `draft.py` (captain picks), `standby.py` (race-to-ready standby fill), `embeds.py` (all match embeds), `captain_selection.py` (captain-role pick logic + streak cooldowns), `party_code.py`, `subbing.py` (pure `/subauto` selection helper)
+- **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`
+- **`bot/context/`** — command-context abstraction:
+  - `slash/` — the primary interface: command definitions in `commands.py` (thin wrappers over `bot/commands/` via `run_slash()`), autocomplete in `autocomplete.py`, subcommand groups in `groups.py`, `SlashContext` in `context.py`
+  - `message/` — a **minimal** `MessageContext` kept only to support the `++` / `--` add/remove shorthand; the full `!command` system was removed (slash-only)
+- **`bot/stats/`** — stats, rating, and season logic:
+  - `mmr_engine.py` — **the single source of truth for the MMR formula** (`compute_mmr_changes`): flat captain rewards, upset scaling, streak multipliers
+  - `rating.py` — a single `Rating` class: per-channel rating **storage/maintenance** (fetch/seed, admin adjustments, weekly decay, rank snapping, season reset). It does *not* compute match deltas — `mmr_engine` does
+  - `stats.py` — table setup + ranked/unranked match registration + admin undo/reset + leaderboard queries + the weekly decay job (this file uses **spaces**, unlike the rest of the bot)
+  - `season.py`, `season_highlights.py` (end-of-season superlatives incl. win/loss streaks + the House Cup embed), `house_points.py` (Hogwarts House Cup), `captain_streak.py`, `checkin_tracker.py` (check-in violations → auto-ban), `noadds.py` (queue bans + phrases)
+- **`bot/alerts.py`** — the "41 alert system": watches active matches and pings the queue when a draft finishes inside the scheduled window
+- **`bot/douche.py`** — a light per-guild "douche" moderation log (received/given counts + leaderboard)
+- **`bot/expire.py`** — per-player expire timers; **`bot/exceptions.py`** — the `Exc` exception hierarchy
+- **`bot/web.py`** — an optional aiohttp server: a health-check endpoint plus an OAuth2 config dashboard (MySQL-backed sessions), gated on `WS_ENABLE` and the OAuth env vars. Off by default
 
-### Utils (`utils/`)
-Standalone analysis scripts (not imported by the bot at runtime):
-- `civ_analysis.py` — Async civ performance analyzer using aiohttp + aiomysql
-- `analyze_matches.py` — DB match analysis tool
-- `db_helpers.py` — Shared `create_pool()` and `parse_db_uri()` for utility scripts
+### Q6-specific feature set
+Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ranked wins, reset per season), **specialty roles** (Seeker / Beater / Keeper) surfaced in embeds and season awards, **captain streak** cooldowns, **standby race-to-ready** fill, a **season** lifecycle (`/season_start` ↔ `/season_end` with standings, highlights, streaks, and House Cup), **check-in violation** tracking with rolling auto-bans, **party codes**, the **41 alert** system, and **douche** tracking.
 
-### Command registration pattern
-Slash commands are defined in `bot/context/slash/commands.py`. Each wraps a handler from `bot/commands/` via `run_slash()`, which handles interaction timing, context creation, and error formatting. Admin commands use subcommand groups defined in `bot/context/slash/groups.py`.
+### Utils & scripts
+Standalone tools, not imported by the running bot:
+- `utils/import_pubobot_export.py` — one-off migration: imports a PUBobot CSV export (`--export-dir`) into MySQL; `utils/db_helpers.py` — shared pool/URI helpers
+- `scripts/backup_db.sh` — DB backup helper
 
-### Key conventions
-- Bot uses tabs for indentation throughout the original codebase; newer files in `utils/` and `bot/civ_stats.py` use 4-space indentation
-- Config is a `.cfg` file but is actually Python source loaded via `SourceFileLoader`
-- All DB access is async through `core/database.db` (the adapter instance)
-- `bot.queue_channels` is the central dict mapping `channel_id → QueueChannel`
-- State is persisted to `saved_state.json` on shutdown and restored on startup
-- Deployment target is Railway (see `railway.toml`, `Dockerfile`, `start.py`)
-- Web dashboard requires `WS_ENABLE=True`, `WS_ROOT_URL`, `DC_CLIENT_SECRET` env vars. OAuth2 redirect URL must be registered in Discord Developer Portal as `{WS_ROOT_URL}/auth/callback`
-- `start.py` generates `config.cfg` from env vars — any new config vars need corresponding entries in its template
+## Key conventions
+- **Indentation: tabs** throughout, with one exception — `bot/stats/stats.py` uses 4-space indentation. Match the file you're editing.
+- **The MMR formula lives only in `bot/stats/mmr_engine.py`.** `rating.py` is storage/decay; don't reintroduce a second rating path.
+- Config is a `.cfg` file but is actually **Python source** loaded via `SourceFileLoader`. New config vars also need entries in `start.py`'s template (it generates `config.cfg` from Railway env vars).
+- All DB access is async through **`core.database.db`**. Removing a `CfgFactory` variable is safe — the loader reads *defined* variables, so a dropped column is just orphaned, not fatal.
+- **`bot.queue_channels`** is the central `channel_id → QueueChannel` dict. State persists to the MySQL `saved_state` table (+ `saved_state.json` fallback) and is restored on startup.
+- Deployment target is **Railway** (`railway.toml`, `Dockerfile`, `start.py`).
+
+### Not in this codebase (removed — don't go looking)
+The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `tests/` pytest suite have all been removed. Stale references may still linger in comments; the code paths are gone.
