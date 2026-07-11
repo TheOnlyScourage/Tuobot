@@ -655,7 +655,8 @@ class Match:
 			try:
 				from bot.stats.house_points import award_for_win
 				winning_team = self.teams[self.winner]
-				awarded = await award_for_win(winning_team)
+				# match_id makes the award reversible via the house_awards ledger.
+				awarded = await award_for_win(winning_team, self.id)
 				if awarded:
 					await self._post_house_award_embed(ctx, awarded)
 			except Exception as e:
