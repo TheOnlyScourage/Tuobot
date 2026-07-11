@@ -20,7 +20,7 @@ async def init_all_tables():
 	"""
 	from bot.stats.checkin_tracker import init_checkin_tracker_table
 	from bot.stats.season         import init_season_table
-	from bot.stats.house_points   import init_house_points_table
+	from bot.stats.house_points   import init_house_points_table, init_house_awards_table
 	from bot.stats.captain_streak import init_captain_streak_table
 	from bot.main                 import init_saved_state_table
 
@@ -29,6 +29,7 @@ async def init_all_tables():
 		('season_info',        init_season_table),
 		('saved_state',        init_saved_state_table),
 		('house_points',       init_house_points_table),
+		('house_awards',       init_house_awards_table),
 		('captain_streak',     init_captain_streak_table),
 	]
 
