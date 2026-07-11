@@ -209,7 +209,10 @@ async def on_presence_update(before, after):
 
 @dc.event
 async def on_member_remove(member):
-	for qc in filter(lambda i: i.id == member.guild.id, bot.queue_channels.values()):
+	# NOTE: qc.id is the TEXT CHANNEL id; qc.guild_id is the guild. This used
+	# to compare qc.id == guild.id, which never matched — so players who left
+	# (or were kicked/banned from) the server silently stayed in queues.
+	for qc in filter(lambda i: i.guild_id == member.guild.id, bot.queue_channels.values()):
 		await qc.remove_members(member, reason="left guild")
 
 # ── 41 Alert background task ──────────────────────────────────────────────────
