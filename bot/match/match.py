@@ -17,7 +17,7 @@ from nextcord import DiscordException, Embed, Colour
 import bot
 from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID
 from core.utils import find, get, join_and, get_nick
-from core.console import log  # noqa: F401
+from core.console import log
 from core.client import dc
 
 from .check_in import CheckIn
@@ -76,10 +76,6 @@ class Match:
 		def add(self, p: Member) -> None:
 			if p not in self:
 				self.append(p)
-
-		def rem(self, p: Member) -> None:
-			if p in self:
-				self.remove(p)
 
 	@classmethod
 	async def new(cls, ctx: bot.Context, queue: bot.PickupQueue, players: list[Member], **kwargs) -> None:
