@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start', 'house_points', 'house_points_reset']
 
 import io
@@ -26,7 +28,8 @@ RANK_EMOJIS = [
 ]
 
 
-def get_rank_emoji(rating):
+def get_rank_emoji(rating: int) -> str:
+	"""Return the rank emoji for a rating (highest threshold at or below it)."""
 	emoji = RANK_EMOJIS[0][1]
 	for threshold, e in RANK_EMOJIS:
 		if rating >= threshold:
@@ -43,7 +46,8 @@ def _table_nick(nick: str, maxlen: int = 18) -> str:
 
 
 
-async def last_game(ctx, queue: str = None, player: Member = None, match_id: int = None):
+async def last_game(ctx: bot.Context, queue: str | None = None, player: Member | None = None, match_id: int | None = None) -> None:
+	"""Show the most recent match, optionally filtered by queue, player, or match id."""
 	lg = None
 
 	if match_id:
@@ -92,7 +96,8 @@ async def last_game(ctx, queue: str = None, player: Member = None, match_id: int
 	await ctx.reply(embed=embed)
 
 
-async def stats(ctx, player: Member = None):
+async def stats(ctx: bot.Context, player: Member | None = None) -> None:
+	"""Show match-count stats for a player or the whole channel."""
 	if player:
 		if (member := await ctx.get_member(player)) is not None:
 			data = await bot.stats.user_stats(ctx.qc.id, member.id)
@@ -113,7 +118,8 @@ async def stats(ctx, player: Member = None):
 	await ctx.reply(embed=embed)
 
 
-async def top(ctx, period=None):
+async def top(ctx: bot.Context, period: str | None = None) -> None:
+	"""Show the top 10 players by matches played, optionally within a time period."""
 	if period in ["day", ctx.qc.gt("day")]:
 		time_gap = int(time()) - (60 * 60 * 24)
 	elif period in ["week", ctx.qc.gt("week")]:
@@ -136,7 +142,8 @@ async def top(ctx, period=None):
 	await ctx.reply(embed=embed)
 
 
-async def rank(ctx, player: Member = None):
+async def rank(ctx: bot.Context, player: Member | None = None) -> None:
+	"""Show a rank card for a player: place, record, rating, and recent changes."""
 	target = ctx.author if not player else await ctx.get_member(player)
 	if not target:
 		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
@@ -197,7 +204,8 @@ async def rank(ctx, player: Member = None):
 
 	await ctx.reply(embed=embed)
 
-async def leaderboard(ctx, page: int = 1):
+async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
+	"""Show a page of the rating leaderboard."""
 	page = (page or 1) - 1
 
 	all_data = await ctx.qc.get_lb()
@@ -226,7 +234,8 @@ async def leaderboard(ctx, page: int = 1):
 	)
 	await ctx.reply(embed=embed)
 
-async def activity(ctx, player: Member = None):
+async def activity(ctx: bot.Context, player: Member | None = None) -> None:
+	"""Render an activity heatmap (weekday x hour, last 28 days) for a player or the channel."""
 	interaction = getattr(ctx, 'interaction', None)
 	if interaction is not None and not interaction.response.is_done():
 		await interaction.response.defer()
@@ -313,7 +322,7 @@ async def activity(ctx, player: Member = None):
 	await ctx.reply(file=File(fp=buf, filename='activity.png'))
 
 
-async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
+async def season_leaderboard(ctx: bot.Context, page: int = 1, min_matches: int = 15) -> None:
 	"""Leaderboard showing only players with min_matches or more games played."""
 	page = (page or 1) - 1
 
@@ -355,7 +364,7 @@ async def season_leaderboard(ctx, page: int = 1, min_matches: int = 15):
 SEASON_MEDALS = ['🥇', '🥈', '🥉']
 
 
-async def season_end(ctx, min_matches: int = 15):
+async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 	"""End the current season: post standings, disable ranked, reset all stats."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 
@@ -452,7 +461,7 @@ async def season_end(ctx, min_matches: int = 15):
 	await record_season_end(ctx.qc.id, season_num)
 
 
-async def season_start(ctx):
+async def season_start(ctx: bot.Context) -> None:
 	"""Start a new season: enable ranked on all queues and announce."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 
@@ -479,7 +488,7 @@ async def season_start(ctx):
 	embed = Embed(colour=Colour(0x27b75e), description="\n".join(lines))
 	await ctx.reply(embed=embed)
 
-async def house_points(ctx):
+async def house_points(ctx: bot.Context) -> None:
 	"""Show the Hogwarts house standings."""
 	from bot.stats.house_points import get_standings
 	from bot.match.embeds import HOUSE_EMOJIS
@@ -501,7 +510,7 @@ async def house_points(ctx):
 	await ctx.reply(embed=embed)
 
 
-async def house_points_reset(ctx):
+async def house_points_reset(ctx: bot.Context) -> None:
 	"""Admin: reset every house's points to zero."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	from bot.stats.house_points import reset_all
