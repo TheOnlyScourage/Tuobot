@@ -128,9 +128,9 @@ async def on_message(message):
 	if any(r.id == _Q_PING_ROLE_ID for r in message.role_mentions):
 		await _send_q_ping_embed(message)
 
-	if message.content == '!enable_pubobot':
+	if message.content == '!enable_tuobot':
 		await bot.enable_channel(message)
-	elif message.content == '!disable_pubobot':
+	elif message.content == '!disable_tuobot':
 		await bot.disable_channel(message)
 
 
