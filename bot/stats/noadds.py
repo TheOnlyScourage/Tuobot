@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
+"""Queue-ban (noadd) system and per-player custom phrases, with a background
+job that auto-expires bans once their duration elapses."""
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING
 from random import choice
 from core.database import db
 from core.utils import get_nick
+
+if TYPE_CHECKING:
+	import bot
+	from nextcord import Member
 
 db.ensure_table(dict(
 	tname="noadds",
@@ -32,12 +41,13 @@ db.ensure_table(dict(
 
 
 class NoAdds:
+	"""Per-guild queue bans and per-player custom phrases."""
 
 	def __init__(self):
 		self.next_tick = 0
 
 	@staticmethod
-	async def get_user(ctx, member):
+	async def get_user(ctx: bot.Context, member: Member) -> list:
 		""" returns [ban_left, phrase]"""
 
 		m_noadd = await db.select_one(
@@ -49,18 +59,21 @@ class NoAdds:
 		return [ban_left, choice(phrases)['phrase'] if len(phrases) else None]
 
 	@staticmethod
-	async def phrases_add(ctx, member, phrase):
+	async def phrases_add(ctx: bot.Context, member: Member, phrase: str) -> None:
+		"""Add a custom phrase for a player in this channel."""
 		await db.insert('qc_phrases', dict(channel_id=ctx.channel.id, user_id=member.id, phrase=phrase))
 
 	@staticmethod
-	async def phrases_clear(ctx, member=None):
+	async def phrases_clear(ctx: bot.Context, member: Member | None = None) -> None:
+		"""Clear phrases for one player, or the whole channel if member is None."""
 		if member:
 			await db.delete('qc_phrases', where=dict(channel_id=ctx.channel.id, user_id=member.id))
 		else:
 			await db.delete('qc_phrases', where=dict(channel_id=ctx.channel.id))
 
 	@staticmethod
-	async def noadd(ctx, member, duration, moderator, reason=None):
+	async def noadd(ctx: bot.Context, member: Member, duration: int, moderator: Member, reason: str | None = None) -> None:
+		"""Ban a member from queues for duration seconds, replacing any active ban."""
 		await db.update(
 			'noadds',
 			dict(is_active=0, released_by="another noadd"),
@@ -77,7 +90,8 @@ class NoAdds:
 		))
 
 	@staticmethod
-	async def forgive(ctx, member, moderator):
+	async def forgive(ctx: bot.Context, member: Member, moderator: Member) -> bool:
+		"""Lift an active ban for the member; return False if none exists."""
 		noadd_id = await db.select_one(
 			['id'], 'noadds', where=dict(guild_id=ctx.channel.guild.id, user_id=member.id, is_active=1)
 		)
@@ -91,10 +105,12 @@ class NoAdds:
 		return True
 
 	@staticmethod
-	async def get_noadds(ctx):
+	async def get_noadds(ctx: bot.Context) -> list:
+		"""Return all active bans in the guild."""
 		return await db.select(['*'], 'noadds', where=dict(guild_id=ctx.channel.guild.id, is_active=1))
 
-	async def think(self, frame_time):
+	async def think(self, frame_time: int) -> None:
+		"""Frame tick: expire bans whose duration has elapsed (checked once a minute)."""
 		if frame_time > self.next_tick:
 			await db.execute("UPDATE `noadds` SET is_active=0, released_by='time' WHERE (`at`+`duration`)<%s", (frame_time, ))
 			self.next_tick = frame_time + 60
