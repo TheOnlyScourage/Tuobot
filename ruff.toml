@@ -1,7 +1,6 @@
-# Ruff configuration for NammaPUBobot.
+# Ruff configuration for Tuobot.
 #
-# We target py311 because that's what the Dockerfile ships (CLAUDE.md
-# says py39+ is the minimum, but Railway builds on 3.11 — if we break
+# We target py311 because that's what the Dockerfile ships (Railway builds on 3.11 — if we break
 # that, production breaks, so lint against what actually runs).
 #
 # The rule set is intentionally small: we're dropping ruff into a
@@ -31,8 +30,6 @@ indent-width = 4
 exclude = [
     ".git",
     "__pycache__",
-    "data",
-    "export-apr10",
 ]
 
 [lint]
@@ -96,8 +93,6 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-# Tests intentionally use bare asserts and relative imports.
-"tests/*" = ["E402", "F401", "B011"]
 # start.py generates config via string templating; unused imports and
 # star-import tricks in the config loader are tolerated.
 "start.py" = ["F401"]
