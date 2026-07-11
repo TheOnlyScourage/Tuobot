@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = [
 	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
 	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual',
@@ -14,6 +16,8 @@ import bot
 
 
 def author_match(coro):
+	"""Decorator: resolve the caller's active match on this channel and pass it in
+	as the second argument, erroring if the caller isn't in one."""
 	@wraps(coro)
 	async def wrapper(ctx, *args, **kwargs):
 		if (match := find(lambda m: m.qc == ctx.qc and ctx.author in m.players, bot.active_matches)) is None:
@@ -22,7 +26,8 @@ def author_match(coro):
 	return wrapper
 
 
-async def show_matches(ctx):
+async def show_matches(ctx: bot.Context) -> None:
+	"""List the active matches on this channel."""
 	matches = [m for m in bot.active_matches if m.qc.id == ctx.qc.id]
 	if len(matches):
 		await ctx.reply("\n".join((m.print() for m in matches)))
@@ -31,35 +36,40 @@ async def show_matches(ctx):
 
 
 @author_match
-async def show_teams(ctx, match: bot.Match):
+async def show_teams(ctx: bot.Context, match: bot.Match) -> None:
+	"""Show the current teams (draft or waiting-report state only)."""
 	if match.state not in [bot.Match.DRAFT, bot.Match.WAITING_REPORT]:
 		raise bot.Exc.MatchStateError('Match must be on draft or waiting report state.')
 	await match.draft.print(ctx)
 
 
 @author_match
-async def set_ready(ctx, match: bot.Match, is_ready=True):
+async def set_ready(ctx: bot.Context, match: bot.Match, is_ready: bool = True) -> None:
+	"""Ready up (or un-ready) the caller during check-in."""
 	await match.check_in.set_ready(ctx, ctx.author, is_ready)
 
 
 @author_match
-async def sub_me(ctx, match: bot.Match):
+async def sub_me(ctx: bot.Context, match: bot.Match) -> None:
+	"""Request a substitute for the caller."""
 	await match.draft.sub_me(ctx, ctx.author)
 
 
 @author_match
-async def sub_auto(ctx, match: bot.Match):
+async def sub_auto(ctx: bot.Context, match: bot.Match) -> None:
+	"""Auto-substitute the caller with the next available player."""
 	await match.draft.sub_auto(ctx, ctx.author)
 
 
-async def sub_for(ctx, player: Member):
+async def sub_for(ctx: bot.Context, player: Member) -> None:
+	"""Substitute the caller in for another player who is in a match."""
 	if (match := find(lambda m: m.qc == ctx.qc and player in m.players, bot.active_matches)) is None:
 		raise bot.Exc.NotInMatchError(ctx.qc.gt("Specified user is not in a match."))
 	await ctx.qc.check_allowed_to_add(ctx, ctx.author, queue=match.queue)
 	await match.draft.sub_for(ctx, player, ctx.author)
 
 
-async def sub_force(ctx, player1: Member, player2: Member):
+async def sub_force(ctx: bot.Context, player1: Member, player2: Member) -> None:
 	"""Substitute player1 out for player2 in the active match.
 
 	player2 is treated as a FILL-IN: if the team wins, player2 gets normal
@@ -92,21 +102,24 @@ async def sub_force(ctx, player1: Member, player2: Member):
 
 
 @author_match
-async def cap_me(ctx, match: bot.Match):
+async def cap_me(ctx: bot.Context, match: bot.Match) -> None:
+	"""Volunteer the caller as a captain."""
 	await match.draft.cap_me(ctx, ctx.author)
 
 
 @author_match
-async def cap_for(ctx, match: bot.Match, team_name: str):
+async def cap_for(ctx: bot.Context, match: bot.Match, team_name: str) -> None:
+	"""Assign the caller as captain of a named team."""
 	await match.draft.cap_for(ctx, ctx.author, team_name)
 
 
 @author_match
-async def pick(ctx, match: bot.Match, players: List[Member]):  # noqa: UP006
+async def pick(ctx: bot.Context, match: bot.Match, players: List[Member]) -> None:  # noqa: UP006
+	"""Captain picks one or more players for their team."""
 	await match.draft.pick(ctx, ctx.author, players)
 
 
-async def put(ctx, match_id: int, player: Member, team_name: str):
+async def put(ctx: bot.Context, match_id: int, player: Member, team_name: str) -> None:
 	"""Put a player on Team A (teams[0]), Team B (teams[1]), or back to the unpicked pool.
 
 	The slash command sends 'Team A', 'Team B', or 'Unpicked'. We translate
@@ -172,7 +185,8 @@ async def put(ctx, match_id: int, player: Member, team_name: str):
 		await match.draft.print(ctx)
 
 
-async def report_admin(ctx, match_id: int, winner_team=None, draw=False, abort=False):
+async def report_admin(ctx: bot.Context, match_id: int, winner_team: str | None = None, draw: bool = False, abort: bool = False) -> None:
+	"""Moderator: report a match result (winner team, draw, or abort) by id."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (match := find(lambda m: m.qc == ctx.qc and m.id == match_id, bot.active_matches)) is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id. Check `/matches`."))
@@ -185,7 +199,8 @@ async def report_admin(ctx, match_id: int, winner_team=None, draw=False, abort=F
 
 
 @author_match
-async def report(ctx, match: bot.Match, result):
+async def report(ctx: bot.Context, match: bot.Match, result: str) -> None:
+	"""Report the caller's own match result: loss, draw, or abort."""
 	if result == 'loss':
 		await match.report_loss(ctx, ctx.author, draw_flag=False)
 	elif result == 'draw':
@@ -196,7 +211,8 @@ async def report(ctx, match: bot.Match, result):
 		raise bot.Exc.ValueError("Invalid result value.")
 
 
-async def report_manual(ctx, queue: str, winners: List[Member], losers: List[Member], draw: bool = False):  # noqa: UP006
+async def report_manual(ctx: bot.Context, queue: str, winners: List[Member], losers: List[Member], draw: bool = False) -> None:  # noqa: UP006
+	"""Moderator: record a manual ranked result from explicit winner/loser lists."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
@@ -209,7 +225,7 @@ async def report_manual(ctx, queue: str, winners: List[Member], losers: List[Mem
 	await q.fake_ranked_match(ctx, winners, losers, draw=draw)
 
 
-async def force_checkin(ctx, match_id: int):
+async def force_checkin(ctx: bot.Context, match_id: int) -> None:
 	"""Admin command: forcefully check in all players in a match's check-in phase."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	if (match := find(lambda m: m.qc == ctx.qc and m.id == match_id, bot.active_matches)) is None:
@@ -249,7 +265,7 @@ async def force_checkin(ctx, match_id: int):
 	await ctx.success(ctx.qc.gt("All players have been force checked in."))
 
 
-async def swap_players(ctx, player1: Member, player2: Member):
+async def swap_players(ctx: bot.Context, player1: Member, player2: Member) -> None:
 	"""Swap two players. Auto-detects mode:
 
 	Mode A — Both players in the same active match:
