@@ -12,7 +12,11 @@ DB schema (created at startup):
   house_points (house TEXT PK, points INT, last_updated INT)
 """
 
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING
+
 from core.console import log
 from bot.constants import (
 	HOUSE_ROLES, ALL_HOUSES,
@@ -21,13 +25,16 @@ from bot.constants import (
 )
 from core.database import db
 
+if TYPE_CHECKING:
+	from nextcord import Member
+
 
 # House Discord role IDs → house name (must match HOUSE_ROLES in match.py)
 # HOUSE_ROLES centralized in bot/constants.py — imported below
 
 
 
-async def init_house_points_table():
+async def init_house_points_table() -> None:
 	"""Create the house_points table and seed all four houses to 0."""
 	await db._ensure_table(dict(
 		tname="house_points",
@@ -48,7 +55,7 @@ async def init_house_points_table():
 			))
 
 
-def _get_house(member) -> str | None:
+def _get_house(member: Member) -> str | None:
 	"""Return the player's Hogwarts house name from their Discord roles."""
 	if member is None:
 		return None
@@ -74,7 +81,7 @@ async def _add_points(house: str, amount: int):
 		)
 
 
-async def award_for_win(winning_team) -> dict:
+async def award_for_win(winning_team: list) -> dict:
 	"""
 	Award points to every house represented on the winning team.
 
@@ -119,7 +126,7 @@ async def get_standings() -> list[dict]:
 	return out
 
 
-async def reset_all():
+async def reset_all() -> None:
 	"""Zero out every house. Used by an admin command."""
 	now = int(time.time())
 	for h in ALL_HOUSES:
