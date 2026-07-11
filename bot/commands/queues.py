@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 __all__ = [
-	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start', 'split',
+	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start',
 	'reset', 'server', 'remove_all'
 ]
 
@@ -250,15 +250,6 @@ async def start(ctx: bot.Context, queue: str | None = None) -> None:
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
 	await q.start(ctx)
-	await ctx.reply(ctx.qc.topic)
-
-
-async def split(ctx: bot.Context, queue: str, group_size: int | None = None, sort_by_rating: bool = False) -> None:
-	""" Split queue players into X separate matches """
-	ctx.check_perms(ctx.Perms.MODERATOR)
-	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
-		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
-	await q.split(ctx, group_size=group_size, sort_by_rating=sort_by_rating)
 	await ctx.reply(ctx.qc.topic)
 
 
