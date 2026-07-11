@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-__all__ = ['auto_ready', 'expire', 'default_expire', 'allow_offline', 'switch_dms', 'cointoss', 'show_help', 'set_nick']
+__all__ = ['auto_ready', 'expire', 'default_expire', 'allow_offline', 'switch_dms', 'cointoss', 'set_nick']
 
 from time import time
 from datetime import timedelta
 from random import randint
 
-from core.utils import seconds_to_str, find
+from core.utils import seconds_to_str
 from core.database import db
-from core.config import cfg
 
 import bot
 
@@ -135,20 +134,6 @@ async def cointoss(ctx: bot.Context, side: str | None = None) -> None:
 		await ctx.reply(ctx.qc.gt("{member} lost, its **{side}**!").format(
 			member=ctx.author.mention, side=ctx.qc.gt(["heads", "tails"][result])
 		))
-
-
-async def show_help(ctx: bot.Context, queue: str | None = None) -> None:
-	"""DM the channel or queue help text."""
-	if queue is None:
-		if not ctx.qc.cfg.description:
-			await ctx.reply_dm(cfg.HELP+"\nYou can edit this message with command `/channel set description`.")
-		else:
-			await ctx.reply_dm(ctx.qc.cfg.description)
-		return
-	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
-		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
-
-	await ctx.reply_dm(q.cfg.description or ctx.qc.gt('Specified queue has no help answer set.'))
 
 
 async def set_nick(ctx: bot.Context, nick: str) -> None:
