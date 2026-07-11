@@ -66,7 +66,6 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | Command | What it does |
 |---|---|
 | `/cointoss` | Flip a coin. |
-| `/help` | Show channel or queue help text. |
 | `/commands` | Show the full command list. |
 | `/don` | Pings @Don with the L_Don emoji. |
 
@@ -81,7 +80,6 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin queue remove_player <player> [queue]` | Force-remove a player from a queue (or all queues if none specified). |
 | `/admin queue clear [queue]` | Empty a queue (or all queues if none specified). |
 | `/admin queue start <queue>` | Manually start a queue even if not full. |
-| `/admin queue split <queue> [group_size] [by_rating]` | Split queue players into multiple matches. Optionally sort by rating first. |
 | `/admin queue list` | List every queue on the channel. |
 | `/admin queue show <queue>` | Show a queue's full configuration. |
 
