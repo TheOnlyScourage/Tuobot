@@ -6,10 +6,12 @@ Violation types:
   'missed'  – player did not ready up before the timeout
   'aborted' – player actively clicked the abort emoji or triggered abort
 """
+from __future__ import annotations
+
 import time
 from core.database import db
 from core.utils import get_nick
-from nextcord import Embed, Colour
+from nextcord import Embed, Colour, Member
 
 BAN_THRESHOLD    = 3               # total violations that trigger auto-ban
 BAN_WINDOW_DAYS  = 3               # rolling window in days
@@ -17,7 +19,7 @@ BAN_WINDOW_SECS  = BAN_WINDOW_DAYS * 24 * 3600
 BAN_DURATION_SECS = 3600           # 1-hour auto-ban
 
 
-async def init_checkin_tracker_table():
+async def init_checkin_tracker_table() -> None:
 	"""Create the checkin_violations table if it doesn't exist."""
 	await db._ensure_table(dict(
 		tname="checkin_violations",
@@ -32,7 +34,7 @@ async def init_checkin_tracker_table():
 	))
 
 
-async def record_violation(channel, member, violation_type: str):
+async def record_violation(channel, member: Member, violation_type: str) -> None:
 	"""
 	Record one check-in violation, post the warning embed, and
 	auto-ban if the rolling threshold is reached.
