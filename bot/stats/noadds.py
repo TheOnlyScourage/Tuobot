@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
-from random import choice
 from core.database import db
 from core.utils import get_nick
 
@@ -45,9 +44,9 @@ class NoAdds:
 
 	def __init__(self):
 		self.next_tick = 0
+		self.phrase_cursors = {}
 
-	@staticmethod
-	async def get_user(ctx: bot.Context, member: Member) -> list:
+	async def get_user(self, ctx: bot.Context, member: Member) -> list:
 		""" returns [ban_left, phrase]"""
 
 		m_noadd = await db.select_one(
@@ -56,7 +55,17 @@ class NoAdds:
 		ban_left = max(0, (m_noadd['duration']+m_noadd['at'])-int(time.time())) if m_noadd else 0
 		phrases = await db.select(['phrase'], 'qc_phrases', where=dict(channel_id=ctx.channel.id, user_id=member.id))
 
-		return [ban_left, choice(phrases)['phrase'] if len(phrases) else None]
+		if not phrases:
+			phrase = None
+		else:
+			# Cycle through the phrases in the order they were added (A, B, C, A, ...)
+			# instead of picking at random. The cursor is per (channel, player) and
+			# lives in memory, so it restarts from the first phrase after a reboot.
+			key = (ctx.channel.id, member.id)
+			idx = self.phrase_cursors.get(key, 0)
+			phrase = phrases[idx % len(phrases)]['phrase']
+			self.phrase_cursors[key] = idx + 1
+		return [ban_left, phrase]
 
 	@staticmethod
 	async def phrases_add(ctx: bot.Context, member: Member, phrase: str) -> None:
