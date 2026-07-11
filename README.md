@@ -102,7 +102,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin stats reset` | Wipe all stats data for the channel (be careful!). |
 | `/admin stats reset_player <player>` | Reset one player's stats. |
 | `/admin stats stats_replace_player <player1> <player2>` | Replace player1's stats history with player2 (used when someone changes accounts). |
-| `/admin stats undo_match <match_id>` | Undo a finished match — reverses all rating changes. |
+| `/admin stats undo_match <match_id>` | Undo a finished match — reverses all rating changes **and any house points it awarded** (via the `house_awards` ledger). |
 | `/admin stats show [player]` | Show channel or per-player stats. |
 
 ### `/admin noadds` — Bans
