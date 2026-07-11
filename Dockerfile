@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# Stream logs in real time (unbuffered stdout) so Railway's log viewer
+# shows output as it happens rather than in delayed chunks.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY requirements.txt .
