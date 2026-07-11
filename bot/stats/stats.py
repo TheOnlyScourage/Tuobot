@@ -343,16 +343,20 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 #  Admin operations
 # ══════════════════════════════════════════════════════════════════════════════
-async def undo_match(ctx: bot.Context, match_id: int) -> bool:
+async def undo_match(ctx: bot.Context, match_id: int) -> dict | None:
     """Reverse a match: roll each player's rating/record back using the stored
-    history, delete the match's history and per-player rows, and refresh roles.
-    Returns False if the match isn't found on the channel."""
+    history, reverse any Hogwarts house points via the house_awards ledger,
+    delete the match's history and per-player rows, and refresh roles.
+
+    Returns None if the match isn't found on the channel; otherwise the
+    {house: points_reverted} dict from the ledger (may be empty — draws,
+    unranked matches, and pre-ledger history awarded nothing to reverse)."""
     match = await db.select_one(
         ('ranked', 'winner'), 'qc_matches',
         where=dict(match_id=match_id, channel_id=ctx.qc.id)
     )
     if not match:
-        return False
+        return None
     if match['ranked']:
         p_matches = await db.select(
             ('user_id', 'team'), 'qc_player_matches', where=dict(match_id=match_id)
@@ -385,9 +389,15 @@ async def undo_match(ctx: bot.Context, match_id: int) -> bool:
         await db.delete("qc_rating_history", where=dict(match_id=match_id))
         members = (ctx.channel.guild.get_member(p['user_id']) for p in p_matches)
         await ctx.qc.update_rating_roles(*(m for m in members if m is not None))
+
+    # Reverse any Hogwarts house points this match awarded. Ledger-based, so
+    # matches with no house_awards rows are a clean no-op.
+    from bot.stats.house_points import revert_for_match
+    reverted_houses = await revert_for_match(match_id)
+
     await db.delete('qc_player_matches', where=dict(match_id=match_id))
     await db.delete('qc_matches',        where=dict(match_id=match_id))
-    return True
+    return reverted_houses
 
 
 async def reset_channel(channel_id: int) -> None:
