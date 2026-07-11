@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = [
 	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start', 'split',
 	'reset', 'server', 'remove_all'
@@ -10,7 +12,7 @@ import bot
 
 
 
-async def add(ctx, queues: str = None):
+async def add(ctx: bot.Context, queues: str | None = None) -> None:
 	""" add author to channel queues """
 	phrase = await ctx.qc.check_allowed_to_add(ctx, ctx.author)
 
@@ -83,7 +85,7 @@ async def add(ctx, queues: str = None):
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
 
 
-async def remove(ctx, queues: str = None):
+async def remove(ctx: bot.Context, queues: str | None = None) -> None:
 	""" remove author from channel queues """
 	targets = queues.lower().split(" ") if queues else []
 
@@ -108,7 +110,7 @@ async def remove(ctx, queues: str = None):
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
 
 
-async def remove_all(ctx, player: Member = None):
+async def remove_all(ctx: bot.Context, player: Member | None = None) -> None:
 	"""Remove a player from ALL queued channels on this server."""
 	# Moderator check if removing someone other than themselves
 	if player is not None and player.id != ctx.author.id:
@@ -150,7 +152,7 @@ async def remove_all(ctx, player: Member = None):
 	)
 
 
-async def who(ctx, queues: str = None):
+async def who(ctx: bot.Context, queues: str | None = None) -> None:
 	""" List added players """
 	targets = queues.lower().split(" ") if queues else []
 
@@ -168,7 +170,7 @@ async def who(ctx, queues: str = None):
 		await ctx.reply("\n".join([f"> **{q.name}** ({q.status}) | {q.who}" for q in t_queues]))
 
 
-async def add_player(ctx, player: Member, queue: str):
+async def add_player(ctx: bot.Context, player: Member, queue: str) -> None:
 	""" Add a player to a queue """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (p := await ctx.get_member(player)) is None:
@@ -210,7 +212,7 @@ async def add_player(ctx, player: Member, queue: str):
 		await ctx.error(f"Got bad queue response: {resp.__name__}.")
 
 
-async def remove_player(ctx, player: Member, queues: str = None):
+async def remove_player(ctx: bot.Context, player: Member, queues: str | None = None) -> None:
 	""" Remove a player from queues """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 
@@ -220,7 +222,7 @@ async def remove_player(ctx, player: Member, queues: str = None):
 	await remove(ctx, queues=queues)
 
 
-async def promote(ctx, queue: str = None):
+async def promote(ctx: bot.Context, queue: str | None = None) -> None:
 	""" Promote a queue """
 	if not queue:
 		if (q := next(iter(sorted(
@@ -242,7 +244,7 @@ async def promote(ctx, queue: str = None):
 	ctx.qc.last_promote = now
 
 
-async def start(ctx, queue: str = None):
+async def start(ctx: bot.Context, queue: str | None = None) -> None:
 	""" Manually start a queue """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
@@ -251,7 +253,7 @@ async def start(ctx, queue: str = None):
 	await ctx.reply(ctx.qc.topic)
 
 
-async def split(ctx, queue: str, group_size: int = None, sort_by_rating: bool = False):
+async def split(ctx: bot.Context, queue: str, group_size: int | None = None, sort_by_rating: bool = False) -> None:
 	""" Split queue players into X separate matches """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
@@ -260,7 +262,7 @@ async def split(ctx, queue: str, group_size: int = None, sort_by_rating: bool = 
 	await ctx.reply(ctx.qc.topic)
 
 
-async def reset(ctx, queue: str = None):
+async def reset(ctx: bot.Context, queue: str | None = None) -> None:
 	""" Reset all or specified queue """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if queue:
@@ -273,7 +275,8 @@ async def reset(ctx, queue: str = None):
 	await ctx.reply(ctx.qc.topic)
 
 
-async def server(ctx, queue: str):
+async def server(ctx: bot.Context, queue: str) -> None:
+	"""Show the configured server for a queue."""
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
 	if not q.cfg.server:
