@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = ['auto_ready', 'expire', 'default_expire', 'allow_offline', 'switch_dms', 'cointoss', 'show_help', 'set_nick']
 
 from time import time
@@ -13,7 +15,8 @@ import bot
 MAX_EXPIRE_TIME = timedelta(hours=12)
 
 
-async def auto_ready(ctx, duration: timedelta = None):
+async def auto_ready(ctx: bot.Context, duration: timedelta | None = None) -> None:
+	"""Toggle automatic ready-up for the caller for a duration (capped by the channel max)."""
 	if not duration:
 		duration = timedelta(seconds=min([60*5, ctx.qc.cfg.max_auto_ready]))
 
@@ -35,7 +38,8 @@ async def auto_ready(ctx, duration: timedelta = None):
 	)
 
 
-async def expire(ctx, duration: timedelta = None):
+async def expire(ctx: bot.Context, duration: timedelta | None = None) -> None:
+	"""Set or report the caller expire timer (time until auto-removal from queues)."""
 	if not duration:
 		if task := bot.expire.get(ctx.qc, ctx.author):
 			await ctx.reply(ctx.qc.gt("You have {duration} expire time left.").format(
@@ -56,7 +60,8 @@ async def expire(ctx, duration: timedelta = None):
 	))
 
 
-async def default_expire(ctx, duration: timedelta = None, afk: bool = None, clear: bool = None):
+async def default_expire(ctx: bot.Context, duration: timedelta | None = None, afk: bool | None = None, clear: bool | None = None) -> None:
+	"""Get or set the caller default expire behavior (a duration, AFK-based, or cleared)."""
 
 	def _expire_to_reply(seconds):
 		if seconds == 0:
@@ -89,7 +94,8 @@ async def default_expire(ctx, duration: timedelta = None, afk: bool = None, clea
 	await ctx.success(_expire_to_reply(seconds))
 
 
-async def allow_offline(ctx):
+async def allow_offline(ctx: bot.Context) -> None:
+	"""Toggle the caller offline immunity until the next match."""
 	if ctx.author.id in bot.allow_offline:
 		bot.allow_offline.remove(ctx.author.id)
 		await ctx.success(ctx.qc.gt("Your offline immunity is **off**."))
@@ -98,7 +104,8 @@ async def allow_offline(ctx):
 		await ctx.success(ctx.qc.gt("Your offline immunity is **on** until the next match."))
 
 
-async def switch_dms(ctx):
+async def switch_dms(ctx: bot.Context) -> None:
+	"""Toggle the caller DM notifications on or off."""
 	data = await db.select_one(('allow_dm',), 'players', where={'user_id': ctx.author.id})
 	if data:
 		allow_dm = 1 if data['allow_dm'] == 0 else 0
@@ -113,7 +120,8 @@ async def switch_dms(ctx):
 		await ctx.success(ctx.qc.gt("Your DM notifications is now turned off."))
 
 
-async def cointoss(ctx, side: str = None):
+async def cointoss(ctx: bot.Context, side: str | None = None) -> None:
+	"""Flip a coin; the caller may call heads or tails."""
 	pick = 0
 	if side in ["tails", ctx.qc.gt("tails")]:
 		pick = 1
@@ -129,7 +137,8 @@ async def cointoss(ctx, side: str = None):
 		))
 
 
-async def show_help(ctx, queue: str = None):
+async def show_help(ctx: bot.Context, queue: str | None = None) -> None:
+	"""DM the channel or queue help text."""
 	if queue is None:
 		if not ctx.qc.cfg.description:
 			await ctx.reply_dm(cfg.HELP+"\nYou can edit this message with command `/channel set description`.")
@@ -142,7 +151,8 @@ async def show_help(ctx, queue: str = None):
 	await ctx.reply_dm(q.cfg.description or ctx.qc.gt('Specified queue has no help answer set.'))
 
 
-async def set_nick(ctx, nick: str):
+async def set_nick(ctx: bot.Context, nick: str) -> None:
+	"""Set the caller nickname, prefixed with their current rating."""
 	data = await db.select_one(
 		['rating'], 'qc_players',
 		where={'channel_id': ctx.author.id, 'user_id': ctx.author.id}
