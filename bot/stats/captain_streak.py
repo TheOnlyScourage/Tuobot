@@ -25,6 +25,8 @@ Public API:
                                        NOT picked; zeroes their streak
 """
 
+from __future__ import annotations
+
 import time
 from core.console import log
 from core.database import db
@@ -35,7 +37,8 @@ from core.database import db
 CAPTAIN_STREAK_LIMIT = 2
 
 
-async def init_captain_streak_table():
+async def init_captain_streak_table() -> None:
+	"""Create the captain_streak table if missing."""
 	await db._ensure_table(dict(
 		tname="captain_streak",
 		columns=[
@@ -62,7 +65,7 @@ async def get_streak(channel_id: int, user_id: int) -> int:
 		return 0
 
 
-async def record_captain(channel_id: int, user_id: int):
+async def record_captain(channel_id: int, user_id: int) -> None:
 	"""Increment the player's captain streak. Called once per captain pick."""
 	try:
 		now = int(time.time())
@@ -88,7 +91,7 @@ async def record_captain(channel_id: int, user_id: int):
 		log.error(f"[captain_streak] record_captain failed: {exc}")
 
 
-async def reset_streak(channel_id: int, user_id: int):
+async def reset_streak(channel_id: int, user_id: int) -> None:
 	"""Zero a player's streak. Called when they were eligible but not picked."""
 	try:
 		row = await db.select_one(
