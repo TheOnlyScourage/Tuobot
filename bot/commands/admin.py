@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = [
 	'noadds', 'noadd', 'forgive', 'rating_seed', 'rating_penality', 'rating_hide',
 	'rating_reset', 'rating_snap', 'stats_reset', 'stats_reset_player', 'stats_replace_player',
@@ -14,7 +16,8 @@ from core.utils import seconds_to_str, get_nick
 import bot
 
 
-async def noadds(ctx):
+async def noadds(ctx: bot.Context) -> None:
+	"""List the active queue bans on the channel (id, player, time left, reason)."""
 	data = await bot.noadds.get_noadds(ctx)
 	now = int(time())
 	s = "```markdown\n"
@@ -30,7 +33,8 @@ async def noadds(ctx):
 	await ctx.reply(s + "\n```")
 
 
-async def noadd(ctx, player: Member, duration: timedelta, reason: str = None):
+async def noadd(ctx: bot.Context, player: Member, duration: timedelta, reason: str | None = None) -> None:
+	"""Ban a player from queues for a duration (defaults to 2 hours)."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if not duration:
 		duration = timedelta(hours=2)
@@ -45,7 +49,8 @@ async def noadd(ctx, player: Member, duration: timedelta, reason: str = None):
 	))
 
 
-async def forgive(ctx, player: Member):
+async def forgive(ctx: bot.Context, player: Member) -> None:
+	"""Lift the active queue ban on a player."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if await bot.noadds.forgive(ctx=ctx, member=player, moderator=ctx.author):
 		await ctx.success(ctx.qc.gt("Done."))
@@ -53,7 +58,8 @@ async def forgive(ctx, player: Member):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified member is not banned."))
 
 
-async def rating_seed(ctx, player: str, rating: int, deviation: int = None):
+async def rating_seed(ctx: bot.Context, player: str, rating: int, deviation: int | None = None) -> None:
+	"""Manually set a player's rating (and optional deviation)."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
@@ -65,7 +71,8 @@ async def rating_seed(ctx, player: str, rating: int, deviation: int = None):
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def rating_penality(ctx, player: str, penality: int, reason: str = None):
+async def rating_penality(ctx: bot.Context, player: str, penality: int, reason: str | None = None) -> None:
+	"""Apply a rating penalty (positive or negative) to a player."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
@@ -78,7 +85,8 @@ async def rating_penality(ctx, player: str, penality: int, reason: str = None):
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def rating_hide(ctx, player: str, hide: bool = True):
+async def rating_hide(ctx: bot.Context, player: str, hide: bool = True) -> None:
+	"""Hide or unhide a player from the leaderboards."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
@@ -86,25 +94,29 @@ async def rating_hide(ctx, player: str, hide: bool = True):
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def rating_reset(ctx):
+async def rating_reset(ctx: bot.Context) -> None:
+	"""Reset every player's rating on the channel."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	await ctx.qc.rating.reset()
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def rating_snap(ctx):
+async def rating_snap(ctx: bot.Context) -> None:
+	"""Snap all ratings down to the nearest rank threshold."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	await ctx.qc.rating.snap_ratings(ctx.qc._ranks_table)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def stats_reset(ctx):
+async def stats_reset(ctx: bot.Context) -> None:
+	"""Wipe all match stats and ratings for the channel."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	await bot.stats.reset_channel(ctx.qc.id)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def stats_reset_player(ctx, player: str):
+async def stats_reset_player(ctx: bot.Context, player: str) -> None:
+	"""Wipe one player's stats and rating on the channel."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
@@ -113,7 +125,8 @@ async def stats_reset_player(ctx, player: str):
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def stats_replace_player(ctx, player1: str, player2: str):
+async def stats_replace_player(ctx: bot.Context, player1: str, player2: str) -> None:
+	"""Transfer player1's records onto player2's id."""
 	ctx.check_perms(ctx.Perms.ADMIN)
 	if (player1 := await ctx.get_member(player1)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
@@ -124,19 +137,22 @@ async def stats_replace_player(ctx, player1: str, player2: str):
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def phrases_add(ctx, player: Member, phrase: str):
+async def phrases_add(ctx: bot.Context, player: Member, phrase: str) -> None:
+	"""Add a custom phrase for a player."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	await bot.noadds.phrases_add(ctx, player, phrase)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def phrases_clear(ctx, player: Member):
+async def phrases_clear(ctx: bot.Context, player: Member) -> None:
+	"""Clear a player's custom phrases."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	await bot.noadds.phrases_clear(ctx, member=player)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def undo_match(ctx, match_id: int):
+async def undo_match(ctx: bot.Context, match_id: int) -> None:
+	"""Reverse a recorded match by id, rolling back its rating changes."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 
 	result = await bot.stats.undo_match(ctx, match_id)
@@ -146,7 +162,8 @@ async def undo_match(ctx, match_id: int):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id."))
 
 
-async def douche_add(ctx, player: Member, target: Member):
+async def douche_add(ctx: bot.Context, player: Member, target: Member) -> None:
+	"""Record that one player 'douched' another."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (member := await ctx.get_member(player)) is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
@@ -158,7 +175,8 @@ async def douche_add(ctx, player: Member, target: Member):
 	))
 
 
-async def douche_summary(ctx, player: Member = None):
+async def douche_summary(ctx: bot.Context, player: Member | None = None) -> None:
+	"""Show a player's douche record: received, given, and recent."""
 	target = ctx.author if player is None else await ctx.get_member(player)
 	if not target:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
@@ -179,7 +197,8 @@ async def douche_summary(ctx, player: Member = None):
 	await ctx.reply(embed=embed)
 
 
-async def douche_leaderboard(ctx):
+async def douche_leaderboard(ctx: bot.Context) -> None:
+	"""Show the douche leaderboard for the guild."""
 	rows = await bot.douche.douche.leaderboard(ctx.channel.guild.id)
 	if not rows:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("No douche records yet."))
