@@ -10,6 +10,11 @@ Rules:
 
 DB schema (created at startup):
   house_points (house TEXT PK, points INT, last_updated INT)
+  house_awards (match_id + house composite PK, points INT, at INT)
+      — append-style per-match ledger of what each match awarded, so
+        `/admin stats undo_match` can reverse house points exactly.
+        Totals in house_points stay the fast read path; the ledger is
+        only consulted on undo and cleared on reset.
 """
 
 from __future__ import annotations
@@ -55,6 +60,20 @@ async def init_house_points_table() -> None:
 			))
 
 
+async def init_house_awards_table() -> None:
+	"""Create the house_awards ledger — one row per (match, house) awarded."""
+	await db._ensure_table(dict(
+		tname="house_awards",
+		columns=[
+			dict(cname="match_id", ctype=db.types.int, notnull=True),
+			dict(cname="house",    ctype=db.types.str, notnull=True),
+			dict(cname="points",   ctype=db.types.int, notnull=True, default=0),
+			dict(cname="at",       ctype=db.types.int),
+		],
+		primary_keys=["match_id", "house"],
+	))
+
+
 def _get_house(member: Member) -> str | None:
 	"""Return the player's Hogwarts house name from their Discord roles."""
 	if member is None:
@@ -81,12 +100,15 @@ async def _add_points(house: str, amount: int):
 		)
 
 
-async def award_for_win(winning_team: list) -> dict:
+async def award_for_win(winning_team: list, match_id: int | None = None) -> dict:
 	"""
 	Award points to every house represented on the winning team.
 
 	  - Captain (team[0])      → POINTS_FOR_CAPTAIN  (10)
 	  - All other players       → POINTS_PER_PLAYER   (5)
+
+	`match_id` writes a house_awards ledger row per house so the award can
+	be reversed by undo_match. None skips the ledger (award-only).
 
 	Returns a dict {house_name: points_awarded} for the announcement embed.
 	Players without a house role contribute nothing.
@@ -106,8 +128,53 @@ async def award_for_win(winning_team: list) -> dict:
 			await _add_points(house, amount)
 		except Exception as e:
 			log.error(f"[house_points] failed to award {amount} to {house}: {e}")
+			continue   # no points added → no ledger row
+		if match_id is None:
+			continue
+		try:
+			# 'replace' on the (match_id, house) PK makes a re-run idempotent
+			# instead of raising IntegrityError.
+			await db.insert('house_awards', dict(
+				match_id=match_id, house=house, points=amount,
+				at=int(time.time()),
+			), on_dublicate='replace')
+		except Exception as e:
+			log.error(
+				f"[house_points] awarded {amount} to {house} but ledger insert "
+				f"failed (match {match_id}) — undo won't see this award: {e}"
+			)
 
 	return awarded
+
+
+async def revert_for_match(match_id: int) -> dict[str, int]:
+	"""Reverse the house points a match awarded, using the house_awards ledger.
+
+	Subtracts each ledger row from the house's running total (floored at 0 —
+	a season reset may already have zeroed the totals), deletes the match's
+	ledger rows, and returns {house: points_reverted}. Matches with no ledger
+	rows (draws, unranked, pre-ledger history) return {} and change nothing.
+	"""
+	rows = await db.select(('house', 'points'), 'house_awards', where={'match_id': match_id})
+	if not rows:
+		return {}
+
+	now = int(time.time())
+	reverted: dict[str, int] = {}
+	for r in rows:
+		house  = r['house']
+		amount = r['points'] or 0
+		row = await db.select_one(('points',), 'house_points', where={'house': house})
+		current = (row['points'] or 0) if row else 0
+		await db.update(
+			'house_points',
+			dict(points=max(current - amount, 0), last_updated=now),
+			keys={'house': house}
+		)
+		reverted[house] = amount
+
+	await db.delete('house_awards', where={'match_id': match_id})
+	return reverted
 
 
 async def get_standings() -> list[dict]:
@@ -127,7 +194,13 @@ async def get_standings() -> list[dict]:
 
 
 async def reset_all() -> None:
-	"""Zero out every house. Used by an admin command."""
+	"""Zero out every house. Used by season_end and the admin reset command.
+
+	Also clears the house_awards ledger: awards from before a reset belong to
+	the finished season, so undoing an old match afterwards must not subtract
+	from the fresh totals (revert_for_match's floor-at-0 is only a backstop).
+	"""
 	now = int(time.time())
 	for h in ALL_HOUSES:
 		await db.update('house_points', dict(points=0, last_updated=now), keys={'house': h})
+	await db.delete('house_awards')
