@@ -153,16 +153,6 @@ async def _start_queue(
 _start_queue.on_autocomplete("queue")(autocomplete.queues)
 
 
-@groups.admin_queue.subcommand(name='split', description='Split the queue into N separate matches.')
-async def _split_queue(
-	interaction: Interaction,
-	queue: str = SlashOption(),
-	group_size: int = SlashOption(description="Amount of players per match", required=False),
-	sort_by_rating: bool = SlashOption(description="Sort groups by players ratings", required=False)
-) -> None: await run_slash(bot.commands.split, interaction=interaction, queue=queue, group_size=group_size, sort_by_rating=sort_by_rating)
-_split_queue.on_autocomplete("queue")(autocomplete.queues)
-
-
 # ── admin/channel ─────────────────────────────────────────────────────────────
 
 @groups.admin_channel.subcommand(name='enable', description='Enable the bot on this channel.')
@@ -750,14 +740,6 @@ async def _cointoss(
 		interaction: Interaction,
 		side: str = SlashOption(choices=['heads', 'tails'], required=False)
 ) -> None: await run_slash(bot.commands.cointoss, interaction=interaction, side=side)
-
-
-@dc.slash_command(name='help', description='Show channel or queue help.', **guild_kwargs)
-async def _help(
-		interaction: Interaction,
-		queue: str = SlashOption(name="queue", required=False)
-) -> None: await run_slash(bot.commands.show_help, interaction=interaction, queue=queue)
-_help.on_autocomplete("queue")(autocomplete.queues)
 
 
 @dc.slash_command(name='commands', description='Show commands list.', **guild_kwargs)
