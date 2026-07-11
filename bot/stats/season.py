@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Season tracking: the season_info table plus helpers to read the current
+season number and record a season end."""
+from __future__ import annotations
+
 import time
 from core.database import db
 
 
-async def init_season_table():
+async def init_season_table() -> None:
 	"""Create the season_info table if it doesn't exist."""
 	await db._ensure_table(dict(
 		tname="season_info",
@@ -23,7 +27,7 @@ async def get_current_season_number(channel_id: int) -> int:
 	return len(rows) + 1
 
 
-async def record_season_end(channel_id: int, season_number: int):
+async def record_season_end(channel_id: int, season_number: int) -> None:
 	"""Persist a season-end record."""
 	await db.insert('season_info', dict(
 		channel_id=channel_id,
