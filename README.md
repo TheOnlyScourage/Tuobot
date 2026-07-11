@@ -12,6 +12,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/add` | Add yourself to a queue. Without a queue name it adds you to the default. |
 | `/remove` | Remove yourself from a queue. Without a name it removes you from all the queues you're in on this channel. |
 | `/remove_all` | Remove yourself from **every queue across the entire server** (all channels). Mods can pass a player name to remove someone else. |
+| `/remove_after [time]` | Set a timer to auto-remove yourself from this channel's queues after a duration (e.g. `30m`, `1h`). |
 | `/who` | List the players currently added to each queue on this channel. |
 | `/matches` | Show all active matches on this channel. |
 | `/teams` | Show the teams for the match you're currently in. |
@@ -51,12 +52,10 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/activity` | Activity heatmap (weekday × hour, IST). |
 | `/house_points` | Hogwarts House Cup standings — points are earned by winning matches with players from each house. |
 
-### Maps & Server
+### Server
 | Command | What it does |
 |---|---|
 | `/server <queue>` | Show the configured server for a queue. |
-| `/maps <queue>` | List all maps configured for a queue. |
-| `/map <queue>` | Pick one random map from the queue's map pool. |
 
 ### Reporting Results
 | Command | What it does |
@@ -100,7 +99,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | Command | What it does |
 |---|---|
 | `/admin stats season_start` | Start a new season — turns ranked back ON for all queues, announces in the channel. |
-| `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights, disables ranked, resets all stats. Default 15 minimum matches. |
+| `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights (incl. win/loss streaks), and the House Cup winner, then disables ranked and resets all stats (ratings **and** house points). Default 15 minimum matches. |
 | `/admin stats house_points_reset` | Reset all four Hogwarts house point totals to zero. |
 | `/admin stats reset` | Wipe all stats data for the channel (be careful!). |
 | `/admin stats reset_player <player>` | Reset one player's stats. |
@@ -124,6 +123,13 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin rating unhide_player <player>` | Show a hidden player on the leaderboard again. |
 | `/admin rating reset` | Reset all rating data on the channel. |
 | `/admin rating snap` | Snap players' ratings to their rank thresholds. |
+
+### `/douche` (Community Log)
+| Command | What it does |
+|---|---|
+| `/douche add <player> <target>` | Record that one player "douched" another (moderator only). |
+| `/douche summary [player]` | Show a player's douche record: received, given, and recent. |
+| `/douche leaderboard` | Show the guild's douche leaderboard. |
 
 ---
 
@@ -159,8 +165,8 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 
 **Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
 
-**Hogwarts houses**: Captains' Discord house roles determine team names. Winning team awards house points: captain = 10, other players = 5. Players with no house role contribute nothing.
+**Hogwarts houses**: Captains' Discord house roles determine team names. The winning team of a **ranked** match awards house points: captain = 10, other players = 5. Players with no house role contribute nothing. Totals feed the House Cup and reset each season.
 
-**Seasons**: Each season tracks ratings/stats independently. `season_end` resets everything, posts highlights, and turns ranked off. `season_start` re-enables ranked and starts the new season counter.
+**Seasons**: Each season tracks ratings/stats independently. `season_end` resets everything (ratings + house points), posts the standings, highlights, and House Cup, then turns ranked off. `season_start` re-enables ranked and starts the new season counter.
 
 **Fill-in subs**: When using `/admin match sub_player`, the sub plays for free if they win, but losses are charged to the original player. Use `/swap` instead if you want a clean penalty-less swap.
