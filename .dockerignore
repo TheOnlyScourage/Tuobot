@@ -1,0 +1,39 @@
+# Keep the Docker build context small and the image free of local
+# secrets, caches, and dev cruft. Note: Docker does NOT read .gitignore,
+# so runtime-only files must be listed here too. Railway generates
+# config.cfg from env vars at runtime (via start.py) — it must never be
+# baked into the image.
+
+# Version control & CI
+.git
+.github
+.gitignore
+
+# Local config & runtime state (regenerated at runtime — never bake in)
+config.cfg
+saved_state.json
+
+# Python bytecode & tool caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Logs
+logs/
+data/logs/
+*.log
+
+# One-off data exports (migration input, not runtime data)
+data/
+export-*/
+
+# Compiled locales (translator is now a passthrough stub)
+locales/compiled/
+
+# Virtualenvs & OS cruft
+.venv/
+venv/
+env/
+.DS_Store
