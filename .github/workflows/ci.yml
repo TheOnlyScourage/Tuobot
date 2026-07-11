@@ -1,14 +1,16 @@
-# Tuobot CI — ruff lint + docker build.
+# Tuobot CI — ruff lint + pytest + docker build.
 #
-# Runs on every push and every PR against main. Two independent
-# jobs so they fan out in parallel; either one failing blocks
+# Runs on every push and every PR against main. Three independent
+# jobs so they fan out in parallel; any one failing blocks
 # the PR. Nothing here deploys anywhere — deployment is still manual
 # via `railway up --ci`.
 #
-# (A pytest job used to live here but there is no tests/ folder in the
-# repo, so it only ever errored. Removed until real tests exist — to
-# re-add, restore a `test` job running `pytest tests/ -v` once a tests/
-# directory with a conftest.py is in place.)
+# The test job runs tests/ — regression suites for the two pure modules
+# (bot/stats/mmr_engine.py and bot/match/captain_selection.py). The
+# conftest loads them via importlib with a stubbed `bot` package, so the
+# job needs NO bot dependencies: no nextcord, no aiomysql, no database.
+# Just pytest. Keep it that way — if a new test needs the full
+# requirements.txt, it probably belongs in a different kind of harness.
 #
 # Python version is pinned to 3.11 to match the Dockerfile
 # (FROM python:3.11-slim). If the Dockerfile moves, bump this too.
@@ -33,6 +35,20 @@ jobs:
         run: pip install ruff==0.14.4
       - name: Run ruff
         run: ruff check .
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pytest
+        # Pinned like ruff — bump deliberately. The suite needs no other
+        # dependencies (see the header comment).
+        run: pip install pytest==9.1.1
+      - name: Run tests
+        run: pytest tests/ -v
   docker:
     name: docker build
     runs-on: ubuntu-latest
