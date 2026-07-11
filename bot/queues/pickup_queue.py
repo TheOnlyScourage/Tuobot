@@ -487,27 +487,6 @@ class PickupQueue:
 				bot.allow_offline.append(uid)
 		bot.auto_ready.update(saved_auto_ready)
 
-	async def split(self, ctx, group_size: int = None, sort_by_rating: bool = False):
-		group_size = group_size or len(self.queue)//2
-		if len(self.queue) < group_size or group_size < 2:
-			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
-		if sort_by_rating:
-			ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in self.queue))}
-			self.queue = sorted(self.queue, key=lambda p: ratings[p.id], reverse=True)
-		groups = [self.queue[i-group_size:i] for i in range(group_size, len(self.queue)+1, group_size)]
-		for group in groups:
-			dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
-			await self.qc.queue_started(
-				ctx,
-				members=group,
-				message=dm_text.format_map(SafeTemplateDict(
-					queue=self.name,
-					channel=ctx.channel.mention,
-					server=self.cfg.server
-				))
-			)
-			await bot.Match.new(ctx, self, group, team_size=group_size//2, **self._match_cfg())
-
 	async def fake_ranked_match(self, ctx, winners, losers, draw=False):
 		if not self.cfg.ranked:
 			raise bot.Exc.ValueError("Specified queue is not ranked.")
