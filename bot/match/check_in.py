@@ -10,7 +10,7 @@ import bot
 from nextcord.errors import DiscordException
 
 from core.utils import join_and
-from core.console import log  # noqa: F401
+from core.console import log
 from bot.stats.checkin_tracker import record_violation
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ class CheckIn:
 				)
 				await self.pull_standby(bot.SystemContext(self.m.qc))
 			elif not standby_pool:
-				# No standby waiting — mark as already pulled so we don\'t spam this branch
+				# No standby waiting — mark as already pulled so we don't spam this branch
 				self.standby_pulled = True
 
 		if frame_time > (self._check_in_started_at or self.m.start_time) + self.timeout:
@@ -83,7 +83,7 @@ class CheckIn:
 	async def start(self, ctx: bot.Context) -> None:
 		"""Post the check-in message, add the ready/abort reactions, register the
 		reaction handler, and render the board."""
-		# Snapshot originals so standby joiners aren\'t penalized for missing check-in.
+		# Snapshot originals so standby joiners aren't penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
 		text = f"!spawn message {self.m.id}"
 		self.message = await ctx.channel.send(text)
@@ -113,7 +113,7 @@ class CheckIn:
 					pass
 
 			# All not-ready players discarded — record violations only on ranked.
-			# Unranked queues are casual; missing/aborting check-in shouldn\'t penalize.
+			# Unranked queues are casual; missing/aborting check-in shouldn't penalize.
 			if self.m.ranked:
 				for member in self.discarded_players:
 					try:
@@ -241,7 +241,7 @@ class CheckIn:
 
 	async def pull_standby(self, ctx: bot.Context) -> None:
 		"""Delegate to bot.match.standby.pull_standby_into_match — kept as a
-		thin shim so existing callers (think()) don\'t need to change."""
+		thin shim so existing callers (think()) don't need to change."""
 		self.standby_pulled = True
 		from bot.match.standby import pull_standby_into_match
 		await pull_standby_into_match(self, ctx)
@@ -287,11 +287,11 @@ class CheckIn:
 
 		# If we expanded past queue.cfg.size via standby, the ready set might be
 		# bigger than the queue size. Trim it down using join order so revert()
-		# doesn\'t try to start a match with too many players.
+		# doesn't try to start a match with too many players.
 		queue_size = self.m.queue.cfg.size
 		ready_list = [p for p in self.m.players if p in self.ready_players][:queue_size]
 		extra_ready = [p for p in self.m.players if p in self.ready_players][queue_size:]
-		# Anyone ready but over the cap goes back to standby (they didn\'t fail)
+		# Anyone ready but over the cap goes back to standby (they didn't fail)
 		for p in extra_ready:
 			if p not in self.m.queue.standby:
 				self.m.queue.standby.append(p)
