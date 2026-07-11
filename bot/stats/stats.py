@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""Stats persistence and queries: table setup, ranked/unranked match
+registration (MMR, streaks, rating history), admin undo/reset, leaderboard
+queries, and the weekly decay job. The MMR formula lives in mmr_engine.py."""
+from __future__ import annotations
+
 import time
 import datetime
 import asyncio
@@ -18,7 +23,7 @@ from core.utils import iter_to_dict, get_nick
 from bot.stats.mmr_engine import compute_mmr_changes
 
 
-def _calculate_mmr_changes(m, ratings_by_id: dict) -> dict:
+def _calculate_mmr_changes(m: bot.Match, ratings_by_id: dict) -> dict:
     """
     Return {user_id: mmr_change} for every player in the match.
     Positive = gain (winner), negative = loss (loser). Draw -> 0 for everyone.
@@ -46,7 +51,9 @@ def _calculate_mmr_changes(m, ratings_by_id: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 #  Table initialisation
 # ══════════════════════════════════════════════════════════════════════════════
-async def init_stats_tables():
+async def init_stats_tables() -> None:
+    """Create the stats tables if missing: players, qc_players, rating history,
+    matches, the match-id counter, per-player match rows, and disabled guilds."""
     await db.ensure_table(dict(
         tname="players",
         columns=[
@@ -129,7 +136,9 @@ async def init_stats_tables():
     ))
 
 
-async def check_match_id_counter():
+async def check_match_id_counter() -> None:
+    """Sync the match-id counter to one past the highest existing match,
+    seeding the row if it doesn't exist yet."""
     m = await db.select_one(('match_id',), 'qc_matches', order_by='match_id', limit=1)
     next_known = m['match_id'] + 1 if m else 0
     counter = await db.select_one(('next_id',), 'qc_match_id_counter')
@@ -139,7 +148,8 @@ async def check_match_id_counter():
         await db.update('qc_match_id_counter', dict(next_id=next_known))
 
 
-async def next_match():
+async def next_match() -> int:
+    """Increment the match-id counter and return the id for the next match."""
     counter = await db.select_one(('next_id',), 'qc_match_id_counter')
     await db.update('qc_match_id_counter', dict(next_id=counter['next_id'] + 1))
     log.debug(f"Current match_id is {counter['next_id']}")
@@ -149,7 +159,9 @@ async def next_match():
 # ══════════════════════════════════════════════════════════════════════════════
 #  Match registration
 # ══════════════════════════════════════════════════════════════════════════════
-async def register_match_unranked(ctx, m):
+async def register_match_unranked(ctx: bot.Context, m: bot.Match) -> None:
+    """Record an unranked match: the match row plus per-player rows, with no
+    rating changes."""
     await db.insert('qc_matches', dict(
         match_id=m.id, channel_id=m.qc.id,
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
@@ -170,7 +182,11 @@ async def register_match_unranked(ctx, m):
                              user_id=p.id, nick=nick, team=team))
 
 
-async def register_match_ranked(ctx, m):
+async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
+    """Record a ranked match: apply MMR changes, update each player's
+    rating/streak/W-L-D, and write rating history and per-player rows. A fill-in
+    sub's loss penalty is redirected to the original player. Finishes by
+    refreshing rating roles and posting the results embed."""
     now = int(time.time())
     await db.insert('qc_matches', dict(
         match_id=m.id, channel_id=m.qc.id,
@@ -327,7 +343,10 @@ async def register_match_ranked(ctx, m):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Admin operations
 # ══════════════════════════════════════════════════════════════════════════════
-async def undo_match(ctx, match_id):
+async def undo_match(ctx: bot.Context, match_id: int) -> bool:
+    """Reverse a match: roll each player's rating/record back using the stored
+    history, delete the match's history and per-player rows, and refresh roles.
+    Returns False if the match isn't found on the channel."""
     match = await db.select_one(
         ('ranked', 'winner'), 'qc_matches',
         where=dict(match_id=match_id, channel_id=ctx.qc.id)
@@ -371,7 +390,9 @@ async def undo_match(ctx, match_id):
     return True
 
 
-async def reset_channel(channel_id):
+async def reset_channel(channel_id: int) -> None:
+    """Wipe all ratings, history, matches, and per-player rows for a channel
+    (season reset)."""
     where = {'channel_id': channel_id}
     await db.delete("qc_players",        where=where)
     await db.delete("qc_rating_history", where=where)
@@ -379,14 +400,17 @@ async def reset_channel(channel_id):
     await db.delete("qc_player_matches", where=where)
 
 
-async def reset_player(channel_id, user_id):
+async def reset_player(channel_id: int, user_id: int) -> None:
+    """Wipe one player's rating, history, and per-player rows in a channel."""
     where = {'channel_id': channel_id, 'user_id': user_id}
     await db.delete("qc_players",        where=where)
     await db.delete("qc_rating_history", where=where)
     await db.delete("qc_player_matches", where=where)
 
 
-async def replace_player(channel_id, user_id1, user_id2, new_nick):
+async def replace_player(channel_id: int, user_id1: int, user_id2: int, new_nick: str) -> None:
+    """Re-point one player's records (rating, history, match rows) onto a new
+    user id and nick, dropping any existing rows for the target id."""
     await db.delete("qc_players", {'channel_id': channel_id, 'user_id': user_id2})
     where = {'channel_id': channel_id, 'user_id': user_id1}
     await db.update("qc_players",        {'user_id': user_id2, 'nick': new_nick}, where)
@@ -397,7 +421,8 @@ async def replace_player(channel_id, user_id1, user_id2, new_nick):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Query helpers
 # ══════════════════════════════════════════════════════════════════════════════
-async def qc_stats(channel_id):
+async def qc_stats(channel_id: int) -> dict:
+    """Return {total, queues}: match counts per queue for a channel."""
     data = await db.fetchall(
         "SELECT `queue_name`, COUNT(*) as count FROM `qc_matches` "
         "WHERE `channel_id`=%s GROUP BY `queue_name` ORDER BY count DESC",
@@ -406,7 +431,8 @@ async def qc_stats(channel_id):
     return dict(total=sum(i['count'] for i in data), queues=data)
 
 
-async def user_stats(channel_id, user_id):
+async def user_stats(channel_id: int, user_id: int) -> dict:
+    """Return {total, queues}: match counts per queue for one player."""
     data = await db.fetchall(
         "SELECT `queue_name`, COUNT(*) as count FROM `qc_player_matches` AS pm "
         "JOIN `qc_matches` AS m ON pm.match_id=m.match_id "
@@ -417,7 +443,9 @@ async def user_stats(channel_id, user_id):
     return dict(total=sum(i['count'] for i in data), queues=data)
 
 
-async def top(channel_id, time_gap=None):
+async def top(channel_id: int, time_gap: int | None = None) -> dict:
+    """Return {total, players}: the top 10 players by matches played, optionally
+    limited to matches after the time_gap timestamp."""
     total = await db.fetchone(
         "SELECT COUNT(*) as count FROM `qc_matches` WHERE channel_id=%s"
         + (f" AND at>{time_gap}" if time_gap else ""),
@@ -435,7 +463,9 @@ async def top(channel_id, time_gap=None):
     return dict(total=total['count'], players=data)
 
 
-async def last_games(channel_id):
+async def last_games(channel_id: int) -> list[dict]:
+    """Return each channel player's row plus the timestamp of their most recent
+    ranked match (NULL if none)."""
     return await db.fetchall(
         "SELECT tmp.at, p.* "
         "FROM `qc_players` AS p "
@@ -453,11 +483,15 @@ async def last_games(channel_id):
 #  Background jobs
 # ══════════════════════════════════════════════════════════════════════════════
 class StatsJobs:
+    """Scheduler for periodic stats jobs: currently the weekly rating deviation
+    decay, applied each Monday."""
+
     def __init__(self):
         self.next_decay_at = int(self._next_monday().timestamp())
 
     @staticmethod
-    def _next_monday():
+    def _next_monday() -> datetime.datetime:
+        """Return next Monday at midnight."""
         d = datetime.datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
         d += datetime.timedelta(days=1)
         while d.weekday() != 0:
@@ -465,13 +499,16 @@ class StatsJobs:
         return d
 
     @staticmethod
-    async def _apply_rating_decays():
+    async def _apply_rating_decays() -> None:
+        """Apply the weekly deviation decay across all queue channels."""
         log.info("--- Applying weekly deviation decays ---")
         for qc in bot.queue_channels.values():
             await qc.apply_rating_decay()
             await asyncio.sleep(1)
 
-    async def think(self, frame_time):
+    async def think(self, frame_time: int) -> None:
+        """Frame tick: once the scheduled time passes, reschedule and kick off
+        the weekly decay."""
         if frame_time > self.next_decay_at:
             self.next_decay_at = int(self._next_monday().timestamp())
             asyncio.create_task(self._apply_rating_decays())
