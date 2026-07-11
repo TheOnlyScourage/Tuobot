@@ -87,13 +87,6 @@ class QueueChannel:
 				verify_message=f"Promotion delay time must be less than {seconds_to_str(MAX_EXPIRE_TIME)}"
 			),
 			Variables.BoolVar(
-				"remove_afk",
-				display="Auto remove on AFK status",
-				section="Auto-remove",
-				default=1,
-				notnull=True
-			),
-			Variables.BoolVar(
 				"remove_offline",
 				display="Auto remove on offline status",
 				section="Auto-remove",
@@ -443,8 +436,6 @@ class QueueChannel:
 					reason = self.gt("expire time ran off")
 				elif reason == "offline":
 					reason = self.gt("member offline")
-				elif reason == "afk":
-					reason = self.gt("member AFK")
 				elif reason == "left guild":
 					reason = self.gt("member left the guild")
 				elif reason == "pickup started":
