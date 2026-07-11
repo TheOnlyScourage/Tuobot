@@ -17,8 +17,6 @@ DC_INVITE_LINK = "{dc_invite_link}"
 DC_OWNER_ID = {dc_owner_id}
 DC_SLASH_SERVERS = [{dc_slash_servers}]
 
-PUBOBOT_USER_ID = {pubobot_user_id}
-LOBBYBOT_USER_ID = {lobbybot_user_id}
 
 DB_URI = "{db_uri}"
 LOG_LEVEL = "{log_level}"
@@ -66,19 +64,6 @@ def main():
     if owner_id == "0":
         print("WARNING: DC_OWNER_ID not set. Bot owner commands won't work.")
 
-    pubobot_user_id = os.environ.get("PUBOBOT_USER_ID", "")
-    if not pubobot_user_id:
-        print("ERROR: PUBOBOT_USER_ID environment variable is required.")
-        print("       Set it to the Discord user ID of the Pubobot bot whose")
-        print("       ELO result messages NammaPUBobot should mirror.")
-        sys.exit(1)
-
-    # LOBBYBOT_USER_ID is optional — only needed if you use AOE2LobbyBOT
-    # for civ data scraping. Defaults to 0 (disabled) if not set.
-    lobbybot_user_id = os.environ.get("LOBBYBOT_USER_ID", "0")
-    if lobbybot_user_id == "0":
-        print("INFO: LOBBYBOT_USER_ID not set. Civ data scraping from AOE2LobbyBOT will be disabled.")
-
     config_content = TEMPLATE.format(
         dc_bot_token=token,
         dc_client_id=os.environ.get("DC_CLIENT_ID", "0"),
@@ -86,8 +71,6 @@ def main():
         dc_invite_link=os.environ.get("DC_INVITE_LINK", ""),
         dc_owner_id=owner_id,
         dc_slash_servers=os.environ.get("DC_SLASH_SERVERS", ""),
-        pubobot_user_id=pubobot_user_id,
-        lobbybot_user_id=lobbybot_user_id,
         db_uri=db_uri,
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         commands_url=os.environ.get("COMMANDS_URL",
