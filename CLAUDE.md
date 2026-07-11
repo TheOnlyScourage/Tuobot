@@ -33,7 +33,16 @@ python3 start.py
 ruff check .
 ```
 
-There is **no test suite** (the old pytest/`tests/` for the removed AoE2 civ/elo parsers is gone). CI runs `ruff check .` on every PR via `.github/workflows/ci.yml`. Keep the tree ruff-green.
+## Tests
+
+```bash
+# Run the suite — needs ONLY pytest (no nextcord/aiomysql/DB)
+pytest tests/ -v
+```
+
+`tests/` holds regression suites for the two **pure** modules: `bot/stats/mmr_engine.py` (hand-computed + golden 6v6 scenarios locking the MMR formula) and `bot/match/captain_selection.py` (both selection strategies, incl. the eligibility-role vs. bonus-role fallback lock). `tests/conftest.py` loads them via importlib with a stubbed `bot` package so `bot/__init__.py` (which needs Discord + MySQL at import time) never runs — keep new tests dependency-free the same way. If a golden test fails after an intentional balance change, update the golden **and announce the change**.
+
+CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a docker build on every PR. Keep the tree green on all three.
 
 ## Architecture
 
@@ -92,4 +101,4 @@ Standalone tools, not imported by the running bot:
 - Deployment target is **Railway** (`railway.toml`, `Dockerfile`, `start.py`).
 
 ### Not in this codebase (removed — don't go looking)
-The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `tests/` pytest suite have all been removed. Stale references may still linger in comments; the code paths are gone.
+The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, and the full text-command (`!cmd`) system have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr/captain-selection suite, unrelated to it.)
