@@ -45,6 +45,22 @@ def _table_nick(nick: str, maxlen: int = 18) -> str:
 	return _NON_ASCII.sub('', nick).strip()[:maxlen]
 
 
+def _lb_table(data: list, page: int) -> str:
+	"""Build the monospace leaderboard body (header + one row per player) for a page."""
+	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
+	rows = []
+	for i, row in enumerate(data):
+		pos   = (page * 12) + i + 1
+		nick  = _table_nick(row["nick"])
+		w, losses = row["wins"], row["losses"]
+		wr    = int(w * 100 / ((w + losses) or 1))
+		wl    = f"{w}-{losses}"
+		emoji = get_rank_emoji(row["rating"])
+		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
+		rows.append(f"{text}  {emoji} {row['rating']}")
+	return header + "\n\u2014\n" + "\n".join(rows)
+
+
 
 async def last_game(ctx: bot.Context, queue: str | None = None, player: Member | None = None, match_id: int | None = None) -> None:
 	"""Show the most recent match, optionally filtered by queue, player, or match id."""
@@ -214,22 +230,9 @@ async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
 	if not len(data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
-	# Q6Bot-matching table: inline code spans for alignment + emoji outside
-	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
-	rows   = []
-	for i, row in enumerate(data):
-		pos   = (page * 12) + i + 1
-		nick  = _table_nick(row["nick"])
-		w, losses = row["wins"], row["losses"]
-		wr    = int(w * 100 / ((w + losses) or 1))
-		wl    = f"{w}-{losses}"
-		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
-		rows.append(f"{text}  {emoji} {row['rating']}")
-
 	embed = Embed(
 		title=f"🏆 Leaderboard — page {page+1} of {max(pages, 1)}",
-		description=header + "\n—\n" + "\n".join(rows),
+		description=_lb_table(data, page),
 		colour=Colour(0x7289DA)
 	)
 	await ctx.reply(embed=embed)
@@ -339,22 +342,9 @@ async def season_leaderboard(ctx: bot.Context, page: int = 1, min_matches: int =
 			ctx.qc.gt(f"No players with {min_matches}+ matches found.")
 		)
 
-	# Q6Bot-matching table format
-	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
-	rows   = []
-	for i, row in enumerate(data):
-		pos   = (page * 12) + i + 1
-		nick  = _table_nick(row["nick"])
-		w, losses = row["wins"], row["losses"]
-		wr    = int(w * 100 / ((w + losses) or 1))
-		wl    = f"{w}-{losses}"
-		emoji = get_rank_emoji(row["rating"])
-		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
-		rows.append(f"{text}  {emoji} {row['rating']}")
-
 	embed = Embed(
 		title=f"🏆 Season Leaderboard ({min_matches}+ games) — page {page+1} of {max(pages, 1)}",
-		description=header + "\n—\n" + "\n".join(rows),
+		description=_lb_table(data, page),
 		colour=Colour(0x7289DA)
 	)
 	await ctx.reply(embed=embed)
