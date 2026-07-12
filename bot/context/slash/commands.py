@@ -584,14 +584,14 @@ async def _rank(
 @dc.slash_command(name='leaderboard', description='Show rating leaderboard.', **guild_kwargs)
 async def _leaderboard(
 		interaction: Interaction,
-		page: int = SlashOption(required=False),
+		page: int = SlashOption(required=False, description="Page to open on (buttons flip pages)."),
 ) -> None: await run_slash(bot.commands.leaderboard, interaction=interaction, page=page)
 
 
 @dc.slash_command(name='season_leaderboard', description='Leaderboard for players with 15+ matches played.', **guild_kwargs)
 async def _season_leaderboard(
 		interaction: Interaction,
-		page: int = SlashOption(required=False),
+		page: int = SlashOption(required=False, description="Page to open on (buttons flip pages)."),
 		min_matches: int = SlashOption(required=False, default=15, description="Minimum matches to qualify (default 15).")
 ) -> None: await run_slash(bot.commands.season_leaderboard, interaction=interaction, page=page, min_matches=min_matches)
 
