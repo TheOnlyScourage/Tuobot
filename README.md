@@ -45,8 +45,8 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | Command | What it does |
 |---|---|
 | `/rank [player]` | Show a player's rating profile — current rating, W/L/D, win rate, and recent matches. Defaults to yourself. |
-| `/leaderboard [page]` | Show the rating leaderboard (paged, 12 per page). |
-| `/season_leaderboard [page]` | Leaderboard filtered to players with 15+ matches this season. |
+| `/leaderboard [page]` | Show the rating leaderboard — ⏮ ◀ ▶ ⏭ buttons flip pages, 🔍 **Me** jumps to and highlights your own row. |
+| `/season_leaderboard [page]` | The same interactive board, filtered to players with 15+ matches this season. |
 | `/lastgame` | Show details of the most recent finished match. |
 | `/top` | Show top players ranked by match count. |
 | `/activity` | Activity heatmap (weekday × hour, IST). |
