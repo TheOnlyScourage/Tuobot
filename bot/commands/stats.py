@@ -6,13 +6,13 @@ import io
 import asyncio
 from time import time
 import re
-from math import ceil
 from nextcord import Member, Embed, Colour, File
 
 from core.utils import get, find, seconds_to_str, get_nick, discord_table  # noqa: F401
 from core.database import db
 
 import bot
+from bot.commands.views import LeaderboardView
 
 # Custom rank emojis — must match match.py
 RANK_EMOJIS = [
@@ -45,8 +45,11 @@ def _table_nick(nick: str, maxlen: int = 18) -> str:
 	return _NON_ASCII.sub('', nick).strip()[:maxlen]
 
 
-def _lb_table(data: list, page: int) -> str:
-	"""Build the monospace leaderboard body (header + one row per player) for a page."""
+def _lb_table(data: list, page: int, highlight_uid: int | None = None) -> str:
+	"""Build the monospace leaderboard body (header + one row per player) for a page.
+
+	`highlight_uid` marks that player's row (► prefix + bold) — used by the
+	view's 🔍 Me button."""
 	header = f"`{'No':>2}  {'Nickname':<18} {'W-L':<8} {'WR':>6}`"
 	rows = []
 	for i, row in enumerate(data):
@@ -57,8 +60,23 @@ def _lb_table(data: list, page: int) -> str:
 		wl    = f"{w}-{losses}"
 		emoji = get_rank_emoji(row["rating"])
 		text  = f"`{pos:>2}  {nick:<18} {wl:<8} ({wr:>3}%)`"
-		rows.append(f"{text}  {emoji} {row['rating']}")
+		if highlight_uid is not None and row.get("user_id") == highlight_uid:
+			rows.append(f"► **{text}**  {emoji} **{row['rating']}**")
+		else:
+			rows.append(f"{text}  {emoji} {row['rating']}")
 	return header + "\n\u2014\n" + "\n".join(rows)
+
+
+def _lb_embed_maker(title_prefix: str):
+	"""Return a make_embed(data, page, pages, highlight_uid) closure for
+	LeaderboardView, so both leaderboard commands share one embed shape."""
+	def make_embed(data: list, page: int, pages: int, highlight_uid: int | None = None) -> Embed:
+		return Embed(
+			title=f"🏆 {title_prefix} — page {page + 1} of {pages}",
+			description=_lb_table(data, page, highlight_uid),
+			colour=Colour(0x7289DA)
+		)
+	return make_embed
 
 
 
@@ -221,21 +239,20 @@ async def rank(ctx: bot.Context, player: Member | None = None) -> None:
 	await ctx.reply(embed=embed)
 
 async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
-	"""Show a page of the rating leaderboard."""
-	page = (page or 1) - 1
-
+	"""Show the rating leaderboard with button pagination (⏮ ◀ ▶ ⏭ + 🔍 Me)."""
 	all_data = await ctx.qc.get_lb()
-	pages = ceil(len(all_data) / 12)
-	data  = all_data[page * 12:(page + 1) * 12]
-	if not len(data):
+	if not len(all_data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
-	embed = Embed(
-		title=f"🏆 Leaderboard — page {page+1} of {max(pages, 1)}",
-		description=_lb_table(data, page),
-		colour=Colour(0x7289DA)
+	# `page` is just the starting page now; out-of-range values clamp instead
+	# of erroring since the buttons make every page reachable anyway.
+	view = LeaderboardView(
+		data=all_data,
+		make_embed=_lb_embed_maker("Leaderboard"),
+		start_page=(page or 1) - 1,
 	)
-	await ctx.reply(embed=embed)
+	await ctx.reply(embed=view.render(), view=view)
+	await view.bind(ctx)
 
 async def activity(ctx: bot.Context, player: Member | None = None) -> None:
 	"""Render an activity heatmap (weekday x hour, last 28 days) for a player or the channel."""
@@ -326,28 +343,24 @@ async def activity(ctx: bot.Context, player: Member | None = None) -> None:
 
 
 async def season_leaderboard(ctx: bot.Context, page: int = 1, min_matches: int = 15) -> None:
-	"""Leaderboard showing only players with min_matches or more games played."""
-	page = (page or 1) - 1
-
+	"""Button-paginated leaderboard showing only players with min_matches+ games."""
 	all_data  = await ctx.qc.get_lb()
 	qualified = [
 		r for r in all_data
 		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
 	]
-
-	pages = ceil(len(qualified) / 12)
-	data  = qualified[page * 12:(page + 1) * 12]
-	if not len(data):
+	if not len(qualified):
 		raise bot.Exc.NotFoundError(
 			ctx.qc.gt(f"No players with {min_matches}+ matches found.")
 		)
 
-	embed = Embed(
-		title=f"🏆 Season Leaderboard ({min_matches}+ games) — page {page+1} of {max(pages, 1)}",
-		description=_lb_table(data, page),
-		colour=Colour(0x7289DA)
+	view = LeaderboardView(
+		data=qualified,
+		make_embed=_lb_embed_maker(f"Season Leaderboard ({min_matches}+ games)"),
+		start_page=(page or 1) - 1,
 	)
-	await ctx.reply(embed=embed)
+	await ctx.reply(embed=view.render(), view=view)
+	await view.bind(ctx)
 
 
 
