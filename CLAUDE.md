@@ -70,7 +70,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/queues/pickup_queue.py`** — `PickupQueue`: a player queue that spawns a `Match` when full (`common.py` holds `QueueResponses`/`Qr`)
 - **`bot/match/`** — the `Match` lifecycle (`INIT → CHECK_IN → DRAFT → WAITING_REPORT`):
   - `match.py` (`Match` + `Team`), `check_in.py` (ready-up / race-to-ready / standby fill / abort), `draft.py` (captain picks), `standby.py` (race-to-ready standby fill), `embeds.py` (all match embeds), `captain_selection.py` (captain-role pick logic + streak cooldowns), `party_code.py`, `subbing.py` (pure `/subauto` selection helper)
-- **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`
+- **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`; plus `views.py` (nextcord UI Views — currently the button-paginated `LeaderboardView`; renders via injected callables so it imports nothing from the bot package)
 - **`bot/context/`** — command-context abstraction:
   - `slash/` — the primary interface: command definitions in `commands.py` (thin wrappers over `bot/commands/` via `run_slash()`), autocomplete in `autocomplete.py`, subcommand groups in `groups.py`, `SlashContext` in `context.py`
   - `message/` — a **minimal** `MessageContext` kept only to support the `++` / `--` add/remove shorthand; the full `!command` system was removed (slash-only)
@@ -89,7 +89,6 @@ Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ran
 
 ### Utils & scripts
 Standalone tools, not imported by the running bot:
-- `utils/import_pubobot_export.py` — one-off migration: imports a PUBobot CSV export (`--export-dir`) into MySQL; `utils/db_helpers.py` — shared pool/URI helpers
 - `scripts/backup_db.sh` — DB backup helper
 
 ## Key conventions
@@ -101,4 +100,4 @@ Standalone tools, not imported by the running bot:
 - Deployment target is **Railway** (`railway.toml`, `Dockerfile`, `start.py`).
 
 ### Not in this codebase (removed — don't go looking)
-The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, and the full text-command (`!cmd`) system have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr/captain-selection suite, unrelated to it.)
+The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `utils/` folder (the one-off PUBobot CSV migration importer + its DB helpers — migration long done, source CSVs deleted) have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr/captain-selection suite, unrelated to it.)
