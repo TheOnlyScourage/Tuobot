@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bot.constants import HOUSE_EMOJIS, get_rank_emoji as _rank_emoji
+from bot.constants import (
+	HOUSE_EMOJIS, get_rank_emoji as _rank_emoji,
+	MATCH_COLOUR_CHECK_IN, MATCH_COLOUR_DRAFT, MATCH_COLOUR_LIVE,
+)
 from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
 from core.utils import get_nick, join_and
@@ -75,7 +78,7 @@ class Embeds:
 	def check_in(self, not_ready: list[Member]) -> Embed:
 		"""Build the check-in stage embed: the waiting-on list plus ready/abort instructions."""
 		embed = Embed(
-			colour=Colour(0xf5d858),
+			colour=Colour(MATCH_COLOUR_CHECK_IN),
 			title=self.m.gt("__**{queue}** is now on the check-in stage!__").format(
 				queue=self.m.queue.name[0].upper()+self.m.queue.name[1:]
 			)
@@ -100,7 +103,7 @@ class Embeds:
 		"""Build the draft stage embed: team rosters, the unpicked pool, and whose
 		turn it is to pick."""
 		embed = Embed(
-			colour=Colour(0x8758f5),
+			colour=Colour(MATCH_COLOUR_DRAFT),
 			title=self.m.gt("__**{queue}** is now on the draft stage!__").format(
 				queue=self.m.queue.name[0].upper()+self.m.queue.name[1:]
 			)
@@ -153,7 +156,7 @@ class Embeds:
 		layout, plus server, start message, and streamers."""
 		# ── Title: ALL CAPS queue name (Q6Bot style) ───────────────────────────
 		embed = Embed(
-			colour=Colour(0x27b75e),
+			colour=Colour(MATCH_COLOUR_LIVE),
 			title=f"{self.m.queue.name.upper()} has started!"
 		)
 
