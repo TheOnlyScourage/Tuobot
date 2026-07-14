@@ -100,7 +100,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin stats season_start` | Start a new season — turns ranked back ON for all queues, announces in the channel. |
 | `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights (incl. win/loss streaks), and the House Cup winner, then disables ranked and resets the season board (ratings **and** house points). **All-time match history is preserved** for `/profile` and career stats. Default 15 minimum matches. |
 | `/admin stats house_points_reset` | Reset all four Hogwarts house point totals to zero. |
-| `/admin stats reset` | **FULL wipe** — ratings *and* all-time match history. Unlike `season_end`, nothing survives. Be careful! |
+| `/admin stats nuclear_option` | ☢️ **Owner-locked FULL wipe** — ratings *and* all-time match history. Unlike `season_end`, nothing survives and there is no undo. Only the bot owner (`OWNER_ID` in `constants.py`) can run it. |
 | `/admin stats reset_player <player>` | Reset one player's season state (rating, record, streak). Their all-time history is preserved. |
 | `/admin stats stats_replace_player <player1> <player2>` | Replace player1's stats history with player2 (used when someone changes accounts). |
 | `/admin stats undo_match <match_id>` | Undo a finished match — reverses all rating changes **and any house points it awarded** (via the `house_awards` ledger). |
