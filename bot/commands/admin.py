@@ -109,14 +109,17 @@ async def rating_snap(ctx: bot.Context) -> None:
 
 
 async def stats_reset(ctx: bot.Context) -> None:
-	"""Wipe all match stats and ratings for the channel."""
+	"""FULL wipe of the channel: ratings AND all-time match history (which
+	/profile and future milestones depend on). Unlike season_end, nothing is
+	preserved. There is no undo."""
 	ctx.check_perms(ctx.Perms.ADMIN)
-	await bot.stats.reset_channel(ctx.qc.id)
+	await bot.stats.wipe_channel(ctx.qc.id)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
 async def stats_reset_player(ctx: bot.Context, player: str) -> None:
-	"""Wipe one player's stats and rating on the channel."""
+	"""Reset one player's season state (rating, W-L-D, streak). Their all-time
+	match history is preserved."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
