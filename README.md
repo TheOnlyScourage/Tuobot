@@ -44,7 +44,8 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 ### Stats & Info
 | Command | What it does |
 |---|---|
-| `/rank [player]` | Show a player's rating profile — current rating, W/L/D, win rate, and recent matches. Defaults to yourself. |
+| `/rank [player]` | Show a player's **current-season** rating profile — rating, W/L/D, win rate, and recent matches. Defaults to yourself. |
+| `/profile [player]` | Render a PNG profile card — **all-time across seasons**: career record, peak rating, best-ever streak, a rating sparkline, most-teamed-with and nemesis (current rating + streak show live state). Defaults to yourself. |
 | `/leaderboard [page]` | Show the rating leaderboard — ⏮ ◀ ▶ ⏭ buttons flip pages, 🔍 **Me** jumps to and highlights your own row. |
 | `/season_leaderboard [page]` | The same interactive board, filtered to players with 15+ matches this season. |
 | `/lastgame` | Show details of the most recent finished match. |
@@ -97,10 +98,10 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | Command | What it does |
 |---|---|
 | `/admin stats season_start` | Start a new season — turns ranked back ON for all queues, announces in the channel. |
-| `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights (incl. win/loss streaks), and the House Cup winner, then disables ranked and resets all stats (ratings **and** house points). Default 15 minimum matches. |
+| `/admin stats season_end [min_matches]` | End the season — posts the standings embed, season highlights (incl. win/loss streaks), and the House Cup winner, then disables ranked and resets the season board (ratings **and** house points). **All-time match history is preserved** for `/profile` and career stats. Default 15 minimum matches. |
 | `/admin stats house_points_reset` | Reset all four Hogwarts house point totals to zero. |
-| `/admin stats reset` | Wipe all stats data for the channel (be careful!). |
-| `/admin stats reset_player <player>` | Reset one player's stats. |
+| `/admin stats reset` | **FULL wipe** — ratings *and* all-time match history. Unlike `season_end`, nothing survives. Be careful! |
+| `/admin stats reset_player <player>` | Reset one player's season state (rating, record, streak). Their all-time history is preserved. |
 | `/admin stats stats_replace_player <player1> <player2>` | Replace player1's stats history with player2 (used when someone changes accounts). |
 | `/admin stats undo_match <match_id>` | Undo a finished match — reverses all rating changes **and any house points it awarded** (via the `house_awards` ledger). |
 | `/admin stats show [player]` | Show channel or per-player stats. |
@@ -165,6 +166,6 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 
 **Hogwarts houses**: Captains' Discord house roles determine team names. The winning team of a **ranked** match awards house points: captain = 10, other players = 5. Players with no house role contribute nothing. Totals feed the House Cup and reset each season.
 
-**Seasons**: Each season tracks ratings/stats independently. `season_end` resets everything (ratings + house points), posts the standings, highlights, and House Cup, then turns ranked off. `season_start` re-enables ranked and starts the new season counter.
+**Seasons**: Each season tracks ratings/stats independently. `season_end` resets the season board (ratings + house points), posts the standings, highlights, and House Cup, then turns ranked off; **match history is kept forever** (stamped with a `season` number) to power all-time stats like `/profile`. `season_start` re-enables ranked and starts the new season counter.
 
 **Fill-in subs**: When using `/admin match sub_player`, the sub plays for free if they win, but losses are charged to the original player. Use `/swap` instead if you want a clean penalty-less swap.
