@@ -39,6 +39,17 @@ HOUSE_EMOJIS = {
 }
 
 
+# ── Match-state embed colours ────────────────────────────────────────────────
+# One tint per visible match phase so the channel reads at a glance:
+#   check-in yellow → draft blue → live green → reported purple.
+# (The gathering phase has no embed — queue joins are plain text messages —
+# and the gold house-points embed keeps its own thematic colour.)
+MATCH_COLOUR_CHECK_IN = 0xf5d858   # yellow — waiting on ready checks
+MATCH_COLOUR_DRAFT    = 0x3498db   # blue   — captains picking teams
+MATCH_COLOUR_LIVE     = 0x27b75e   # green  — match started / in progress
+MATCH_COLOUR_REPORTED = 0x8758f5   # purple — results posted (wins AND draws)
+
+
 # ── Quidditch specialty roles ────────────────────────────────────────────────
 # Used by the @Q ping embed and end-of-season role winners.
 SPECIALTY_ROLES = {
