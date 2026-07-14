@@ -372,9 +372,9 @@ async def _stats(
 ) -> None: await run_slash(bot.commands.stats, interaction=interaction, player=player)
 
 
-@groups.admin_stats.subcommand(name='reset', description='Reset all stats data on the channel.')
-async def _stats_reset(interaction: Interaction
-) -> None: await run_slash(bot.commands.stats_reset, interaction=interaction)
+@groups.admin_stats.subcommand(name='nuclear_option', description='☢️ FULL wipe: ratings AND all-time history. Owner-only. NO undo.')
+async def _stats_nuclear_option(interaction: Interaction
+) -> None: await run_slash(bot.commands.stats_nuclear_option, interaction=interaction)
 
 
 @groups.admin_stats.subcommand(name='reset_player', description='Reset player stats.')
