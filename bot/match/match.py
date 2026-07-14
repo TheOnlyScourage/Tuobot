@@ -15,7 +15,7 @@ import random
 from nextcord import DiscordException, Embed, Colour
 
 import bot
-from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID
+from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID, MATCH_COLOUR_REPORTED
 from core.utils import find, get, join_and, get_nick
 from core.console import log
 from core.client import dc
@@ -600,7 +600,9 @@ class Match:
 		else:
 			title = f"{self.queue.name.capitalize()} Results — Match {self.id}"
 
-		embed = Embed(title=title, colour=Colour(0x27b75e) if self.winner is not None else Colour(0xf5d858))
+		# Reported = purple regardless of outcome (the 🤝 title already marks
+		# draws); part of the state palette in bot/constants.py.
+		embed = Embed(title=title, colour=Colour(MATCH_COLOUR_REPORTED))
 
 		w_sign = "+" if w_change >= 0 else ""
 		l_sign = "+" if l_change >= 0 else ""
