@@ -3,9 +3,11 @@
 End-of-season embeds: interesting stats pulled from match history, plus the
 standalone House Cup announcement.
 
-Called from /admin stats season_end right BEFORE the channel reset deletes
-the underlying data. build_highlights_embed() and build_house_cup_embed()
-each return an embed that gets posted to the channel alongside the standings.
+Called from /admin stats season_end. Match history is PERMANENT (the season
+reset only clears qc_players), so every query here filters on
+qc_matches.season — an unfiltered query would silently become all-time.
+build_highlights_embed() and build_house_cup_embed() each return an embed
+that gets posted to the channel alongside the standings.
 
 Each query runs independently (see _safe) so one failing query can't take
 down the whole highlights embed.
@@ -33,39 +35,39 @@ def _member_role_set(member):
 	}
 
 
-async def _query_most_active(channel_id: int):
+async def _query_most_active(channel_id: int, season: int):
 	"""User_id with the most matches played this season."""
 	return await db.fetchall(
 		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as games "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
-		"WHERE pm.channel_id=%s "
+		"WHERE pm.channel_id=%s AND m.season=%s "
 		"GROUP BY pm.user_id ORDER BY games DESC LIMIT 5",
-		(channel_id,)
+		(channel_id, season)
 	)
 
 
-async def _query_most_wins(channel_id: int):
+async def _query_most_wins(channel_id: int, season: int):
 	"""User_id with the most match wins this season."""
 	return await db.fetchall(
 		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as wins "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
-		"WHERE pm.channel_id=%s AND m.ranked=1 AND m.winner = pm.team "
+		"WHERE pm.channel_id=%s AND m.season=%s AND m.ranked=1 AND m.winner = pm.team "
 		"GROUP BY pm.user_id ORDER BY wins DESC LIMIT 5",
-		(channel_id,)
+		(channel_id, season)
 	)
 
 
-async def _query_best_duo(channel_id: int):
+async def _query_best_duo(channel_id: int, season: int):
 	"""Pair of players who won the most matches together on the same team."""
 	# Pull every (match_id, user_id, team) row for ranked wins
 	rows = await db.fetchall(
 		"SELECT pm.match_id, pm.user_id, pm.team, pm.nick "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
-		"WHERE pm.channel_id=%s AND m.ranked=1 AND m.winner = pm.team",
-		(channel_id,)
+		"WHERE pm.channel_id=%s AND m.season=%s AND m.ranked=1 AND m.winner = pm.team",
+		(channel_id, season)
 	)
 
 	# Group by (match_id, team) so each set is one winning lineup
@@ -94,12 +96,14 @@ async def _query_best_duo(channel_id: int):
 	return dict(nick_a=nick_a, nick_b=nick_b, wins=count)
 
 
-async def _query_most_improved(channel_id: int):
+async def _query_most_improved(channel_id: int, season: int):
 	"""Player whose rating climbed the most across the season (best comeback).
 
 	Compares each player's current rating to the rating_before of their EARLIEST
-	match-linked history row. The min-games and non-null filtering is done in
-	Python to avoid a fragile HAVING-on-alias clause.
+	match-linked history row OF THIS SEASON — the history table is permanent
+	now, so the season boundary comes from joining each history row's match to
+	qc_matches.season. The min-games and non-null filtering is done in Python
+	to avoid a fragile HAVING-on-alias clause.
 	"""
 	rows = await db.fetchall(
 		"""
@@ -110,23 +114,24 @@ async def _query_most_improved(channel_id: int):
 			(
 				SELECT h.rating_before
 				FROM qc_rating_history h
+				JOIN qc_matches hm ON hm.match_id = h.match_id
 				WHERE h.channel_id = p.channel_id
 				  AND h.user_id    = p.user_id
-				  AND h.match_id   IS NOT NULL
+				  AND hm.season    = %s
 				ORDER BY h.id ASC LIMIT 1
 			) AS first_rating,
 			(p.wins + p.losses + p.draws) AS games
 		FROM qc_players p
 		WHERE p.channel_id = %s AND p.rating IS NOT NULL
 		""",
-		(channel_id,)
+		(season, channel_id)
 	)
 	rows = [r for r in rows if r['first_rating'] is not None and r['games'] >= 5]
 	rows.sort(key=lambda r: (r['current_rating'] - r['first_rating']), reverse=True)
 	return rows[:5]
 
 
-async def _query_streaks(channel_id: int):
+async def _query_streaks(channel_id: int, season: int):
 	"""Longest win streak and longest losing streak this season (ranked matches).
 
 	Reconstructs each player's ordered W/L/D sequence from match history and
@@ -137,9 +142,9 @@ async def _query_streaks(channel_id: int):
 		"SELECT pm.user_id, pm.nick, pm.team, m.winner, m.at, m.match_id "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
-		"WHERE pm.channel_id=%s AND m.ranked=1 "
+		"WHERE pm.channel_id=%s AND m.season=%s AND m.ranked=1 "
 		"ORDER BY m.at ASC, m.match_id ASC",
-		(channel_id,)
+		(channel_id, season)
 	)
 
 	seq = defaultdict(list)   # user_id -> ['W'/'L'/'D', ...] in chronological order
@@ -174,7 +179,7 @@ async def _query_streaks(channel_id: int):
 	return dict(win=best_win, loss=best_loss)
 
 
-async def _query_role_winners(channel_id: int, guild):
+async def _query_role_winners(channel_id: int, season: int, guild):
 	"""For each specialty role (Seeker/Beater/Keeper), find the player with
 	the most ranked wins who holds that role on Discord right now."""
 	if guild is None:
@@ -185,9 +190,9 @@ async def _query_role_winners(channel_id: int, guild):
 		"SELECT pm.user_id, MAX(pm.nick) AS nick, COUNT(*) as wins "
 		"FROM qc_player_matches pm "
 		"JOIN qc_matches m ON pm.match_id = m.match_id "
-		"WHERE pm.channel_id=%s AND m.ranked=1 AND m.winner = pm.team "
+		"WHERE pm.channel_id=%s AND m.season=%s AND m.ranked=1 AND m.winner = pm.team "
 		"GROUP BY pm.user_id ORDER BY wins DESC",
-		(channel_id,)
+		(channel_id, season)
 	)
 
 	# Walk in descending order; first match per role wins
@@ -221,12 +226,12 @@ async def build_highlights_embed(ctx, season_num: int) -> Embed | None:
 	channel_id = ctx.qc.id
 	guild      = ctx.channel.guild if hasattr(ctx, 'channel') else None
 
-	active       = await _safe("most_active",   _query_most_active,   channel_id)
-	winners      = await _safe("most_wins",     _query_most_wins,     channel_id)
-	duo          = await _safe("best_duo",      _query_best_duo,      channel_id)
-	improved     = await _safe("most_improved", _query_most_improved, channel_id)
-	streaks      = await _safe("streaks",       _query_streaks,       channel_id)
-	role_winners = await _safe("role_winners",  _query_role_winners,  channel_id, guild)
+	active       = await _safe("most_active",   _query_most_active,   channel_id, season_num)
+	winners      = await _safe("most_wins",     _query_most_wins,     channel_id, season_num)
+	duo          = await _safe("best_duo",      _query_best_duo,      channel_id, season_num)
+	improved     = await _safe("most_improved", _query_most_improved, channel_id, season_num)
+	streaks      = await _safe("streaks",       _query_streaks,       channel_id, season_num)
+	role_winners = await _safe("role_winners",  _query_role_winners,  channel_id, season_num, guild)
 
 	lines = []
 
