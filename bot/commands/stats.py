@@ -10,6 +10,7 @@ from nextcord import Member, Embed, Colour, File
 
 from core.utils import get, find, seconds_to_str, get_nick, discord_table  # noqa: F401
 from core.database import db
+from core.console import log
 
 import bot
 from bot.commands.views import LeaderboardView
@@ -245,22 +246,38 @@ _house_emblem_cache: dict[str, bytes] = {}
 
 async def _get_house_emblem(ctx: bot.Context, house: str) -> bytes | None:
 	"""Fetch (and memory-cache) the house's custom-emoji image for the card
-	watermark. Any failure — emoji missing from the guild cache, CDN hiccup —
-	returns None and the card falls back to the big-initial watermark."""
+	watermark. Primary: pull the art straight off Discord's CDN by emoji id —
+	the same machinery avatar fetches use, needing no cache, no guild, and no
+	Emoji object. Secondary: the client-wide emoji cache. Every failure LOGS
+	its reason ('[profile] ...') — no more silent letter fallbacks."""
 	if house in _house_emblem_cache:
 		return _house_emblem_cache[house]
-	try:
-		m = re.search(r'<a?:\w+:(\d+)>', HOUSE_EMOJIS.get(house, ''))
-		if not m:
-			return None
-		emoji = ctx.channel.guild.get_emoji(int(m.group(1)))
-		if emoji is None:
-			return None
-		data = await emoji.read()
-		_house_emblem_cache[house] = data
-		return data
-	except Exception:
+	m = re.search(r'<a?:\w+:(\d+)>', HOUSE_EMOJIS.get(house, ''))
+	if not m:
+		log.error(f"[profile] no emoji id parsed for house {house!r}")
 		return None
+	emoji_id = m.group(1)
+	data = None
+
+	try:
+		data = await bot.dc.http.get_from_cdn(
+			f"https://cdn.discordapp.com/emojis/{emoji_id}.png?size=256"
+		)
+	except Exception as e:
+		log.error(f"[profile] CDN emblem fetch failed for {house}: {e}")
+
+	if data is None:
+		try:
+			emoji = bot.dc.get_emoji(int(emoji_id))
+			reader = getattr(emoji, 'read', None)
+			if emoji is not None and reader is not None:
+				data = await reader()
+		except Exception as e:
+			log.error(f"[profile] emoji-cache emblem read failed for {house}: {e}")
+
+	if data:
+		_house_emblem_cache[house] = data
+	return data
 
 
 async def profile(ctx: bot.Context, player: Member | None = None) -> None:
