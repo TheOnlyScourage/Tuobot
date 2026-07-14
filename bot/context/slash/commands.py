@@ -581,6 +581,13 @@ async def _rank(
 ) -> None: await run_slash(bot.commands.rank, interaction=interaction, player=player)
 
 
+@dc.slash_command(name='profile', description='Show a Q6 profile card for you or another player.', **guild_kwargs)
+async def _profile(
+		interaction: Interaction,
+		player: Member = SlashOption(required=False, verify=False),
+) -> None: await run_slash(bot.commands.profile, interaction=interaction, player=player)
+
+
 @dc.slash_command(name='leaderboard', description='Show rating leaderboard.', **guild_kwargs)
 async def _leaderboard(
 		interaction: Interaction,
