@@ -2,7 +2,7 @@ from __future__ import annotations
 
 __all__ = [
 	'noadds', 'noadd', 'forgive', 'rating_seed', 'rating_penality', 'rating_hide',
-	'rating_reset', 'rating_snap', 'stats_reset', 'stats_reset_player', 'stats_replace_player',
+	'rating_reset', 'rating_snap', 'stats_nuclear_option', 'stats_reset_player', 'stats_replace_player',
 	'phrases_add', 'phrases_clear', 'undo_match',
 	'douche_add', 'douche_summary', 'douche_leaderboard'
 ]
@@ -14,6 +14,7 @@ from nextcord import Member, Embed, Colour
 from core.utils import seconds_to_str, get_nick
 
 import bot
+from bot.constants import OWNER_ID
 
 
 async def noadds(ctx: bot.Context) -> None:
@@ -108,11 +109,18 @@ async def rating_snap(ctx: bot.Context) -> None:
 	await ctx.success(ctx.qc.gt("Done."))
 
 
-async def stats_reset(ctx: bot.Context) -> None:
+async def stats_nuclear_option(ctx: bot.Context) -> None:
 	"""FULL wipe of the channel: ratings AND all-time match history (which
 	/profile and future milestones depend on). Unlike season_end, nothing is
-	preserved. There is no undo."""
+	preserved. There is no undo.
+
+	Owner-locked: gated to OWNER_ID (bot/constants.py) on top of the ADMIN
+	check — no other admin can fire this, by design."""
 	ctx.check_perms(ctx.Perms.ADMIN)
+	if ctx.author.id != OWNER_ID:
+		raise bot.Exc.PermissionError(ctx.qc.gt(
+			"☢️ Owner-locked: only the bot owner can erase all-time history."
+		))
 	await bot.stats.wipe_channel(ctx.qc.id)
 	await ctx.success(ctx.qc.gt("Done."))
 
