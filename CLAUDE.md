@@ -99,6 +99,7 @@ Standalone tools, not imported by the running bot:
 - All DB access is async through **`core.database.db`**. Removing a `CfgFactory` variable is safe — the loader reads *defined* variables, so a dropped column is just orphaned, not fatal.
 - **`bot.queue_channels`** is the central `channel_id → QueueChannel` dict. State persists to the MySQL `saved_state` table (+ `saved_state.json` fallback) and is restored on startup.
 - Deployment target is **Railway** (`railway.toml`, `Dockerfile`, `start.py`).
+- **`bot/db_init.py::init_all_tables` is the ONLY startup table-init path.** Any new table or column init MUST be registered as a step there — `init_stats_tables` was once defined-but-never-called, so its season-column ALTER never ran and every ranked registration crashed (July 2026 incident). If you add schema, add the step.
 - **Match history is permanent.** `season_end` → `reset_channel()` clears only `qc_players` (+ house points); `qc_matches` / `qc_player_matches` / `qc_rating_history` accumulate across seasons and power all-time stats (`/profile`, future milestones). Season-scoped queries MUST filter on `qc_matches.season` (stamped at registration; NULL legacy rows are backfilled at startup). The only full-history deleters are the explicit `/admin stats nuclear_option` (`wipe_channel` — **owner-locked** to `constants.OWNER_ID`, admins can't fire it) and per-match `undo_match`.
 
 ## Roadmap (agreed, not yet built)
