@@ -79,6 +79,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
   - `rating.py` — a single `Rating` class: per-channel rating **storage/maintenance** (fetch/seed, admin adjustments, weekly decay, rank snapping, season reset). It does *not* compute match deltas — `mmr_engine` does
   - `stats.py` — table setup + ranked/unranked match registration + admin undo/reset + leaderboard queries + the weekly decay job (this file uses **spaces**, unlike the rest of the bot)
   - `season.py`, `season_highlights.py` (end-of-season superlatives incl. win/loss streaks + the House Cup embed), `house_points.py` (Hogwarts House Cup), `captain_streak.py`, `checkin_tracker.py` (check-in violations → auto-ban), `noadds.py` (queue bans + phrases)
+  - `profile_card.py` — **pure** Pillow renderer for `/profile` PNG cards (house-themed gradients, rank colours, all-time sparkline/peak/best-streak) plus the pure data shapers `aggregate_encounters()` (teammate/nemesis) and `summarize_results()` (career W-L-D + best streak); imports only PIL + stdlib, fonts bundled in `assets/fonts/`
 - **`bot/alerts.py`** — the "41 alert system": watches active matches and pings the queue when a draft finishes inside the scheduled window
 - **`bot/douche.py`** — a light per-guild "douche" moderation log (received/given counts + leaderboard)
 - **`bot/expire.py`** — per-player expire timers; **`bot/exceptions.py`** — the `Exc` exception hierarchy
@@ -98,6 +99,22 @@ Standalone tools, not imported by the running bot:
 - All DB access is async through **`core.database.db`**. Removing a `CfgFactory` variable is safe — the loader reads *defined* variables, so a dropped column is just orphaned, not fatal.
 - **`bot.queue_channels`** is the central `channel_id → QueueChannel` dict. State persists to the MySQL `saved_state` table (+ `saved_state.json` fallback) and is restored on startup.
 - Deployment target is **Railway** (`railway.toml`, `Dockerfile`, `start.py`).
+- **Match history is permanent.** `season_end` → `reset_channel()` clears only `qc_players` (+ house points); `qc_matches` / `qc_player_matches` / `qc_rating_history` accumulate across seasons and power all-time stats (`/profile`, future milestones). Season-scoped queries MUST filter on `qc_matches.season` (stamped at registration; NULL legacy rows are backfilled at startup). The only full-history deleters are the explicit `/admin stats reset` (`wipe_channel`) and per-match `undo_match`.
+
+## Roadmap (agreed, not yet built)
+
+Larger parked designs:
+- **Seeker 1v1 snitch report system** — Model C: variable snitch total (up to 5), time-limited with sudden death; agreed formula `dominance_factor = 1 + (margin-1)*0.10 + (total-1)*0.06`, `softness_factor = 1 - (loser/winner)*0.5`, hard cap ±200.
+- **Shared economy** — Tuobot earns, Niffler (Glas's bot) spends; one MySQL database; append-only transaction ledger. The `house_awards` ledger + `undo_match` reversal is the deliberate dry run of this pattern.
+- **Crash-notification embed** — when `Match.think()` raises and `on_think` drops the match, post a best-effort "Match #X hit an internal error and was cancelled" embed instead of vanishing silently.
+
+Feature TODO (queued from the ideas session):
+- **Milestones** — 50th/100th/250th match, first time reaching a rank, new best streak → one appended line on the results embed. **Unblocked**: counts are all-time now that match history is permanent (100 games in one season stopped being realistic).
+- **Rank-up announcements** — when a result crosses a rank threshold (from `constants.py`), append "💎 X reached Diamond!" to the results embed.
+- **Spectator predictions** — after a draft locks, non-players tap 🅰️/🅱️ to call the winner; track an "Oracle" accuracy leaderboard.
+- **MVP voting** — post-report buttons for teammates to vote MVP; cosmetic tally on `/profile` (and a future economy earn hook).
+- **Themed captain coinflip** — "The Snitch is released..." flavour embed for first pick / side choice.
+- **Projected MMR preview** — at team lock, call `mmr_engine` preview-style: "Team A wins: +62 avg / Team B wins: +81 avg" on the match embed.
 
 ### Not in this codebase (removed — don't go looking)
 The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `utils/` folder (the one-off PUBobot CSV migration importer + its DB helpers — migration long done, source CSVs deleted) have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr/captain-selection suite, unrelated to it.)
