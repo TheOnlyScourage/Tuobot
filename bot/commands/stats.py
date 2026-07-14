@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-__all__ = ['last_game', 'stats', 'top', 'rank', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start', 'house_points', 'house_points_reset']
+__all__ = ['last_game', 'stats', 'top', 'rank', 'profile', 'leaderboard', 'activity', 'season_leaderboard', 'season_end', 'season_start', 'house_points', 'house_points_reset']
 
 import io
 import asyncio
@@ -13,6 +13,7 @@ from core.database import db
 
 import bot
 from bot.commands.views import LeaderboardView
+from bot.constants import HOUSE_ROLES
 
 # Custom rank emojis — must match match.py
 RANK_EMOJIS = [
@@ -238,6 +239,116 @@ async def rank(ctx: bot.Context, player: Member | None = None) -> None:
 
 	await ctx.reply(embed=embed)
 
+
+async def profile(ctx: bot.Context, player: Member | None = None) -> None:
+	"""Render the Q6 PNG profile card — ALL-TIME across seasons (unlike /rank,
+	which is the current season): career W-L-D, peak rating, best-ever streak,
+	a rating sparkline spanning seasons, most-teamed-with and nemesis. Current
+	rating and streak show the player's live state."""
+	target = ctx.author if not player else await ctx.get_member(player)
+	if not target:
+		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
+
+	# Current season state (may be absent for a returning veteran who hasn't
+	# played this season — that alone no longer blocks the all-time card).
+	row = await db.select_one(
+		('nick', 'rating', 'streak'),
+		'qc_players',
+		where={'channel_id': ctx.qc.rating.channel_id, 'user_id': target.id}
+	)
+
+	# Every match this player appeared in, chronologically — the source for
+	# all-time W-L-D, best win streak, and the "Since <month>" footnote.
+	result_rows = await db.fetchall(
+		"SELECT m.winner, pm.team, m.ranked, m.at "
+		"FROM qc_player_matches pm "
+		"JOIN qc_matches m ON m.match_id = pm.match_id "
+		"WHERE pm.channel_id = %s AND pm.user_id = %s AND pm.team IS NOT NULL "
+		"ORDER BY pm.match_id",
+		(ctx.qc.id, target.id)
+	)
+	if not result_rows and (not row or row['rating'] is None):
+		raise bot.Exc.NotFoundError(ctx.qc.gt("No matches on record for this player yet — play a match first!"))
+
+	# All-time rating trajectory. "ratings reset" rows are the artificial
+	# season-boundary cliffs (rating -> init), so the sparkline and peak skip
+	# them and show actual skill over time.
+	hist_rows = await db.select(
+		('rating_before', 'rating_change', 'reason'), 'qc_rating_history',
+		where={'channel_id': ctx.qc.rating.channel_id, 'user_id': target.id},
+		order_by='id', order_asc=True
+	)
+	hist_rows = [h for h in hist_rows if h['reason'] != 'ratings reset']
+	history = []
+	if hist_rows:
+		history.append(hist_rows[0]['rating_before'] or 1500)
+		for h in hist_rows:
+			history.append((h['rating_before'] or 1500) + (h['rating_change'] or 0))
+	peak = max(history) if history else None
+
+	# Everyone this player has shared a lobby with, tagged same-team vs
+	# opponent, with the match winner for the nemesis W-L.
+	encounter_rows = await db.fetchall(
+		"SELECT pm2.user_id AS other_id, pm2.nick AS other_nick, "
+		"(pm2.team = pm1.team) AS same_team, m.winner, pm1.team AS my_team "
+		"FROM qc_player_matches pm1 "
+		"JOIN qc_player_matches pm2 ON pm2.match_id = pm1.match_id AND pm2.user_id != pm1.user_id "
+		"JOIN qc_matches m ON m.match_id = pm1.match_id "
+		"WHERE pm1.channel_id = %s AND pm1.user_id = %s "
+		"AND pm1.team IS NOT NULL AND pm2.team IS NOT NULL "
+		"ORDER BY pm1.match_id",
+		(ctx.qc.id, target.id)
+	)
+
+	# Local imports: keep Pillow out of the module import path so a broken
+	# image stack can only ever fail this command, not the bot.
+	from bot.stats.profile_card import render_profile_card, aggregate_encounters, summarize_results
+	from bot.match.captain_selection import get_quidditch_role
+
+	career = summarize_results(result_rows)
+
+	teammate, nemesis = aggregate_encounters(encounter_rows)
+	if teammate:
+		teammate = (_table_nick(teammate[0], 24) or "?", teammate[1])
+	if nemesis:
+		nemesis = (_table_nick(nemesis[0], 24) or "?", nemesis[1], nemesis[2])
+
+	house = next((HOUSE_ROLES[r.id] for r in target.roles if r.id in HOUSE_ROLES), None)
+	position = get_quidditch_role(target).capitalize()
+
+	# Current rating headlines the card; a veteran without a rating this
+	# season falls back to their all-time peak for the number and rank badge.
+	rating = row['rating'] if row and row['rating'] is not None else (peak or 1500)
+	streak = (row['streak'] or 0) if row else 0
+	emoji = get_rank_emoji(rating)
+	m = re.search(r'<:(?:Q6)?([A-Za-z]+):', emoji)
+	rank_name = (m.group(1) if m else 'Unranked').capitalize()
+
+	avatar_bytes = None
+	try:
+		avatar_bytes = await target.display_avatar.with_size(128).read()
+	except Exception:
+		pass
+
+	footnote = None
+	if career['first_at']:
+		from datetime import datetime
+		since = datetime.fromtimestamp(career['first_at']).strftime('%b %Y')
+		ranked_total = career['wins'] + career['losses'] + career['draws']
+		footnote = f"Since {since} • {ranked_total} ranked matches"
+
+	png = render_profile_card(
+		nick=_table_nick(get_nick(target), 32) or str(target.id),
+		house=house, position=position, rank_name=rank_name,
+		rating=rating, wins=career['wins'], losses=career['losses'],
+		draws=career['draws'], streak=streak, peak=peak,
+		best_streak=career['best_streak'], history=history,
+		teammate=teammate, nemesis=nemesis,
+		avatar_bytes=avatar_bytes, footnote=footnote,
+	)
+	await ctx.reply(file=File(io.BytesIO(png), filename=f"profile_{target.id}.png"))
+
+
 async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
 	"""Show the rating leaderboard with button pagination (⏮ ◀ ▶ ⏭ + 🔍 Me)."""
 	all_data = await ctx.qc.get_lb()
@@ -381,11 +492,12 @@ async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
 	]
 
-	# Total stats
+	# Total stats — filtered to THIS season: match history is permanent now,
+	# so an unfiltered count would be all-time, not the season's.
 	total_rated = len([r for r in all_data if r.get('rating') is not None])
 	total_row = await db.fetchone(
-		"SELECT COUNT(*) as cnt FROM qc_matches WHERE channel_id=%s",
-		[ctx.qc.id]
+		"SELECT COUNT(*) as cnt FROM qc_matches WHERE channel_id=%s AND season=%s",
+		[ctx.qc.id, season_num]
 	)
 	total_matches = total_row['cnt'] if total_row else 0
 
