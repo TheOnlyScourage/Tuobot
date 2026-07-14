@@ -54,7 +54,7 @@ def _calculate_mmr_changes(m: bot.Match, ratings_by_id: dict) -> dict:
 async def init_stats_tables() -> None:
     """Create the stats tables if missing: players, qc_players, rating history,
     matches, the match-id counter, per-player match rows, and disabled guilds."""
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="players",
         columns=[
             dict(cname="user_id",   ctype=db.types.int),
@@ -64,7 +64,7 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["user_id"]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="qc_players",
         columns=[
             dict(cname="channel_id",          ctype=db.types.int),
@@ -81,7 +81,7 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["user_id", "channel_id"]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="qc_rating_history",
         columns=[
             dict(cname="id",               ctype=db.types.int, autoincrement=True),
@@ -97,7 +97,7 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["id"]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="qc_matches",
         columns=[
             dict(cname="match_id",    ctype=db.types.int),
@@ -115,11 +115,11 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["match_id"]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="qc_match_id_counter",
         columns=[dict(cname="next_id", ctype=db.types.int)]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="qc_player_matches",
         columns=[
             dict(cname="match_id",   ctype=db.types.int),
@@ -130,7 +130,7 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["match_id", "user_id"]
     ))
-    await db.ensure_table(dict(
+    await db._ensure_table(dict(
         tname="disabled_guilds",
         columns=[dict(cname="guild_id", ctype=db.types.int)],
         primary_keys=["guild_id"]
@@ -442,7 +442,8 @@ async def reset_channel(channel_id: int) -> None:
 async def wipe_channel(channel_id: int) -> None:
     """FULL wipe: ratings AND all-time match history for the channel.
 
-    This is the explicit destructive tool behind `/admin stats reset` — unlike
+    This is the explicit destructive tool behind `/admin stats nuclear_option`
+    (owner-locked) — unlike
     the season reset (reset_channel), this permanently destroys the permanent
     history that powers /profile and future milestones. There is no undo."""
     where = {'channel_id': channel_id}
