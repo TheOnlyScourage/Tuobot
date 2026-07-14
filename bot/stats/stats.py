@@ -105,6 +105,7 @@ async def init_stats_tables() -> None:
             dict(cname="queue_id",    ctype=db.types.int),
             dict(cname="queue_name",  ctype=db.types.str),
             dict(cname="at",          ctype=db.types.int),
+            dict(cname="season",      ctype=db.types.int),
             dict(cname="alpha_name",  ctype=db.types.str),
             dict(cname="beta_name",   ctype=db.types.str),
             dict(cname="ranked",      ctype=db.types.bool),
@@ -134,6 +135,29 @@ async def init_stats_tables() -> None:
         columns=[dict(cname="guild_id", ctype=db.types.int)],
         primary_keys=["guild_id"]
     ))
+    await _backfill_match_seasons()
+
+
+async def _backfill_match_seasons() -> None:
+    """One-time, idempotent migration: stamp legacy qc_matches rows (season
+    NULL) with their channel's CURRENT season number.
+
+    The season column was added mid-Season-19; without this backfill, that
+    season's own end-of-season highlights would miss every match played
+    before the column existed. Runs at every startup but no-ops instantly
+    once no NULL rows remain. New matches are stamped at registration, so
+    NULLs only ever reappear if a registration's season lookup failed — in
+    which case this self-heals them on the next boot."""
+    from bot.stats.season import get_current_season_number
+    rows = await db.fetchall(
+        "SELECT DISTINCT channel_id FROM qc_matches WHERE season IS NULL", ()
+    )
+    for r in rows:
+        season = await get_current_season_number(r['channel_id'])
+        await db.execute(
+            "UPDATE qc_matches SET season=%s WHERE channel_id=%s AND season IS NULL",
+            (season, r['channel_id'])
+        )
 
 
 async def check_match_id_counter() -> None:
@@ -166,7 +190,8 @@ async def register_match_unranked(ctx: bot.Context, m: bot.Match) -> None:
         match_id=m.id, channel_id=m.qc.id,
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
         alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
-        at=int(time.time()), ranked=0, winner=None
+        at=int(time.time()), season=getattr(m, 'season_number', None),
+        ranked=0, winner=None
     ))
     await db.insert_many('qc_players', (
         dict(channel_id=m.qc.id, user_id=p.id)
@@ -192,7 +217,8 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
         match_id=m.id, channel_id=m.qc.id,
         queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
         alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
-        at=now, ranked=1, winner=m.winner,
+        at=now, season=getattr(m, 'season_number', None),
+        ranked=1, winner=m.winner,
         alpha_score=m.scores[0], beta_score=m.scores[1]
     ))
     # Ensure all players exist in qc_players
@@ -401,8 +427,24 @@ async def undo_match(ctx: bot.Context, match_id: int) -> dict | None:
 
 
 async def reset_channel(channel_id: int) -> None:
-    """Wipe all ratings, history, matches, and per-player rows for a channel
-    (season reset)."""
+    """Season reset: clear the live season board (qc_players — ratings, W-L-D,
+    streaks) so the new season starts fresh.
+
+    Match history (qc_matches / qc_player_matches / qc_rating_history) is
+    deliberately PRESERVED — it powers all-time stats (/profile, future
+    milestones). Season-scoped consumers (season highlights, the season_end
+    summary) filter on qc_matches.season instead of relying on the tables
+    being emptied. This changed in July 2026; Seasons 1-18 predate the bot's
+    data and are gone, so all-time history effectively begins at Season 19."""
+    await db.delete("qc_players", where={'channel_id': channel_id})
+
+
+async def wipe_channel(channel_id: int) -> None:
+    """FULL wipe: ratings AND all-time match history for the channel.
+
+    This is the explicit destructive tool behind `/admin stats reset` — unlike
+    the season reset (reset_channel), this permanently destroys the permanent
+    history that powers /profile and future milestones. There is no undo."""
     where = {'channel_id': channel_id}
     await db.delete("qc_players",        where=where)
     await db.delete("qc_rating_history", where=where)
@@ -411,11 +453,11 @@ async def reset_channel(channel_id: int) -> None:
 
 
 async def reset_player(channel_id: int, user_id: int) -> None:
-    """Wipe one player's rating, history, and per-player rows in a channel."""
-    where = {'channel_id': channel_id, 'user_id': user_id}
-    await db.delete("qc_players",        where=where)
-    await db.delete("qc_rating_history", where=where)
-    await db.delete("qc_player_matches", where=where)
+    """Reset one player's SEASON state (their qc_players row: rating, W-L-D,
+    streak). Their match history and rating history are preserved — this is
+    "start the season over", not "erase this player". A true erasure would be
+    a deliberate manual DB operation."""
+    await db.delete("qc_players", where={'channel_id': channel_id, 'user_id': user_id})
 
 
 async def replace_player(channel_id: int, user_id1: int, user_id2: int, new_nick: str) -> None:
