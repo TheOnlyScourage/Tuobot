@@ -7,6 +7,9 @@ aiomysql==0.3.2
 emoji==2.15.0
 prettytable==3.17.0
 matplotlib==3.9.2
+# Pillow was already pulled in transitively by matplotlib; /profile's card
+# renderer (bot/stats/profile_card.py) now imports it directly, so pin it.
+pillow==12.1.1
 aiohttp==3.13.5
 cryptography==46.0.7
 # Sentry is loaded conditionally via SENTRY_DSN env var — see PUBobot2.py.
