@@ -648,9 +648,17 @@ class Match:
 			self.qc._captain_history.append(cap_ids)
 
 		if self.ranked:
-			await bot.stats.register_match_ranked(ctx, self)
+			try:
+				await bot.stats.register_match_ranked(ctx, self)
+			except Exception as e:
+				await self._notify_registration_failure(ctx, e)
+				raise
 		else:
-			await bot.stats.register_match_unranked(ctx, self)
+			try:
+				await bot.stats.register_match_unranked(ctx, self)
+			except Exception as e:
+				await self._notify_registration_failure(ctx, e)
+				raise
 
 		# Award Hogwarts house points to the winning team (ranked wins only; no-op on draws/cancels)
 		if self.ranked and self.winner is not None and self.winner in (0, 1):
@@ -664,6 +672,32 @@ class Match:
 			except Exception as e:
 				bot_log = __import__("core.console", fromlist=["log"]).log
 				bot_log.error(f"[house_points] award_for_win failed: {e}")
+
+	async def _notify_registration_failure(self, ctx: bot.Context, exc: Exception) -> None:
+		"""Loudly announce that a finished match FAILED to save its result.
+
+		The silent version of this (July 2026: the season-column ALTER never
+		ran, so every ranked registration crashed) cost real match results —
+		players were freed, no embed posted, and /lastgame just showed the
+		previous match. Never again: log it, tell the channel, and point
+		admins at the recovery tool. The caller re-raises after this."""
+		from core.console import log
+		log.error(f"[match {self.id}] registration FAILED — result NOT saved: {exc}")
+		from nextcord import Embed, Colour
+		embed = Embed(
+			colour=Colour(0xED4245),
+			title=f"\u26a0\ufe0f Match {str(self.id).zfill(6)} failed to save",
+			description=(
+				"The match finished but its result could **not** be recorded — "
+				"ratings and stats were **not** updated.\n"
+				"Admins: check the logs, fix the cause, then re-record the "
+				"result with `/admin match create`."
+			)
+		)
+		try:
+			await ctx.channel.send(embed=embed)
+		except Exception:
+			pass
 
 	async def _post_house_award_embed(self, ctx: bot.Context, awarded: dict) -> None:
 		"""Brief announcement listing house point awards from this match."""
