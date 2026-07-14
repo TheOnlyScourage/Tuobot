@@ -257,10 +257,18 @@ async def _get_house_emblem(ctx: bot.Context, house: str) -> bytes | None:
 		log.error(f"[profile] no emoji id parsed for house {house!r}")
 		return None
 	emoji_id = m.group(1)
-	data = None
 
+	# The Discord client lives in core/client.py — the bot package exposes
+	# no `dc` attribute (verified the hard way, in production logs).
 	try:
-		data = await bot.dc.http.get_from_cdn(
+		from core.client import dc
+	except Exception as e:
+		log.error(f"[profile] could not import discord client: {e}")
+		return None
+
+	data = None
+	try:
+		data = await dc.http.get_from_cdn(
 			f"https://cdn.discordapp.com/emojis/{emoji_id}.png?size=256"
 		)
 	except Exception as e:
@@ -268,7 +276,7 @@ async def _get_house_emblem(ctx: bot.Context, house: str) -> bytes | None:
 
 	if data is None:
 		try:
-			emoji = bot.dc.get_emoji(int(emoji_id))
+			emoji = dc.get_emoji(int(emoji_id))
 			reader = getattr(emoji, 'read', None)
 			if emoji is not None and reader is not None:
 				data = await reader()
