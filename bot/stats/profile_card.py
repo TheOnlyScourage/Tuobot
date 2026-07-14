@@ -10,7 +10,8 @@ aggregate_encounters() shapes the teammate/nemesis inputs from the joined
 match rows.
 
 Card anatomy (900x300):
-  - house-themed gradient background + accent top bar + big watermark initial
+  - house-themed gradient + accent bar + ghosted house-emblem watermark
+    (the server's emoji art; big-initial fallback)
   - circular avatar (or initials disc) with accent ring
   - nick, "{House} • {Position}" subtitle
   - right block: current rating (big), rank name in rank colour, all-time peak
@@ -244,6 +245,7 @@ def render_profile_card(
 	wins: int, losses: int, draws: int, streak: int,
 	peak: int | None = None, best_streak: int | None = None, history=(),
 	teammate=None, nemesis=None, avatar_bytes: bytes | None = None,
+	emblem_bytes: bytes | None = None,
 	footnote: str | None = None, font_dir: Path | None = None,
 ) -> bytes:
 	"""Render the card; returns PNG bytes. All stats are ALL-TIME (across
@@ -268,10 +270,33 @@ def render_profile_card(
 	overlay = Image.new('RGBA', (CARD_W, CARD_H), (0, 0, 0, 0))
 	odraw = ImageDraw.Draw(overlay)
 
-	mark = house[0].upper() if house else 'Q6'
-	f_mark = bold(230)
-	mw = odraw.textlength(mark, font=f_mark)
-	odraw.text((CARD_W - mw - 36, 8), mark, font=f_mark, fill=accent + (26,))
+	# Watermark: the house EMBLEM (the server's custom-emoji art, fetched by
+	# the command and passed as bytes) ghosted on the right in its own
+	# colours. Falls back to the big house initial (or Q6) when no emblem is
+	# available or the bytes don't decode.
+	emblem_drawn = False
+	if emblem_bytes:
+		try:
+			em = Image.open(io.BytesIO(emblem_bytes)).convert('RGBA')
+			h = 240
+			w = max(1, round(em.width * h / em.height))
+			em = em.resize((w, h))
+			# keep the emblem's colours; soften by scaling its alpha channel.
+			# NOTE: paste WITHOUT a mask — the alpha is already in `em`, and
+			# passing it again as the mask applies the ghosting twice (0.42²)
+			# while premultiplying the colours toward black (the watermark
+			# came out invisible). Verbatim paste + the final
+			# alpha_composite = one true 42% ghost.
+			em.putalpha(em.getchannel('A').point(lambda a: int(a * 0.42)))
+			overlay.paste(em, (CARD_W - w - 34, 28))
+			emblem_drawn = True
+		except Exception:
+			emblem_drawn = False
+	if not emblem_drawn:
+		mark = house[0].upper() if house else 'Q6'
+		f_mark = bold(230)
+		mw = odraw.textlength(mark, font=f_mark)
+		odraw.text((CARD_W - mw - 36, 8), mark, font=f_mark, fill=accent + (26,))
 
 	odraw.rounded_rectangle(SPARK_PANEL, radius=8, outline=(255, 255, 255, 36), width=1)
 	if spark:
