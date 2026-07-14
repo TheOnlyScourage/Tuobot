@@ -13,7 +13,7 @@ from core.database import db
 
 import bot
 from bot.commands.views import LeaderboardView
-from bot.constants import HOUSE_ROLES
+from bot.constants import HOUSE_ROLES, HOUSE_EMOJIS
 
 # Custom rank emojis — must match match.py
 RANK_EMOJIS = [
@@ -240,6 +240,29 @@ async def rank(ctx: bot.Context, player: Member | None = None) -> None:
 	await ctx.reply(embed=embed)
 
 
+_house_emblem_cache: dict[str, bytes] = {}
+
+
+async def _get_house_emblem(ctx: bot.Context, house: str) -> bytes | None:
+	"""Fetch (and memory-cache) the house's custom-emoji image for the card
+	watermark. Any failure — emoji missing from the guild cache, CDN hiccup —
+	returns None and the card falls back to the big-initial watermark."""
+	if house in _house_emblem_cache:
+		return _house_emblem_cache[house]
+	try:
+		m = re.search(r'<a?:\w+:(\d+)>', HOUSE_EMOJIS.get(house, ''))
+		if not m:
+			return None
+		emoji = ctx.channel.guild.get_emoji(int(m.group(1)))
+		if emoji is None:
+			return None
+		data = await emoji.read()
+		_house_emblem_cache[house] = data
+		return data
+	except Exception:
+		return None
+
+
 async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 	"""Render the Q6 PNG profile card — ALL-TIME across seasons (unlike /rank,
 	which is the current season): career W-L-D, peak rating, best-ever streak,
@@ -330,6 +353,8 @@ async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 	except Exception:
 		pass
 
+	emblem_bytes = await _get_house_emblem(ctx, house) if house else None
+
 	footnote = None
 	if career['first_at']:
 		from datetime import datetime
@@ -344,7 +369,7 @@ async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 		draws=career['draws'], streak=streak, peak=peak,
 		best_streak=career['best_streak'], history=history,
 		teammate=teammate, nemesis=nemesis,
-		avatar_bytes=avatar_bytes, footnote=footnote,
+		avatar_bytes=avatar_bytes, emblem_bytes=emblem_bytes, footnote=footnote,
 	)
 	await ctx.reply(file=File(io.BytesIO(png), filename=f"profile_{target.id}.png"))
 
