@@ -7,6 +7,7 @@ number lives here. Change a role ID once, get it propagated to every
 file that imports from this module.
 
 Layout:
+  - OWNER_ID                      — bot owner; gates nuclear admin commands
   - HOUSE_ROLES / HOUSE_EMOJIS    — Hogwarts house assignment
   - SPECIALTY_ROLES               — Quidditch positions (Seeker/Beater/Keeper)
   - Q_PING_ROLE_ID                — role mentioned to trigger the @Q ping embed
@@ -14,6 +15,15 @@ Layout:
   - MMR engine constants          — formula parameters used by stats/mmr_engine
   - House points constants        — per-player and captain award values
 """
+
+# ── Bot owner ────────────────────────────────────────────────────────────────
+# Scourage's Discord user id. Commands that can destroy PERMANENT data
+# (currently only /admin stats reset → wipe_channel) are gated to this id on
+# top of the normal ADMIN check — regular admins can't fire them, by design.
+# (cfg.DC_OWNER_ID also exists as an env var, but it only guards the legacy
+# !enable/!disable text commands and can't be verified from the repo; this
+# hardcoded pin is the deliberate source of truth for nuclear gates.)
+OWNER_ID = 310593959506477075
 
 # ── Hogwarts house roles → team names ────────────────────────────────────────
 # Captain's Discord role determines their team name. Used in:
