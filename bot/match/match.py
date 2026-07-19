@@ -631,8 +631,71 @@ class Match:
 			value=format_team_field(losers, before, after),
 			inline=False
 		)
+		# 🎉 Milestones & rank-ups — best-effort: a data hiccup here must never
+		# block the results embed, so failures log and the field is skipped.
+		try:
+			if milestone_lines := await self._collect_milestones(before, after):
+				embed.add_field(
+					name="🎉 Milestones",
+					value="\n".join(milestone_lines)[:1024],
+					inline=False
+				)
+		except Exception as e:
+			from core.console import log
+			log.error(f"[milestones] collection failed for match {self.id}: {e}")
+
 		embed.set_footer(text=f"Match id: {self.id}")
 		await ctx.notice(embed=embed)
+
+	async def _collect_milestones(self, before: dict, after: dict) -> list[str]:
+		"""Gather the inputs for milestone detection and run the pure detector
+		(bot/stats/milestones.py). Two queries: every participant's all-time
+		ranked results (the just-registered match is already among them, since
+		registration runs first), and each player's all-time peak rating BEFORE
+		this match. Old/new ratings come from the before/after dicts the
+		results embed already has."""
+		from core.database import db
+		from bot.stats.milestones import detect_milestones
+
+		ids = [p.id for p in self.players]
+		if not ids:
+			return []
+		ph = ", ".join(["%s"] * len(ids))
+
+		rows = await db.fetchall(
+			f"SELECT pm.user_id, pm.team, m.winner "
+			f"FROM qc_player_matches pm "
+			f"JOIN qc_matches m ON m.match_id = pm.match_id "
+			f"WHERE pm.channel_id = %s AND pm.user_id IN ({ph}) "
+			f"AND pm.team IS NOT NULL AND m.ranked = 1 "
+			f"ORDER BY pm.user_id, pm.match_id",
+			(self.qc.id, *ids)
+		)
+		results_by_id: dict[int, list] = {}
+		for r in rows:
+			results_by_id.setdefault(r['user_id'], []).append((r['winner'], r['team']))
+
+		peak_rows = await db.fetchall(
+			f"SELECT user_id, MAX(rating_before + rating_change) AS peak "
+			f"FROM qc_rating_history "
+			f"WHERE channel_id = %s AND user_id IN ({ph}) "
+			f"AND (match_id IS NULL OR match_id != %s) "
+			f"GROUP BY user_id",
+			(self.qc.rating.channel_id, *ids, self.id)
+		)
+		peaks = {r['user_id']: r['peak'] for r in peak_rows}
+
+		players = [
+			dict(
+				nick=get_nick(p),
+				results=results_by_id.get(p.id, []),
+				old_rating=before[p.id]['rating'],
+				new_rating=after[p.id]['rating'],
+				peak_before=peaks.get(p.id),
+			)
+			for p in self.players if p.id in before and p.id in after
+		]
+		return detect_milestones(players)
 
 	async def final_message(self, ctx: bot.Context) -> None:
 		try:
