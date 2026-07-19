@@ -25,6 +25,17 @@ Layout:
 # hardcoded pin is the deliberate source of truth for nuclear gates.)
 OWNER_ID = 310593959506477075
 
+# ── Snitch coin-toss flavour ─────────────────────────────────────────────────
+# Draft.start() announces the first-pick coin toss (Match.new shuffles the
+# captains) with one of these lines, formatted with {captain} (a mention)
+# and {team} (the house name that drafts first).
+SNITCH_FLIP_LINES = [
+	"It darts, it weaves... and **{captain}** snatches it out of the air! **{team}** picks first.",
+	"A flash of gold streaks between the captains — **{captain}** gets there first! **{team}** opens the draft.",
+	"The Snitch circles once, twice... then dives straight into **{captain}**'s palm. First pick: **{team}**!",
+	"Released! It feints left, breaks right — **{captain}** makes the catch. **{team}** drafts first.",
+]
+
 # ── Hogwarts house roles → team names ────────────────────────────────────────
 # Captain's Discord role determines their team name. Used in:
 #   bot/match/match.py (_assign_house_names)
