@@ -638,28 +638,6 @@ async def _house_points_reset(
 		interaction: Interaction,
 ) -> None: await run_slash(bot.commands.house_points_reset, interaction=interaction)
 
-# ── douche ────────────────────────────────────────────────────────────────────
-
-@groups.douche.subcommand(name='add', description='Record that a player douched another (moderator).')
-async def _douche_add(
-		interaction: Interaction,
-		player: Member = SlashOption(verify=False),
-		target: Member = SlashOption(verify=False)
-) -> None: await run_slash(bot.commands.douche_add, interaction=interaction, player=player, target=target)
-
-
-@groups.douche.subcommand(name='summary', description="Show a player's douche record.")
-async def _douche_summary(
-		interaction: Interaction,
-		player: Member = SlashOption(required=False, verify=False)
-) -> None: await run_slash(bot.commands.douche_summary, interaction=interaction, player=player)
-
-
-@groups.douche.subcommand(name='leaderboard', description='Show the douche leaderboard.')
-async def _douche_leaderboard(interaction: Interaction
-) -> None: await run_slash(bot.commands.douche_leaderboard, interaction=interaction)
-
-
 # ── misc ──────────────────────────────────────────────────────────────────────
 
 @dc.slash_command(name='activity', description='Show an activity heatmap (weekday × hour, IST).', **guild_kwargs)
