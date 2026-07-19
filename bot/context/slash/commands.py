@@ -211,9 +211,8 @@ async def _report_admin(
 		interaction: Interaction,
 		match_id: int,
 		winner_team: str = SlashOption(required=False),
-		draw: bool = SlashOption(required=False, default=False),
-		abort: bool = SlashOption(required=False, default=False)
-) -> None: await run_slash(bot.commands.report_admin, interaction=interaction, match_id=match_id, winner_team=winner_team, draw=draw, abort=abort)
+		abort: bool = SlashOption(required=False, default=False, description='Record the match as aborted (no winner, no rating change).')
+) -> None: await run_slash(bot.commands.report_admin, interaction=interaction, match_id=match_id, winner_team=winner_team, abort=abort)
 _report_admin.on_autocomplete('winner_team')(autocomplete.teams_by_match_id)
 _report_admin.on_autocomplete('match_id')(autocomplete.match_ids)
 
@@ -224,7 +223,7 @@ async def _report_manual(
 		queue: str,
 		winners: str = SlashOption(description="List of won team players separated by space."),
 		losers: str = SlashOption(description="List of lost team players separated by space."),
-		draw: bool = SlashOption(required=False)
+		aborted: bool = SlashOption(required=False, description='Record as an aborted match (no winner).')
 ) -> None:
 	async def _run(ctx, *args, _winners, _losers, **kwargs):
 		_winners = [await ctx.get_member(i) for i in _winners.split(" ")]
@@ -232,7 +231,7 @@ async def _report_manual(
 		if None in _winners or None in _losers:
 			raise bot.Exc.ValueError("Failed to parse teams arguments.")
 		await bot.commands.report_manual(ctx, *args, winners=_winners, losers=_losers, **kwargs)
-	await run_slash(_run, interaction=interaction, queue=queue, _winners=winners, _losers=losers, draw=draw)
+	await run_slash(_run, interaction=interaction, queue=queue, _winners=winners, _losers=losers, aborted=aborted)
 
 
 @groups.admin_match.subcommand(name='sub_player', description='Sub a player out. If their team loses, the penalty goes to the original.')
@@ -553,7 +552,7 @@ async def _pick_autocomplete(interaction: Interaction, current: str) -> None:
 @dc.slash_command(name='report', description='Report match result.', **guild_kwargs)
 async def _report(
 		interaction: Interaction,
-		result: str = SlashOption(choices=['loss', 'draw', 'abort'])
+		result: str = SlashOption(choices=['loss', 'abort'])
 ) -> None: await run_slash(bot.commands.report, interaction=interaction, result=result)
 
 
