@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import random
+
 from bot.constants import (
 	HOUSE_EMOJIS, get_rank_emoji as _rank_emoji,
 	MATCH_COLOUR_CHECK_IN, MATCH_COLOUR_DRAFT, MATCH_COLOUR_LIVE,
+	SNITCH_FLIP_LINES,
 )
 from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
@@ -98,6 +101,22 @@ class Embeds:
 		)
 		embed.set_footer(**self._make_footer())
 		return embed
+
+	def snitch_flip(self, first_team: int = 0) -> Embed:
+		"""🟡 The golden-snitch coin toss — announces which captain won the
+		opening pick (decided by Match.new's captain shuffle). Flavour line
+		chosen at random from constants.SNITCH_FLIP_LINES."""
+		team = self.m.teams[first_team]
+		captain = team[0] if len(team) else None
+		line = random.choice(SNITCH_FLIP_LINES).format(
+			captain=(captain.mention if captain else team.name),
+			team=team.name,
+		)
+		return Embed(
+			colour=Colour(0xf1c40f),
+			title="🟡 The Snitch is released...",
+			description=line,
+		)
 
 	def draft(self) -> Embed:
 		"""Build the draft stage embed: team rosters, the unpicked pool, and whose
