@@ -79,13 +79,14 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
   - `rating.py` — a single `Rating` class: per-channel rating **storage/maintenance** (fetch/seed, admin adjustments, weekly decay, rank snapping, season reset). It does *not* compute match deltas — `mmr_engine` does
   - `stats.py` — table setup + ranked/unranked match registration + admin undo/reset + leaderboard queries + the weekly decay job (this file uses **spaces**, unlike the rest of the bot)
   - `season.py`, `season_highlights.py` (end-of-season superlatives incl. win/loss streaks + the House Cup embed), `house_points.py` (Hogwarts House Cup), `captain_streak.py`, `checkin_tracker.py` (check-in violations → auto-ban), `noadds.py` (queue bans + phrases)
+  - `milestones.py` — **pure** milestone & rank-up detector for ranked results (career-match counts, first-time rank tiers vs the all-time peak, new best streaks); imports only `bot.constants`; fed by `Match._collect_milestones`
   - `profile_card.py` — **pure** Pillow renderer for `/profile` PNG cards (house-themed gradients, ghosted house-emblem watermark from the server's HOUSE_EMOJIS with big-initial fallback, rank colours, all-time sparkline/peak/best-streak) plus the pure data shapers `aggregate_encounters()` (teammate/nemesis) and `summarize_results()` (career W-L-D + best streak); imports only PIL + stdlib, fonts bundled in `assets/fonts/`
 - **`bot/alerts.py`** — the "41 alert system": watches active matches and pings the queue when a draft finishes inside the scheduled window
 - **`bot/expire.py`** — per-player expire timers; **`bot/exceptions.py`** — the `Exc` exception hierarchy
 - **`bot/web.py`** — an optional aiohttp server: a health-check endpoint plus an OAuth2 config dashboard (MySQL-backed sessions), gated on `WS_ENABLE` and the OAuth env vars. Off by default
 
 ### Q6-specific feature set
-Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ranked wins, reset per season), **specialty roles** (Seeker / Beater / Keeper) surfaced in embeds and season awards, **captain streak** cooldowns, **standby race-to-ready** fill, a **season** lifecycle (`/season_start` ↔ `/season_end` with standings, highlights, streaks, and House Cup), **check-in violation** tracking with rolling auto-bans, **party codes**, and the **41 alert** system.
+Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ranked wins, reset per season), **specialty roles** (Seeker / Beater / Keeper) surfaced in embeds and season awards, **captain streak** cooldowns, **standby race-to-ready** fill, a **season** lifecycle (`/season_start` ↔ `/season_end` with standings, highlights, streaks, and House Cup), **check-in violation** tracking with rolling auto-bans, **party codes**, **milestone & rank-up announcements** on ranked results, and the **41 alert** system.
 
 ### Utils & scripts
 Standalone tools, not imported by the running bot:
@@ -109,11 +110,9 @@ Larger parked designs:
 - **Crash-notification embed** — when `Match.think()` raises and `on_think` drops the match, post a best-effort "Match #X hit an internal error and was cancelled" embed instead of vanishing silently.
 
 Feature TODO (queued from the ideas session):
-- **Milestones** — 50th/100th/250th match, first time reaching a rank, new best streak → one appended line on the results embed. **Unblocked**: counts are all-time now that match history is permanent (100 games in one season stopped being realistic).
-- **Rank-up announcements** — when a result crosses a rank threshold (from `constants.py`), append "💎 X reached Diamond!" to the results embed.
 - **Spectator predictions** — after a draft locks, non-players tap 🅰️/🅱️ to call the winner; track an "Oracle" accuracy leaderboard.
 - **MVP voting** — post-report buttons for teammates to vote MVP; cosmetic tally on `/profile` (and a future economy earn hook).
 - **Projected MMR preview** — at team lock, call `mmr_engine` preview-style: "Team A wins: +62 avg / Team B wins: +81 avg" on the match embed.
 
 ### Not in this codebase (removed — don't go looking)
-The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `utils/` folder (the one-off PUBobot CSV migration importer + its DB helpers — migration long done, source CSVs deleted) have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr/captain-selection suite, unrelated to it. The **douche** moderation log was ripped out in July 2026; its `douche_*` DB tables may still exist but nothing reads them.)
+The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `utils/` folder (the one-off PUBobot CSV migration importer + its DB helpers — migration long done, source CSVs deleted) have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr / captain-selection / milestones suite, unrelated to it. The **douche** moderation log was ripped out in July 2026; its `douche_*` DB tables may still exist but nothing reads them.)
