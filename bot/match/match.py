@@ -137,7 +137,7 @@ class Match:
 		bot.active_matches.append(match)
 
 	@classmethod
-	async def fake_ranked_match(cls, ctx: bot.Context, queue: bot.PickupQueue, qc: bot.QueueChannel, winners: list[Member], losers: list[Member], draw: bool = False, **kwargs) -> None:
+	async def fake_ranked_match(cls, ctx: bot.Context, queue: bot.PickupQueue, qc: bot.QueueChannel, winners: list[Member], losers: list[Member], aborted: bool = False, **kwargs) -> None:
 		"""Build a match with a pre-decided winner/loser and register it as ranked
 		(used to inject a result without a live match, e.g. admin fixes)."""
 		players = winners + losers
@@ -148,8 +148,9 @@ class Match:
 		match = cls(match_id, queue, qc, players, ratings, pick_teams="premade", **kwargs)
 		match.teams[0].set(winners)
 		match.teams[1].set(losers)
-		if draw:
+		if aborted:
 			match.winner = None
+			match.aborted = True
 		else:
 			match.winner = 0
 			match.scores[match.winner] = 1
@@ -222,6 +223,7 @@ class Match:
 		self.ratings = ratings
 		self.winner = None
 		self.scores = [0, 0]
+		self.aborted = False  # set when the match ends via /report abort (recorded, no winner)
 
 		team_names = self.cfg['team_names']
 		team_emojis = self.cfg['team_emojis'] or random.sample(self.TEAM_EMOJIS, 2)
@@ -508,46 +510,53 @@ class Match:
 					log.error(f"PartyCode start error: {e}")
 
 	async def report_loss(self, ctx: bot.Context, member: Member, draw_flag: int) -> None:
-		"""Captain reports their team's loss/draw/abort. draw_flag: 0 = loss, 1 =
-		draw offer, 2 = abort offer; a draw or abort needs the other captain to
-		confirm."""
+		"""Captain reports their team's loss or an abort. draw_flag: 0 = loss,
+		2 = abort offer; an abort needs the other captain to confirm, and a
+		confirmed abort is RECORDED (winner-NULL ranked row, zero rating
+		change, streaks untouched) rather than voided — Q6 has no draws, so
+		the no-winner outcome IS the abort."""
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
 		team = find(lambda team: member in team[:1], self.teams[:2])
 		if team is None:
-			raise bot.Exc.PermissionError(self.gt("You must be a team captain to report a loss or draw."))
+			raise bot.Exc.PermissionError(self.gt("You must be a team captain to report a loss or abort."))
 
 		enemy_team = self.teams[1-team.idx]
 		if draw_flag and not enemy_team.draw_flag == draw_flag:  # noqa: SIM201
 			team.draw_flag = draw_flag
 			await ctx.notice(
 				self.gt(
-					"{self} is calling a draw, waiting for {enemy} to type `/report draw`." if draw_flag == 1 else
-					"{self} offers to cancel the match, waiting for {enemy} to type `/report abort`."
+					"{self} offers to abort the match, waiting for {enemy} to type `/report abort`."
 				).format(self=member.mention, enemy=enemy_team[0].mention)
 			)
 			return
 
 		if draw_flag == 2:
-			await self.cancel(ctx)
+			await self.record_abort(ctx)
 			return
-		elif draw_flag == 1:
-			self.winner = None
-		else:
-			self.winner = enemy_team.idx
-			self.scores[self.winner] = 1
+		self.winner = enemy_team.idx
+		self.scores[self.winner] = 1
 		await self.finish_match(ctx)
 
-	async def report_win(self, ctx: bot.Context, team_name: str | None, draw: bool = False) -> None:
-		"""Captain reports a win by team_name (or a draw), then finalizes the
-		match."""
+	async def record_abort(self, ctx: bot.Context) -> None:
+		"""Finish the match as ABORTED: registered like any result but with no
+		winner — the row keeps the match id on the books, the third record
+		column (schema name `draws`) counts it, ratings don't move (the MMR
+		engine short-circuits winner-NULL to zero) and streaks are preserved.
+		Reversible with `/admin stats undo_match`, unlike the old void."""
+		self.winner = None
+		self.aborted = True
+		if self.party_code:
+			self.party_code.cancel()
+		await self.finish_match(ctx)
+
+	async def report_win(self, ctx: bot.Context, team_name: str | None) -> None:
+		"""Moderator path: report a win by team_name, then finalize."""
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
-		if draw:
-			self.winner = None
-		elif team_name and (team := find(lambda t: t.name.lower() == team_name.lower(), self.teams[:2])) is not None:
+		if team_name and (team := find(lambda t: t.name.lower() == team_name.lower(), self.teams[:2])) is not None:
 			self.winner = team.idx
 			self.scores[self.winner] = 1
 		else:
@@ -565,7 +574,9 @@ class Match:
 		elif scores[1] > scores[0]:
 			self.winner = 1
 		else:
+			# Tied scores: Q6 has no draws — record it as an abort.
 			self.winner = None
+			self.aborted = True
 
 		self.scores = scores
 		await self.finish_match(ctx)
@@ -602,7 +613,7 @@ class Match:
 		l_change = avg_after_l - avg_before_l
 
 		if self.winner is None:
-			title = f"🤝 {self.queue.name.capitalize()} Results — Match {self.id} (Draw)"
+			title = f"🚫 {self.queue.name.capitalize()} Results — Match {self.id} (Aborted)"
 		else:
 			title = f"{self.queue.name.capitalize()} Results — Match {self.id}"
 
