@@ -133,6 +133,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin channel enable` | Enable the bot on a new channel. |
 | `/admin channel disable` | Disable the bot on a channel. |
 | `/admin channel delete` | Delete all configs and stats, and disable the bot. **Destructive.** |
+| `/admin channel cleanup [confirm]` | ☢️ **Owner-only.** Purge configs for channels that were **deleted from Discord** before `channel delete` was run in them (they otherwise linger forever, logging "Could not reach a text channel" at every boot). Dry-run listing by default; `confirm: True` deletes. Match history untouched. |
 | `/admin channel show` | Show the channel configuration. |
 | `/admin channel set <variable> <value>` | Set a channel config variable. |
 
