@@ -185,33 +185,31 @@ async def put(ctx: bot.Context, match_id: int, player: Member, team_name: str) -
 		await match.draft.print(ctx)
 
 
-async def report_admin(ctx: bot.Context, match_id: int, winner_team: str | None = None, draw: bool = False, abort: bool = False) -> None:
-	"""Moderator: report a match result (winner team, draw, or abort) by id."""
+async def report_admin(ctx: bot.Context, match_id: int, winner_team: str | None = None, abort: bool = False) -> None:
+	"""Moderator: report a match result (winner team, or a recorded abort) by id."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (match := find(lambda m: m.qc == ctx.qc and m.id == match_id, bot.active_matches)) is None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Could not find match with specified id. Check `/matches`."))
-	if winner_team is None and not draw and not abort:
-		raise bot.Exc.SyntaxError(ctx.qc.gt("Please specify a team name or draw."))
+	if winner_team is None and not abort:
+		raise bot.Exc.SyntaxError(ctx.qc.gt("Please specify a team name or abort."))
 	if abort:
-		await match.cancel(ctx)
+		await match.record_abort(ctx)
 	else:
-		await match.report_win(ctx, winner_team, draw)
+		await match.report_win(ctx, winner_team)
 
 
 @author_match
 async def report(ctx: bot.Context, match: bot.Match, result: str) -> None:
 	"""Report the caller's own match result: loss, draw, or abort."""
 	if result == 'loss':
-		await match.report_loss(ctx, ctx.author, draw_flag=False)
-	elif result == 'draw':
-		await match.report_loss(ctx, ctx.author, draw_flag=1)
+		await match.report_loss(ctx, ctx.author, draw_flag=0)
 	elif result == 'abort':
 		await match.report_loss(ctx, ctx.author, draw_flag=2)
 	else:
 		raise bot.Exc.ValueError("Invalid result value.")
 
 
-async def report_manual(ctx: bot.Context, queue: str, winners: List[Member], losers: List[Member], draw: bool = False) -> None:  # noqa: UP006
+async def report_manual(ctx: bot.Context, queue: str, winners: List[Member], losers: List[Member], aborted: bool = False) -> None:  # noqa: UP006
 	"""Moderator: record a manual ranked result from explicit winner/loser lists."""
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
@@ -222,7 +220,7 @@ async def report_manual(ctx: bot.Context, queue: str, winners: List[Member], los
 		raise bot.Exc.ValueError(f"Teams can not contain duplicate players.")  # noqa: F541
 	if not len(winners) or not len(losers):
 		raise bot.Exc.ValueError(f"Teams can not be empty.")  # noqa: F541
-	await q.fake_ranked_match(ctx, winners, losers, draw=draw)
+	await q.fake_ranked_match(ctx, winners, losers, aborted=aborted)
 
 
 async def force_checkin(ctx: bot.Context, match_id: int) -> None:
