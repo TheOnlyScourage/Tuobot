@@ -125,13 +125,15 @@ def summarize_results(rows) -> dict:
 	`rows`: dicts with winner (0/1/None), team (0/1), ranked (truthy) and at
 	(unix ts), ordered chronologically.
 
-	Only RANKED rows count toward wins/losses/draws and the best win streak
-	(draws break a streak, mirroring the season-highlights convention);
-	unranked rows are skipped entirely. `first_at` is the earliest appearance
-	of ANY kind — "playing since" includes unranked days.
+	Only RANKED rows count toward the record and the best win streak;
+	unranked rows are skipped entirely. Winner-NULL ranked rows are ABORTS
+	(Q6 has no draws): they're tallied in the third record slot (kept under
+	the `draws` name for schema continuity) but are INVISIBLE to streaks —
+	a cancelled match doesn't break momentum. `first_at` is the earliest
+	appearance of ANY kind — "playing since" includes unranked days.
 
 	Returns dict(wins, losses, draws, best_streak, first_at) with first_at
-	None when there are no rows at all.
+	None when there are no rows at all; `draws` is the ABORT count.
 	"""
 	wins = losses = draws = 0
 	best_streak = cur_streak = 0
@@ -145,7 +147,6 @@ def summarize_results(rows) -> dict:
 		winner = r['winner']
 		if winner is None:
 			draws += 1
-			cur_streak = 0
 		elif winner == r['team']:
 			wins += 1
 			cur_streak += 1
@@ -250,6 +251,7 @@ def render_profile_card(
 ) -> bytes:
 	"""Render the card; returns PNG bytes. All stats are ALL-TIME (across
 	seasons) except `rating`/`streak`, which are the player's current state.
+	`draws` is the ABORT count (Q6 has no draws; the name matches the schema).
 
 	peak:        all-time highest rating (small line under the rank name)
 	best_streak: all-time longest win streak (tiny note under STREAK)
