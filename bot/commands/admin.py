@@ -4,12 +4,11 @@ __all__ = [
 	'noadds', 'noadd', 'forgive', 'rating_seed', 'rating_penality', 'rating_hide',
 	'rating_reset', 'rating_snap', 'stats_nuclear_option', 'stats_reset_player', 'stats_replace_player',
 	'phrases_add', 'phrases_clear', 'undo_match',
-	'douche_add', 'douche_summary', 'douche_leaderboard'
 ]
 
 from time import time
 from datetime import timedelta
-from nextcord import Member, Embed, Colour
+from nextcord import Member
 
 from core.utils import seconds_to_str, get_nick
 
@@ -177,57 +176,3 @@ async def undo_match(ctx: bot.Context, match_id: int) -> None:
 		reverted = ", ".join(f"{house} -{points}" for house, points in result.items())
 		msg += f" House points reverted: {reverted}."
 	await ctx.success(msg)
-
-
-async def douche_add(ctx: bot.Context, player: Member, target: Member) -> None:
-	"""Record that one player 'douched' another."""
-	ctx.check_perms(ctx.Perms.MODERATOR)
-	if (member := await ctx.get_member(player)) is None:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
-	if (target_member := await ctx.get_member(target)) is None:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
-	await bot.douche.douche.add(ctx.channel.guild.id, member, target_member, ctx.author)
-	await ctx.success(ctx.qc.gt("Recorded: **{member}** douched **{target}**.").format(
-		member=get_nick(member), target=get_nick(target_member)
-	))
-
-
-async def douche_summary(ctx: bot.Context, player: Member | None = None) -> None:
-	"""Show a player's douche record: received, given, and recent."""
-	target = ctx.author if player is None else await ctx.get_member(player)
-	if not target:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
-	data = await bot.douche.douche.user_summary(ctx.channel.guild.id, target)
-	embed = Embed(title=f"Douche record — {get_nick(target)}", colour=Colour(0xCD5C5C))
-	embed.add_field(name="Received", value=str(data['received']), inline=True)
-	embed.add_field(name="Given", value=str(data['given']), inline=True)
-	if data['recent']:
-		now = int(time())
-		embed.add_field(
-			name="Recently douched",
-			value="\n".join(
-				f"• {r['target_name']} ({seconds_to_str(max(0, now - r['at']))} ago)"
-				for r in data['recent']
-			),
-			inline=False
-		)
-	await ctx.reply(embed=embed)
-
-
-async def douche_leaderboard(ctx: bot.Context) -> None:
-	"""Show the douche leaderboard for the guild."""
-	rows = await bot.douche.douche.leaderboard(ctx.channel.guild.id)
-	if not rows:
-		raise bot.Exc.NotFoundError(ctx.qc.gt("No douche records yet."))
-	embed = Embed(title="Douche leaderboard", colour=Colour(0xCD5C5C))
-	embed.add_field(
-		name="Player",
-		value="\n".join(f"**{i + 1}.** {r['name']}" for i, r in enumerate(rows)),
-		inline=True
-	)
-	embed.add_field(
-		name="Count",
-		value="\n".join(str(r['count']) for r in rows),
-		inline=True
-	)
-	await ctx.reply(embed=embed)
