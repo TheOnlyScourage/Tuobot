@@ -32,7 +32,7 @@ def _calculate_mmr_changes(m: bot.Match, ratings_by_id: dict) -> dict:
       - short-circuits draws (a match-level concept) to all-zero
       - unpacks winner/loser teams + captains from the match object
     """
-    if m.winner is None:                        # draw -> no rating changes
+    if m.winner is None:                        # abort (no winner) -> no rating changes
         return {p.id: 0 for p in m.players}
 
     winners = m.teams[m.winner]
@@ -265,7 +265,10 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
             'streak':    cur_streak,
         }
         if m.winner is None:
-            new_streak = 0
+            # ABORT (Q6 has no draws): the match is on the books but it's a
+            # non-event competitively — the streak is PRESERVED, and the
+            # `draws` column (schema name only) counts the abort.
+            new_streak = cur_streak
             new_wins   = b.get('wins', 0)
             new_losses = b.get('losses', 0)
             new_draws  = b.get('draws', 0) + 1
