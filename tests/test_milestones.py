@@ -97,11 +97,28 @@ def test_record_from_earlier_run_needs_a_final_win(milestones):
 	assert milestones.detect_milestones([P(results=results)]) == []
 
 
-def test_draws_break_streaks(milestones):
-	# W W W D W W W W -> runs of 3 then 4; the final win sets a W4 record.
-	results = [R(True)] * 3 + [R(None)] + [R(True)] * 4
+def test_aborts_do_not_break_streaks(milestones):
+	# Q6 has no draws — winner-NULL rows are ABORTS and are invisible to
+	# streaks: W W [abort] W W merges into one W4 run.
+	results = [R(True)] * 2 + [R(None)] + [R(True)] * 2
 	lines = milestones.detect_milestones([P(results=results)])
 	assert len(lines) == 1 and "W4" in lines[0]
+
+
+def test_losses_still_reset_streaks(milestones):
+	results = [R(True), R(False)] + [R(True)] * 4
+	lines = milestones.detect_milestones([P(results=results)])
+	assert len(lines) == 1 and "W4" in lines[0]
+
+
+def test_aborts_count_toward_match_milestones(milestones):
+	# An aborted match is still a match you showed up for.
+	lines = milestones.detect_milestones([P(results=[R(None)] * 100)])
+	assert len(lines) == 1 and "100th" in lines[0]
+
+
+def test_all_aborts_never_fire_streaks(milestones):
+	assert milestones.detect_milestones([P(results=[R(None)] * 10)]) == []
 
 
 def test_team1_perspective_wins_count(milestones):
