@@ -36,6 +36,40 @@ async def enable_channel(message):
 		)
 
 
+async def find_orphan_channel_configs() -> list[dict]:
+	"""Channel configs whose Discord channel no longer exists — deleted from
+	the server before anyone ran `/admin channel delete` inside it. A channel
+	is only flagged when it is neither loaded (bot.queue_channels) nor
+	visible to the client cache, so hidden-but-alive channels never match.
+	Returns [{channel_id, queues: [names]}, ...]."""
+	from core.client import dc
+	orphans = []
+	for channel_id in await bot.QueueChannel.cfg_factory.p_keys():
+		if channel_id in bot.queue_channels:
+			continue
+		if dc.get_channel(channel_id) is not None:
+			continue
+		queue_rows = await db.select(['name'], 'pq_configs', where={'channel_id': channel_id})
+		orphans.append(dict(
+			channel_id=channel_id,
+			queues=[r['name'] for r in queue_rows],
+		))
+	return orphans
+
+
+async def purge_orphan_channel_configs() -> list[dict]:
+	"""Delete every orphaned channel config and its queues' configs —
+	mirroring exactly what `/admin channel delete` does for a live channel
+	(the qc_configs row + that channel's pq_configs rows; cfg data is a
+	single JSON row per config, no sub-tables). Match history is untouched.
+	Returns the purged orphan list for reporting."""
+	orphans = await find_orphan_channel_configs()
+	for o in orphans:
+		await db.delete('pq_configs', where={'channel_id': o['channel_id']})
+		await db.delete('qc_configs', where={'channel_id': o['channel_id']})
+	return orphans
+
+
 async def disable_channel(message):
 	if not (message.author.id == cfg.DC_OWNER_ID or message.channel.permissions_for(message.author).administrator):
 		await message.channel.send(embed=error_embed(
