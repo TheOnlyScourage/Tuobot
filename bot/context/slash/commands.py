@@ -190,6 +190,44 @@ async def delete_channel(interaction: Interaction) -> None:
 	await interaction.response.send_message(embed=ok_embed('The bot has been disabled.'))
 
 
+@groups.admin_channel.subcommand(name='cleanup', description='☢️ Owner: purge configs for channels deleted from Discord.')
+async def cleanup_channels(
+		interaction: Interaction,
+		confirm: bool = SlashOption(required=False, default=False, description='Actually delete (default: dry-run listing).')
+) -> None:
+	"""Orphan sweeper: `/admin channel delete` must be run INSIDE a channel,
+	so configs for channels deleted from Discord first become unreachable —
+	they linger forever, logging 'Could not reach a text channel' every boot.
+	This lists them (dry run) and purges them on confirm. Owner-locked since
+	it can span guilds; only flags channels the client genuinely cannot see."""
+	from bot.constants import OWNER_ID
+	from bot.main import find_orphan_channel_configs, purge_orphan_channel_configs
+	if interaction.user.id != OWNER_ID:
+		return await interaction.response.send_message(
+			embed=error_embed('Owner-locked: only the bot owner can purge channel configs.'), ephemeral=True)
+
+	if confirm:
+		orphans = await purge_orphan_channel_configs()
+	else:
+		orphans = await find_orphan_channel_configs()
+
+	if not orphans:
+		return await interaction.response.send_message(
+			embed=ok_embed('No orphaned channel configs found — every channel on file still exists.'))
+
+	lines = [
+		f"• `{o['channel_id']}` — queues: {', '.join(o['queues']) if o['queues'] else '—'}"
+		for o in orphans
+	]
+	if confirm:
+		body = ("🧹 **Purged {n} orphaned channel config(s):**\n{lines}\n\n"
+				"Match history was not touched.").format(n=len(orphans), lines="\n".join(lines))
+	else:
+		body = ("🧹 **Orphaned channel configs (dry run):**\n{lines}\n\n"
+				"Run again with `confirm: True` to purge them.").format(lines="\n".join(lines))
+	await interaction.response.send_message(embed=ok_embed(body))
+
+
 @groups.admin_channel.subcommand(name='show', description='List channel configuration.')
 async def cfg_qc(interaction: Interaction
 ) -> None: await run_slash(bot.commands.cfg_qc, interaction=interaction)
