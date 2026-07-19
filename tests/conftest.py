@@ -2,12 +2,13 @@
 """
 Shared pytest plumbing for the Tuobot test suite.
 
-The suite deliberately tests ONLY the two pure modules:
+The suite deliberately tests ONLY the pure modules:
 
   - bot/stats/mmr_engine.py        (the MMR formula)
   - bot/match/captain_selection.py (captain scoring/selection)
+  - bot/stats/milestones.py        (milestone / rank-up detection)
 
-Both were extracted specifically to be testable without Discord or MySQL.
+All were extracted specifically to be testable without Discord or MySQL.
 The catch: importing them the normal way (`import bot.stats.mmr_engine`)
 executes `bot/__init__.py`, which needs a live Discord client and a MySQL
 connection at import time. So instead we:
@@ -101,3 +102,16 @@ def role():
 def member():
 	"""The FakeMember class — usage: member(1, roles=[role(name='Beater')])."""
 	return FakeMember
+
+
+@pytest.fixture(scope="session")
+def milestones():
+	"""bot/stats/milestones.py — milestone & rank-up detection (pure; needs
+	only the real bot.constants for the rank thresholds)."""
+	if "bot" not in sys.modules:
+		bot_pkg = types.ModuleType("bot")
+		bot_pkg.__path__ = [str(ROOT / "bot")]
+		sys.modules["bot"] = bot_pkg
+	if "bot.constants" not in sys.modules:
+		_load("bot.constants", "bot/constants.py")
+	return _load("bot.stats.milestones", "bot/stats/milestones.py")
