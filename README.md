@@ -123,13 +123,6 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/admin rating reset` | Reset all rating data on the channel. |
 | `/admin rating snap` | Snap players' ratings to their rank thresholds. |
 
-### `/douche` (Community Log)
-| Command | What it does |
-|---|---|
-| `/douche add <player> <target>` | Record that one player "douched" another (moderator only). |
-| `/douche summary [player]` | Show a player's douche record: received, given, and recent. |
-| `/douche leaderboard` | Show the guild's douche leaderboard. |
-
 ---
 
 ## 👑 Admin Commands
