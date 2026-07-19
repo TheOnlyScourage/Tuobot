@@ -44,7 +44,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 ### Stats & Info
 | Command | What it does |
 |---|---|
-| `/rank [player]` | Show a player's **current-season** rating profile — rating, W/L/D, win rate, and recent matches. Defaults to yourself. |
+| `/rank [player]` | Show a player's **current-season** rating profile — rating, W/L/A (wins / losses / aborts), win rate, and recent matches. Defaults to yourself. |
 | `/profile [player]` | Render a PNG profile card — **all-time across seasons**: career record, peak rating, best-ever streak, a rating sparkline, most-teamed-with and nemesis (current rating + streak show live state). Defaults to yourself. |
 | `/leaderboard [page]` | The merged leaderboard — ⏮ ◀ ▶ ⏭ flip pages, 🔍 **Me** jumps to and highlights your row, and 🔁 toggles between **All Players** and the **Season (15+)** board. |
 | `/season_leaderboard [page]` | The same merged board, just opened on the Season (15+) view. |
@@ -61,7 +61,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 ### Reporting Results
 | Command | What it does |
 |---|---|
-| `/report <result>` | Report a match result. Choices: `loss`, `draw`, `abort`. The other team confirms by also reporting. |
+| `/report <result>` | Report a match result. Choices: `loss`, `abort`. An abort needs the other captain to also `/report abort`, and is then **recorded** — no winner, no rating change, streaks untouched. |
 
 ### Misc / Fun
 | Command | What it does |
@@ -158,6 +158,8 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 **Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
 
 **Hogwarts houses**: Captains' Discord house roles determine team names. The winning team of a **ranked** match awards house points: captain = 10, other players = 5. Players with no house role contribute nothing. Totals feed the House Cup and reset each season.
+
+**Aborts (there are no draws)**: Q6 matches always have a winner — so the "no winner" outcome is an **abort**. Confirmed aborts are recorded on the books (the match id keeps its row), count as a played match, change nobody's rating, and leave win streaks untouched. The third number in every record (W-L-**A**) is aborts. Admins can reverse one with `/admin stats undo_match` like any result.
 
 **Milestones & rank-ups**: Ranked results embeds automatically celebrate the big moments — your **50th / 100th / 250th / 500th / 1000th** career match, climbing into a **new rank** (with a special call-out the *first time ever*), and setting a **new all-time best win streak** (W4+). All powered by permanent match history.
 
