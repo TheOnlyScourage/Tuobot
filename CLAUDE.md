@@ -70,7 +70,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/queues/pickup_queue.py`** — `PickupQueue`: a player queue that spawns a `Match` when full (`common.py` holds `QueueResponses`/`Qr`)
 - **`bot/match/`** — the `Match` lifecycle (`INIT → CHECK_IN → DRAFT → WAITING_REPORT`):
   - `match.py` (`Match` + `Team`), `check_in.py` (ready-up / race-to-ready / standby fill / abort), `draft.py` (captain picks), `standby.py` (race-to-ready standby fill), `embeds.py` (all match embeds), `captain_selection.py` (captain-role pick logic + streak cooldowns), `party_code.py`, `subbing.py` (pure `/subauto` selection helper)
-- **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`; plus `views.py` (nextcord UI Views — currently the button-paginated `LeaderboardView`; renders via injected callables so it imports nothing from the bot package)
+- **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`; plus `views.py` (nextcord UI Views — currently `LeaderboardView`: button pagination, 🔍 Me, and an optional 🔁 two-board toggle; renders via injected callables so it imports nothing from the bot package)
 - **`bot/context/`** — command-context abstraction:
   - `slash/` — the primary interface: command definitions in `commands.py` (thin wrappers over `bot/commands/` via `run_slash()`), autocomplete in `autocomplete.py`, subcommand groups in `groups.py`, `SlashContext` in `context.py`
   - `message/` — a **minimal** `MessageContext` kept only to support the `++` / `--` add/remove shorthand; the full `!command` system was removed (slash-only)
