@@ -399,19 +399,43 @@ async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 	await ctx.reply(file=File(io.BytesIO(png), filename=f"profile_{target.id}.png"))
 
 
+LB_QUALIFY_MIN = 15
+
+
+def _build_lb_view(all_data: list, min_matches: int, page: int, start_on_season: bool) -> LeaderboardView:
+	"""One view, two boards: All Players plus the season-qualified board
+	(min_matches+ games), flipped with the 🔁 toggle. The season board — and
+	the toggle itself — only exists once somebody qualifies, so early-season
+	boards are simply the plain paginator. `page` is 1-based and clamps."""
+	qualified = [
+		r for r in all_data
+		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
+	]
+	has_season = len(qualified) > 0
+	return LeaderboardView(
+		data=all_data,
+		make_embed=_lb_embed_maker("Leaderboard"),
+		alt_data=qualified if has_season else None,
+		alt_make_embed=_lb_embed_maker(f"Season Leaderboard ({min_matches}+ games)") if has_season else None,
+		toggle_to_alt_label=f"Season ({min_matches}+)",
+		toggle_to_main_label="All Players",
+		not_found_alt=(
+			f"You're not on the season board yet — it takes {min_matches}+ ranked "
+			f"matches. Flip to All Players to find yourself!"
+		),
+		start_on_alt=start_on_season and has_season,
+		start_page=(page or 1) - 1,
+	)
+
+
 async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
-	"""Show the rating leaderboard with button pagination (⏮ ◀ ▶ ⏭ + 🔍 Me)."""
+	"""The merged leaderboard: ⏮ ◀ ▶ ⏭ pages, 🔍 Me, and a 🔁 toggle that
+	flips between All Players and the season-qualified board."""
 	all_data = await ctx.qc.get_lb()
 	if not len(all_data):
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Leaderboard is empty."))
 
-	# `page` is just the starting page now; out-of-range values clamp instead
-	# of erroring since the buttons make every page reachable anyway.
-	view = LeaderboardView(
-		data=all_data,
-		make_embed=_lb_embed_maker("Leaderboard"),
-		start_page=(page or 1) - 1,
-	)
+	view = _build_lb_view(all_data, LB_QUALIFY_MIN, page, start_on_season=False)
 	await ctx.reply(embed=view.render(), view=view)
 	await view.bind(ctx)
 
@@ -504,22 +528,17 @@ async def activity(ctx: bot.Context, player: Member | None = None) -> None:
 
 
 async def season_leaderboard(ctx: bot.Context, page: int = 1, min_matches: int = 15) -> None:
-	"""Button-paginated leaderboard showing only players with min_matches+ games."""
-	all_data  = await ctx.qc.get_lb()
-	qualified = [
-		r for r in all_data
-		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
-	]
-	if not len(qualified):
+	"""The same merged board as /leaderboard, just opened on the Season view
+	(min_matches+ games) — the 🔁 toggle flips back to All Players."""
+	all_data = await ctx.qc.get_lb()
+	if not any(
+		(r['wins'] + r['losses'] + r['draws']) >= min_matches for r in all_data
+	):
 		raise bot.Exc.NotFoundError(
 			ctx.qc.gt(f"No players with {min_matches}+ matches found.")
 		)
 
-	view = LeaderboardView(
-		data=qualified,
-		make_embed=_lb_embed_maker(f"Season Leaderboard ({min_matches}+ games)"),
-		start_page=(page or 1) - 1,
-	)
+	view = _build_lb_view(all_data, min_matches, page, start_on_season=True)
 	await ctx.reply(embed=view.render(), view=view)
 	await view.bind(ctx)
 
