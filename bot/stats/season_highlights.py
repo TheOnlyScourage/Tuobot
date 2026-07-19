@@ -152,7 +152,10 @@ async def _query_streaks(channel_id: int, season: int):
 	for r in rows:
 		nick_of[r['user_id']] = r['nick']
 		w = r['winner']
-		res = 'W' if w == r['team'] else ('L' if w in (0, 1) else 'D')
+		# winner-NULL rows are ABORTS (Q6 has no draws) — invisible to streaks.
+		if w is None:
+			continue
+		res = 'W' if w == r['team'] else 'L'
 		seq[r['user_id']].append(res)
 
 	best_win = None    # dict(nick, streak)
