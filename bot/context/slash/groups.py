@@ -50,9 +50,3 @@ async def admin_noadds(interaction: Interaction) -> None:
 async def admin_phrases(interaction: Interaction) -> None:
 	"""Parent group for /phrases subcommands."""
 	pass
-
-
-@dc.slash_command(name='douche', **guild_kwargs)
-async def douche(interaction: Interaction) -> None:
-	"""Parent group for /douche subcommands."""
-	pass
