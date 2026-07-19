@@ -588,14 +588,14 @@ async def _profile(
 ) -> None: await run_slash(bot.commands.profile, interaction=interaction, player=player)
 
 
-@dc.slash_command(name='leaderboard', description='Show rating leaderboard.', **guild_kwargs)
+@dc.slash_command(name='leaderboard', description='The leaderboard — 🔁 flips All Players ↔ Season (15+).', **guild_kwargs)
 async def _leaderboard(
 		interaction: Interaction,
 		page: int = SlashOption(required=False, description="Page to open on (buttons flip pages)."),
 ) -> None: await run_slash(bot.commands.leaderboard, interaction=interaction, page=page)
 
 
-@dc.slash_command(name='season_leaderboard', description='Leaderboard for players with 15+ matches played.', **guild_kwargs)
+@dc.slash_command(name='season_leaderboard', description='The merged leaderboard, opened on the Season (15+) view.', **guild_kwargs)
 async def _season_leaderboard(
 		interaction: Interaction,
 		page: int = SlashOption(required=False, description="Page to open on (buttons flip pages)."),
