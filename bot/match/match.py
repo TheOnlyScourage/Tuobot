@@ -99,6 +99,12 @@ class Match:
 				log.error(f"[captain_streak] prefetch failed: {exc}")
 
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
+		# 🟡 The Snitch flip: FIRST PICK is a genuine coin toss, not an artifact
+		# of captain-selection order. Shuffling here decides which captain seats
+		# into teams[0] vs teams[1] — and therefore who the pick_order hands the
+		# opening pick. Draft.start() announces the result with the snitch embed.
+		if len(match.captains) == 2:
+			random.shuffle(match.captains)
 		match.init_teams(match.cfg['pick_teams'])
 
 		# Update streaks now that captains are locked in. Picked captains get
