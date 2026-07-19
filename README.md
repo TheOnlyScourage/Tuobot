@@ -159,6 +159,8 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 
 **Hogwarts houses**: Captains' Discord house roles determine team names. The winning team of a **ranked** match awards house points: captain = 10, other players = 5. Players with no house role contribute nothing. Totals feed the House Cup and reset each season.
 
+**Milestones & rank-ups**: Ranked results embeds automatically celebrate the big moments — your **50th / 100th / 250th / 500th / 1000th** career match, climbing into a **new rank** (with a special call-out the *first time ever*), and setting a **new all-time best win streak** (W4+). All powered by permanent match history.
+
 **Seasons**: Each season tracks ratings/stats independently. `season_end` resets the season board (ratings + house points), posts the standings, highlights, and House Cup, then turns ranked off; **match history is kept forever** (stamped with a `season` number) to power all-time stats like `/profile`. `season_start` re-enables ranked and starts the new season counter.
 
 **Fill-in subs**: When using `/admin match sub_player`, the sub plays for free if they win, but losses are charged to the original player. Use `/swap` instead if you want a clean penalty-less swap.
