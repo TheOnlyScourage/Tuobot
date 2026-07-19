@@ -53,8 +53,22 @@ class Draft:
 		}
 
 	async def start(self, ctx: bot.Context) -> None:
-		"""Entry point for the draft stage: render the initial board."""
+		"""Entry point for the draft stage: announce the Snitch flip, then
+		render the initial board."""
+		await self._announce_snitch_flip(ctx)
 		await self.refresh(ctx)
+
+	async def _announce_snitch_flip(self, ctx: bot.Context) -> None:
+		"""🟡 Post the golden-snitch coin-toss embed naming who drafts first.
+		The flip itself already happened (Match.new shuffles the captains at
+		creation); this is purely the ceremony. Best-effort: a failed embed
+		never blocks the draft — it logs instead."""
+		if len(self.m.captains) < 2 or not self.pick_order:
+			return
+		try:
+			await ctx.notice(embed=self.m.embeds.snitch_flip(first_team=self.pick_order[0]))
+		except Exception as e:
+			bot.log.error(f"[snitch] flip embed failed for match {self.m.id}: {e}")
 
 	async def print(self, ctx: bot.Context) -> None:
 		"""Render the draft board embed."""
