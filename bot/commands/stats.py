@@ -154,27 +154,42 @@ async def stats(ctx: bot.Context, player: Member | None = None) -> None:
 	await ctx.reply(embed=embed)
 
 
+def _top_board(players: list, total: int, span: str) -> str:
+	"""Medalled monospace list with activity bars for /top — replaces the old
+	wall of inline name/count fields. Bars scale to the busiest player."""
+	medals = ['🥇', '🥈', '🥉']
+	rows = players[:10]
+	max_count = max((p['count'] for p in rows), default=1) or 1
+	lines = [f"**{total}** total matches • {span}\n"]
+	for i, p in enumerate(rows):
+		rank = medals[i] if i < 3 else f"`{i + 1:>2}.`"
+		bar = '▰' * max(1, round(p['count'] * 10 / max_count))
+		lines.append(f"{rank} `{_table_nick(p['nick']):<18}` **{p['count']:>3}**  {bar}")
+	return "\n".join(lines)
+
+
 async def top(ctx: bot.Context, period: str | None = None) -> None:
-	"""Show the top 10 players by matches played, optionally within a time period."""
+	"""Top 10 players by matches played — medal list with activity bars,
+	optionally within a time period (day / week / month / year)."""
 	if period in ["day", ctx.qc.gt("day")]:
-		time_gap = int(time()) - (60 * 60 * 24)
+		time_gap, span = int(time()) - (60 * 60 * 24), "past day"
 	elif period in ["week", ctx.qc.gt("week")]:
-		time_gap = int(time()) - (60 * 60 * 24 * 7)
+		time_gap, span = int(time()) - (60 * 60 * 24 * 7), "past week"
 	elif period in ["month", ctx.qc.gt("month")]:
-		time_gap = int(time()) - (60 * 60 * 24 * 30)
+		time_gap, span = int(time()) - (60 * 60 * 24 * 30), "past month"
 	elif period in ["year", ctx.qc.gt("year")]:
-		time_gap = int(time()) - (60 * 60 * 24 * 365)
+		time_gap, span = int(time()) - (60 * 60 * 24 * 365), "past year"
 	else:
-		time_gap = None
+		time_gap, span = None, "all-time"
 
 	data = await bot.stats.top(ctx.qc.id, time_gap=time_gap)
+	if not data['players']:
+		raise bot.Exc.NotFoundError(ctx.qc.gt("Nothing found"))
 	embed = Embed(
-		title=ctx.qc.gt("Top 10 players for __{target}__").format(target=f"#{ctx.channel.name}"),
-		colour=Colour(0x50e3c2),
-		description=ctx.qc.gt("**Total matches: {count}**").format(count=data['total'])
+		title="🏆 " + ctx.qc.gt("Top 10 players for __{target}__").format(target=f"#{ctx.channel.name}"),
+		colour=Colour(0x7289DA),
+		description=_top_board(data['players'], data['total'], span)
 	)
-	for p in data['players']:
-		embed.add_field(name=p['nick'], value=str(p['count']), inline=True)
 	await ctx.reply(embed=embed)
 
 
