@@ -9,7 +9,7 @@ pre-match all-time peak; it returns ready-to-post embed lines.
 
 Detected events (a player can stack all three in one match):
   - **Match-count milestones** — all-time ranked appearances hitting one of
-	MATCH_MILESTONES. Fires win, lose, or draw: showing up is the milestone.
+	MATCH_MILESTONES. Fires win, lose, or abort: showing up is the milestone.
   - **Rank-ups** — the rating crossed a rank threshold UPWARD this match,
 	tagged "for the first time" when the new tier beats the player's
 	all-time peak tier (so post-season re-climbs celebrate without lying).
@@ -50,14 +50,17 @@ def rank_label(tier: int) -> tuple[str, str]:
 
 def _streak_walk(results) -> tuple[int, int, int]:
 	"""Walk chronological ranked results -> (current run, best overall, best
-	BEFORE the final result). Draws and losses reset the run — mirroring the
-	season-highlights and profile-card conventions."""
+	BEFORE the final result). Losses reset the run; ABORTS (winner NULL — Q6
+	has no draws) are invisible to streaks, mirroring the register/profile/
+	highlights convention."""
 	cur = best = best_before_last = 0
 	last = len(results) - 1
 	for i, (winner, team) in enumerate(results):
 		if i == last:
 			best_before_last = best
-		if winner is not None and winner == team:
+		if winner is None:
+			continue
+		if winner == team:
 			cur += 1
 			best = max(best, cur)
 		else:
