@@ -18,6 +18,10 @@ Card anatomy (900x300):
   - stats row: all-time W-L-D, win rate, current streak (+ best-ever note)
   - rating sparkline (last ~20 history points, spanning seasons)
   - most-teamed-with + nemesis footer, "Since <month>" footnote
+  - career milestone regalia: winged badge above the avatar (shield -> wings
+    -> stars -> crown at 1000; assets/badges/tier_N.png overrides the art)
+    + DBD-style ornament around the avatar (ring -> studs -> star wreath ->
+    radiating-spike engulf at 1000)
 
 Rendering note: Pillow's ImageDraw does NOT alpha-blend — drawing an RGBA
 colour writes that alpha into the pixels instead of compositing. Every
@@ -36,6 +40,219 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 CARD_W, CARD_H = 900, 300
+
+# ── Career milestone regalia ─────────────────────────────────────────────────
+# The winged badge above the avatar and the ornament around it upgrade as the
+# all-time ranked-match count crosses each milestone. Thresholds
+# MIRROR bot/stats/milestones.MATCH_MILESTONES — a committed test
+# (test_profile_frame_tiers_match_milestones) keeps the two in sync via ast,
+# since CI can't import this module (no PIL there).
+REGALIA_TIERS = (
+	(1000, 'champion'),
+	(500,  'gold_double'),
+	(250,  'gold'),
+	(100,  'silver'),
+	(50,   'bronze'),
+)
+
+# Avatar regalia per tier (DBD-portrait style): ornament grows AROUND the
+# circular avatar — metal ring, then studs, then a bottom star wreath, and a
+# full radiating-spike engulf at the summit. The top arc stays clear so the
+# winged badge above the avatar caps the composition.
+AVATAR_REGALIA = {
+	'bronze':      dict(studs=0,  ring_stars=0, spikes=0),
+	'silver':      dict(studs=8,  ring_stars=0, spikes=0),
+	'gold':        dict(studs=8,  ring_stars=3, spikes=0),
+	'gold_double': dict(studs=12, ring_stars=5, spikes=0),
+	'champion':    dict(studs=12, ring_stars=5, spikes=18),
+}
+
+# Badge regalia per tier: wings appear and grow, stars join, and the crown
+# arrives only at the summit — shield -> +wings -> +stars -> +crown.
+BADGE_REGALIA = {
+	'bronze':      dict(feathers=0, side_stars=0, crown=False, arc_stars=0),
+	'silver':      dict(feathers=1, side_stars=0, crown=False, arc_stars=0),
+	'gold':        dict(feathers=2, side_stars=0, crown=False, arc_stars=0),
+	'gold_double': dict(feathers=3, side_stars=1, crown=False, arc_stars=0),
+	'champion':    dict(feathers=3, side_stars=1, crown=True,  arc_stars=3),
+}
+BADGE_PALETTES = {  # (dark, base, light) metal shades per style
+	'bronze':      ((94, 56, 30),   (176, 108, 62),  (222, 158, 104)),
+	'silver':      ((104, 110, 122), (198, 203, 212), (241, 244, 249)),
+	'gold':        ((140, 108, 26), (222, 184, 62),  (255, 226, 122)),
+	'gold_double': ((140, 108, 26), (222, 184, 62),  (255, 226, 122)),
+	'champion':    ((140, 108, 26), (222, 184, 62),  (255, 232, 140)),
+}
+
+# Optional pro-art override: drop transparent PNGs at
+# assets/badges/tier_50.png ... tier_1000.png (any size; scaled to fit) and
+# they replace the procedural badge entirely — same pattern as the bundled
+# fonts. Missing/broken files silently fall back to the drawn badge.
+_BADGE_DIR = Path(__file__).resolve().parents[2] / 'assets' / 'badges'
+
+
+def _star_points(cx: float, cy: float, r_out: float, r_in: float, points: int = 5):
+	"""Vertex list for a classic star polygon centred on (cx, cy)."""
+	import math
+	verts = []
+	for i in range(points * 2):
+		r = r_out if i % 2 == 0 else r_in
+		a = math.pi / 2 * -1 + i * math.pi / points
+		verts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+	return verts
+
+
+def _paste_milestone_badge(card, style: str, tier: int) -> None:
+	"""Compose the career badge (centred above the avatar): a metal shield
+	with a star, gaining wings, flanking stars, and finally a crown as the
+	tier climbs. No number — the regalia IS the tier. Uses an
+	assets/badges/tier_N.png override when present."""
+	layer = Image.new('RGBA', (176, 92), (0, 0, 0, 0))
+
+	asset = None
+	try:
+		p = _BADGE_DIR / f'tier_{tier}.png'
+		if p.exists():
+			asset = Image.open(p).convert('RGBA')
+	except Exception:
+		asset = None
+
+	if asset is not None:
+		h = 78
+		w = max(1, round(asset.width * h / asset.height))
+		asset = asset.resize((min(w, 172), h))
+		layer.alpha_composite(asset, ((176 - asset.width) // 2, 2))
+	else:
+		_draw_badge(layer, style)
+
+	card.alpha_composite(layer, (14, 8))
+
+
+def _draw_badge(layer, style: str) -> None:
+	"""Procedural badge art. Deliberately stylized (flat game-icon look) —
+	the asset override exists for anyone wanting painted-art fidelity."""
+	d = ImageDraw.Draw(layer)
+	dark, base, light = BADGE_PALETTES[style]
+	regalia = BADGE_REGALIA[style]
+	cx = 88
+
+	# wings: layered feather quads fanning out and down from the shoulders
+	for side in (-1, 1):
+		for i in range(regalia['feathers']):
+			spread = 20 + i * 15
+			drop = 6 + i * 7
+			length = 26 + i * 9
+			shoulder = (cx + side * 20, 30 + drop - 4)
+			tip = (cx + side * (20 + spread + length), 20 + drop + i * 4)
+			d.polygon([
+				shoulder,
+				(cx + side * (20 + spread), 24 + drop),
+				tip,
+				(cx + side * (20 + spread * 0.8), 40 + drop),
+			], fill=(light if i % 2 == 0 else base), outline=dark)
+
+	# flanking stars at the wing tips
+	if regalia['side_stars']:
+		for side in (-1, 1):
+			d.polygon(_star_points(cx + side * 74, 30, 9, 3.6), fill=light, outline=dark)
+
+	# shield: pointed-bottom escutcheon, two-tone metal with an outline
+	top, bot = 26, 82
+	shield = [
+		(cx - 24, top), (cx + 24, top), (cx + 26, top + 8),
+		(cx + 22, bot - 20), (cx, bot), (cx - 22, bot - 20), (cx - 26, top + 8),
+	]
+	d.polygon(shield, fill=base, outline=dark)
+	# upper sheen
+	d.polygon([
+		(cx - 24, top), (cx + 24, top), (cx + 25, top + 6),
+		(cx + 18, top + 22), (cx - 18, top + 22), (cx - 25, top + 6),
+	], fill=light)
+	d.line([(cx - 24, top), (cx + 24, top)], fill=light, width=2)
+
+	# centre star
+	d.polygon(_star_points(cx, top + 27, 14, 5.6), fill=light, outline=dark)
+	d.polygon(_star_points(cx, top + 27, 7, 2.8), fill=base)
+
+	# crown — the summit only
+	if regalia['crown']:
+		bx0, bx1, by = cx - 20, cx + 20, top - 2
+		d.polygon([
+			(bx0, by), (bx0, by - 12), (cx - 10, by - 5), (cx, by - 15),
+			(cx + 10, by - 5), (bx1, by - 12), (bx1, by),
+		], fill=(255, 214, 74), outline=dark)
+		d.ellipse((cx - 3, by - 8, cx + 3, by - 2), fill=(206, 44, 62), outline=dark)
+
+	# arc of stars above everything
+	for i in range(regalia['arc_stars']):
+		off = (i - (regalia['arc_stars'] - 1) / 2)
+		sx = cx + off * 26
+		sy = 8 + abs(off) * 3
+		r = 6 if off == 0 else 4.5
+		d.polygon(_star_points(sx, sy, r, r * 0.42), fill=(255, 226, 122), outline=dark)
+
+
+def _draw_avatar_regalia(card, style: str) -> None:
+	"""DBD-style portrait ornament around the circular avatar (centre
+	(100,150), ring r≈60). Grows with the tier: metal ring -> studs -> a
+	bottom star wreath -> a full radiating-spike engulf at champion. Every
+	element skips the top arc (±55° from straight up) so the badge above the
+	avatar stays unobstructed — the composition reads badge-crowns-portrait."""
+	import math
+	d = ImageDraw.Draw(card)
+	dark, base, light = BADGE_PALETTES[style]
+	spec = AVATAR_REGALIA[style]
+	cx, cy = 100, 150
+
+	def on_circle(r: float, deg: float):
+		a = math.radians(deg - 90)  # 0° = straight up, clockwise
+		return (cx + r * math.cos(a), cy + r * math.sin(a))
+
+	def top_gap(deg: float) -> bool:
+		return min(deg % 360, 360 - deg % 360) < 55
+
+	# radiating spikes (champion) — behind the ring, alternating lengths
+	if spec['spikes']:
+		for i in range(spec['spikes']):
+			deg = i * 360 / spec['spikes']
+			if top_gap(deg):
+				continue
+			tip = 86 if i % 2 == 0 else 77
+			d.polygon([
+				on_circle(64, deg - 5), on_circle(tip, deg), on_circle(64, deg + 5),
+			], fill=(base if i % 2 == 0 else dark), outline=dark)
+
+	# the metal ring itself (every tier from bronze up)
+	d.ellipse((cx - 68, cy - 68, cx + 68, cy + 68), outline=dark, width=6)
+	d.ellipse((cx - 67, cy - 67, cx + 67, cy + 67), outline=base, width=4)
+
+	# studs: small outward triangles around the ring
+	if spec['studs']:
+		for i in range(spec['studs']):
+			deg = i * 360 / spec['studs']
+			if top_gap(deg):
+				continue
+			d.polygon([
+				on_circle(68, deg - 4), on_circle(77, deg), on_circle(68, deg + 4),
+			], fill=light, outline=dark)
+
+	# bottom star wreath (gold and up), centred under the portrait
+	if spec['ring_stars']:
+		n = spec['ring_stars']
+		for i in range(n):
+			deg = 180 + (i - (n - 1) / 2) * 26
+			sx, sy = on_circle(72, deg)
+			r = 9 if i == (n - 1) // 2 else 6.5
+			d.polygon(_star_points(sx, sy, r, r * 0.42), fill=light, outline=dark)
+
+
+def regalia_style(career_matches: int) -> str | None:
+	"""Regalia style earned by an all-time ranked-match count (None below the
+	first milestone — a bare card is itself the starting tier)."""
+	for threshold, style in REGALIA_TIERS:
+		if career_matches >= threshold:
+			return style
+	return None
 
 # Default font location: <repo root>/assets/fonts
 _FONT_DIR = Path(__file__).resolve().parents[2] / 'assets' / 'fonts'
@@ -246,7 +463,7 @@ def render_profile_card(
 	wins: int, losses: int, draws: int, streak: int,
 	peak: int | None = None, best_streak: int | None = None, history=(),
 	teammate=None, nemesis=None, avatar_bytes: bytes | None = None,
-	emblem_bytes: bytes | None = None,
+	emblem_bytes: bytes | None = None, career_matches: int = 0,
 	footnote: str | None = None, font_dir: Path | None = None,
 ) -> bytes:
 	"""Render the card; returns PNG bytes. All stats are ALL-TIME (across
@@ -258,6 +475,12 @@ def render_profile_card(
 	teammate:    (nick, games_together) or None
 	nemesis:     (nick, my_wins_vs, my_losses_vs) or None
 	history:     chronological rating values (sparkline uses the last 20)
+	career_matches: all-time ranked count — drives the milestone regalia:
+	             the BADGE above the avatar (bronze shield 50 → wings 100 →
+	             bigger wings 250 → wings+stars 500 → crowned champion 1000;
+	             assets/badges/tier_N.png replaces the drawn art) and the
+	             AVATAR ornament (metal ring 50 → studs 100 → star wreath
+	             250/500 → radiating spikes at 1000)
 	footnote:    bottom-left stamp, e.g. "Since Mar 2026 • 214 ranked matches"
 	"""
 	font_dir = Path(font_dir) if font_dir else _FONT_DIR
@@ -346,13 +569,20 @@ def render_profile_card(
 		("WIN RATE", f"{wr}%", WHITE),
 		("STREAK", streak_text, streak_col),
 	]
-	x = 190
-	for label, value, col in stats:
+	# Column stops are FIXED so cards align when compared side by side; the
+	# RECORD value alone grows with a career ("612-380-12"), so each value
+	# steps its font down until it fits the lane instead of spilling into
+	# the next column (readability floor: 16).
+	stops = (190, 345, 480)
+	lane = stops[1] - stops[0] - 16
+	for (label, value, col), x in zip(stats, stops):
 		draw.text((x, 166), label, font=regular(15), fill=GREY)
-		draw.text((x, 186), value, font=bold(27), fill=col)
-		x += 140
+		size = 27
+		while size > 16 and draw.textlength(value, font=bold(size)) > lane:
+			size -= 1
+		draw.text((x, 186 + (27 - size)), value, font=bold(size), fill=col)
 	if best_streak and best_streak >= 1:
-		draw.text((470, 218), f"best W{best_streak}", font=regular(13), fill=GREY)
+		draw.text((stops[2], 218), f"best W{best_streak}", font=regular(13), fill=GREY)
 
 	# sparkline stroke (fill already composited underneath)
 	if spark:
@@ -377,6 +607,14 @@ def render_profile_card(
 	# footnote (bottom-left): "Since Mar 2026 • 214 ranked matches"
 	if footnote:
 		draw.text((16, 280), footnote, font=regular(13), fill=GREY)
+
+	# ── career milestone regalia (drawn last, over everything): the winged
+	# badge crowning the avatar + the DBD-style ornament around the portrait ──
+	style = regalia_style(career_matches)
+	if style:
+		_draw_avatar_regalia(card, style)
+		tier = next(t for t, _s in REGALIA_TIERS if career_matches >= t)
+		_paste_milestone_badge(card, style, tier)
 
 	buf = io.BytesIO()
 	card.convert('RGB').save(buf, format='PNG')
