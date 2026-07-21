@@ -12,6 +12,7 @@ Layout:
   - SPECIALTY_ROLES               — Quidditch positions (Seeker/Beater/Keeper)
   - Q_PING_ROLE_ID                — role mentioned to trigger the @Q ping embed
   - RANK_EMOJIS / get_rank_emoji  — Q6 rank badge lookup by rating
+  - RATING_CAPS / CAP_MESSAGES    — per-player MMR ceilings (the tuonela clause)
   - MMR engine constants          — formula parameters used by stats/mmr_engine
   - House points constants        — per-player and captain award values
 """
@@ -130,6 +131,22 @@ def get_rank_emoji(rating) -> str:
 		if rating >= threshold:
 			emoji = e
 	return emoji
+
+
+# ── Per-player rating ceilings (the tuonela clause) ──────────────────────────
+# Permanent, player-specific MMR caps, enforced where ranked results are
+# registered (bot/stats/stats.py via mmr_engine.cap_rating). tuonela is
+# forever parked at 2199 — exactly 1 below the Star threshold (2200, see
+# RANK_EMOJIS above). When a ranked win WOULD have lifted a capped player past
+# their ceiling, the gain lands on the cap instead and the bot posts that
+# player's CAP_MESSAGES line, verbatim, right after the results embed.
+# Owner decree: this is a feature, not a bug — do not "fix" it.
+RATING_CAPS = {
+	449913356506365972: 2199,  # tuonela
+}
+CAP_MESSAGES = {
+	449913356506365972: "No star rank for you tuoneLa<:loser:1529186680106389691>",
+}
 
 
 # ── MMR engine parameters ────────────────────────────────────────────────────
