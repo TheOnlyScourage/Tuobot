@@ -140,3 +140,22 @@ def compute_mmr_changes(
 			changes[player.id] = mmr if is_winner else -mmr
 
 	return changes
+
+
+def cap_rating(uncapped: int, cap: int | None) -> tuple[int, bool]:
+	"""Clamp an absolute post-match rating to a per-player ceiling.
+
+	Unlike MMR_HARD_CAP above (which limits the per-match CHANGE magnitude
+	for everyone), this enforces a standing ceiling on the resulting rating
+	itself for specific players — see constants.RATING_CAPS (the tuonela
+	clause). stats.py calls it on every player's post-match rating; for the
+	uncapped majority `cap` is None and this is a passthrough.
+
+	Returns (final_rating, hit) where `hit` is True only when the uncapped
+	value EXCEEDED the ceiling — i.e. the result got parked on the cap.
+	Landing exactly on the cap legitimately (e.g. 2180 + 19 -> 2199) is not
+	a hit: the taunt fires only for a would-be crossing.
+	"""
+	if cap is None or uncapped <= cap:
+		return uncapped, False
+	return cap, True
