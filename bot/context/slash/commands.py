@@ -4,9 +4,10 @@ from typing import Callable  # noqa: UP035
 from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
 from nextcord.errors import InteractionResponded
-from nextcord import Interaction, SlashOption, Member, TextChannel
+from nextcord import Interaction, SlashOption, Member, TextChannel, File
 import traceback
 import time
+from pathlib import Path
 
 from core.client import dc
 from core.utils import error_embed, ok_embed, parse_duration, get_nick
@@ -659,7 +660,13 @@ async def _season_start(
 # branch only; main never sees it) ────────────────────────────────────────────
 DONBOT_GIF = "https://static2.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/72/ba/28ZFgzcW.gif"
 TUONELA_ID = 449913356506365972
-TUONELA_EVIL_GIF = "https://static2.klipy.com/ii/d7aec6f6f171607374b2065c836f92f4/92/04/DClga1Ee.gif"
+# tuonela's self-invoke gif ships IN the repo and goes out as a real file
+# attachment: Discord cdn attachment URLs are signed and expire after 24h,
+# so hotlinking one would die mid-vacation. Anchored to the repo root the
+# same way profile_card anchors assets/fonts. The old Nicholson klipy link
+# stays as a fallback so the easter egg survives even a missing asset.
+TUONELA_EVIL_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'tuonelagif.gif'
+TUONELA_EVIL_GIF_FALLBACK = "https://static2.klipy.com/ii/d7aec6f6f171607374b2065c836f92f4/92/04/DClga1Ee.gif"
 
 
 @dc.slash_command(name='don', description="I'm so great.", **guild_kwargs)
@@ -688,7 +695,14 @@ async def tuonela(interaction: Interaction) -> None:
 	"""@tuonela, with DonBot's deepest confession — unless tuonela themself
 	invokes it, in which case the mask comes off: yes... evil."""
 	if interaction.user.id == TUONELA_ID:
-		await interaction.response.send_message(TUONELA_EVIL_GIF)
+		try:
+			gif = File(str(TUONELA_EVIL_GIF_PATH), filename='tuonela.gif')
+			await interaction.response.send_message(file=gif)
+		except Exception as e:
+			log.error(f"[tuonela] gif attachment failed ({e}); falling back to hotlink")
+			sender = (interaction.followup.send if interaction.response.is_done()
+			          else interaction.response.send_message)
+			await sender(TUONELA_EVIL_GIF_FALLBACK)
 	else:
 		await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot")
 
