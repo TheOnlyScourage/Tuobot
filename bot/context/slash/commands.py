@@ -659,6 +659,7 @@ async def _season_start(
 # branch only; main never sees it) ────────────────────────────────────────────
 DONBOT_GIF = "https://static2.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/72/ba/28ZFgzcW.gif"
 TUONELA_ID = 449913356506365972
+TUONELA_EVIL_GIF = "https://static2.klipy.com/ii/d7aec6f6f171607374b2065c836f92f4/92/04/DClga1Ee.gif"
 
 
 @dc.slash_command(name='don', description="I'm so great.", **guild_kwargs)
@@ -684,8 +685,12 @@ async def _house_points_reset(
 
 @dc.slash_command(name='tuonela', description="nothing but tuoneLa's", **guild_kwargs)
 async def tuonela(interaction: Interaction) -> None:
-	"""@tuonela, with DonBot's deepest confession."""
-	await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot")
+	"""@tuonela, with DonBot's deepest confession — unless tuonela themself
+	invokes it, in which case the mask comes off: yes... evil."""
+	if interaction.user.id == TUONELA_ID:
+		await interaction.response.send_message(TUONELA_EVIL_GIF)
+	else:
+		await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot")
 
 
 # ── misc ──────────────────────────────────────────────────────────────────────
