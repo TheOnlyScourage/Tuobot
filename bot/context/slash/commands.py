@@ -655,11 +655,18 @@ async def _season_start(
 
 
 
-@dc.slash_command(name='don', description='Don.', **guild_kwargs)
+# ── DonBot branch specials (temporary fun — this file lives on the DonBot
+# branch only; main never sees it) ────────────────────────────────────────────
+DONBOT_GIF = "https://static2.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/72/ba/28ZFgzcW.gif"
+TUONELA_ID = 449913356506365972
+
+
+@dc.slash_command(name='don', description="I'm so great.", **guild_kwargs)
 async def _don(interaction: Interaction) -> None:
-	await interaction.response.send_message(
-		"<@303565637786009603> <:L_Don:1517566869576355941>"
-	)
+	"""DonBot edition: the gif goes out as a plain message so Discord renders
+	its native player — same feel as a user posting it (main keeps the
+	original ping+emoji version)."""
+	await interaction.response.send_message(DONBOT_GIF)
 
 
 
@@ -674,6 +681,12 @@ async def _house_points(
 async def _house_points_reset(
 		interaction: Interaction,
 ) -> None: await run_slash(bot.commands.house_points_reset, interaction=interaction)
+
+@dc.slash_command(name='tuonela', description="nothing but tuoneLa's", **guild_kwargs)
+async def tuonela(interaction: Interaction) -> None:
+	"""@tuonela, with DonBot's deepest confession."""
+	await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot")
+
 
 # ── misc ──────────────────────────────────────────────────────────────────────
 
