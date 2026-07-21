@@ -60,6 +60,47 @@ async def _send_q_ping_embed(message) -> None:
 	)
 	await message.channel.send(embed=embed)
 
+# ── DonBot branch: vacation auto-responder ───────────────────────────────────
+# Scourage is out for 5 days. Anyone who @s him gets one of seven rotating
+# lines back — raw text, no embed, no email costume — with a per-pinger
+# cooldown so nobody farms the whole set at once.
+from time import time as _now
+
+_VACATION_USER_ID = 310593959506477075   # Scourage
+_VACATION_COOLDOWN = 120                 # seconds, per pinger
+_vacation_last: dict[int, float] = {}
+_vacation_cursor = 0                     # lines fire IN POSTED ORDER, wrapping
+
+VACATION_LINES = [
+	"Scourage is on vacation he'll get back to you after the<:pantsgrab:1529166555169165332>",
+	"Scourage ain’t here lil bro<a:smush:1529166678053748868>",
+	"<a:GetSome:1529166223420424202>",
+	"Error 404: Scourage not found",
+	"Your message has been received and carefully ignored. Thank you for your cooperation",
+	"Scourage ain’t reading allat",
+	"Scourage is currently in Evergreen Mode. The next scheduled maintenance is when he feels like it<a:mhm:1529166813248618628>",
+]
+
+
+async def _send_vacation_reply(message) -> None:
+	"""Reply to a message that pinged Scourage with the NEXT vacation line,
+	in the exact order Scourage posted them (wrapping after the last) — raw
+	text, nothing else. The cursor only advances on a successful send, so a
+	failed reply retries the same line next time. Best-effort: failures log
+	and never touch the rest of on_message."""
+	global _vacation_cursor
+	last = _vacation_last.get(message.author.id, 0)
+	if _now() - last < _VACATION_COOLDOWN:
+		return
+	_vacation_last[message.author.id] = _now()
+	line = VACATION_LINES[_vacation_cursor % len(VACATION_LINES)]
+	try:
+		await message.reply(line)
+		_vacation_cursor += 1
+	except Exception as e:
+		log.error(f"[vacation] reply failed: {e}")
+
+
 # AoE2 civ/elo sync removed (NammaPUBobot leftover, not used for Q6 Drafts)
 from bot.match.party_code import handle_code_input
 
@@ -127,6 +168,10 @@ async def on_message(message):
 	# @Q ping role mention → specialty status embed
 	if any(r.id == _Q_PING_ROLE_ID for r in message.role_mentions):
 		await _send_q_ping_embed(message)
+
+	# DonBot branch: @Scourage while he's on vacation → out-of-office reply
+	if not message.author.bot and any(u.id == _VACATION_USER_ID for u in message.mentions):
+		await _send_vacation_reply(message)
 
 	if message.content == '!enable_tuobot':
 		await bot.enable_channel(message)
