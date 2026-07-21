@@ -20,7 +20,8 @@ from core.utils import iter_to_dict, get_nick
 # testable in isolation). This adapter handles the match-level draw case and
 # unpacks the match into the plain lists the engine expects, then delegates the
 # actual math to compute_mmr_changes().
-from bot.stats.mmr_engine import compute_mmr_changes
+from bot.stats.mmr_engine import cap_rating, compute_mmr_changes
+from bot.constants import CAP_MESSAGES, RATING_CAPS
 
 
 def _calculate_mmr_changes(m: bot.Match, ratings_by_id: dict) -> dict:
@@ -248,6 +249,7 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
             if not team_won:
                 changes[p.id] = 0
 
+    capped_winners = []   # players whose WIN got parked on their RATING_CAPS ceiling
     for p in m.players:
         b           = ratings_by_id.get(p.id) or {}
         cur_rating  = b.get('rating') or 1500
@@ -256,6 +258,14 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
         team_idx    = 0 if p in m.teams[0] else 1
         is_winner   = (m.winner is not None and m.winner == team_idx)
         change      = changes.get(p.id, 0)
+        # ── The tuonela clause: park capped players on their ceiling ──────
+        # History/undo, the results embed, and rating roles all read the
+        # CLAMPED value (change is re-derived from after-before below), so
+        # the whole pipeline stays consistent. The taunt fires only when a
+        # WIN would have crossed the ceiling.
+        a_rating, hit_cap = cap_rating(max(0, cur_rating + change), RATING_CAPS.get(p.id))
+        if hit_cap and is_winner:
+            capped_winners.append(p.id)
         before[p.id] = {
             'rating':    cur_rating,
             'deviation': cur_dev,
@@ -283,7 +293,7 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
             new_losses = b.get('losses', 0) + 1
             new_draws  = b.get('draws', 0)
         after[p.id] = {
-            'rating':    max(0, cur_rating + change),
+            'rating':    a_rating,
             'deviation': cur_dev,
             'wins':      new_wins,
             'losses':    new_losses,
@@ -367,6 +377,14 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
         ))
     await m.qc.update_rating_roles(*m.players)
     await m.print_rating_results(ctx, before, after)
+    # ── The tuonela clause, part 2: the taunt ─────────────────────────────
+    # Best-effort by design rule — a failed taunt must never break match
+    # registration; failures log loudly like every other post-embed extra.
+    for uid in capped_winners:
+        try:
+            await ctx.notice(CAP_MESSAGES[uid])
+        except Exception as e:
+            log.error(f"[rating-cap] cap message failed for {uid}: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
