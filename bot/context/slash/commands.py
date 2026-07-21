@@ -665,7 +665,7 @@ TUONELA_ID = 449913356506365972
 # so hotlinking one would die mid-vacation. Anchored to the repo root the
 # same way profile_card anchors assets/fonts. The old Nicholson klipy link
 # stays as a fallback so the easter egg survives even a missing asset.
-TUONELA_EVIL_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'tuonelagif.gif'
+TUONELA_EVIL_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'tuoneLa.gif'
 TUONELA_EVIL_GIF_FALLBACK = "https://static2.klipy.com/ii/d7aec6f6f171607374b2065c836f92f4/92/04/DClga1Ee.gif"
 
 
@@ -696,7 +696,7 @@ async def tuonela(interaction: Interaction) -> None:
 	invokes it, in which case the mask comes off: yes... evil."""
 	if interaction.user.id == TUONELA_ID:
 		try:
-			gif = File(str(TUONELA_EVIL_GIF_PATH), filename='tuonela.gif')
+			gif = File(str(TUONELA_EVIL_GIF_PATH), filename='tuoneLa.gif')
 			await interaction.response.send_message(file=gif)
 		except Exception as e:
 			log.error(f"[tuonela] gif attachment failed ({e}); falling back to hotlink")
@@ -704,7 +704,7 @@ async def tuonela(interaction: Interaction) -> None:
 			          else interaction.response.send_message)
 			await sender(TUONELA_EVIL_GIF_FALLBACK)
 	else:
-		await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot")
+		await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot😭")
 
 
 # ── misc ──────────────────────────────────────────────────────────────────────
