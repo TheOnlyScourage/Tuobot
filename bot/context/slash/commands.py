@@ -4,10 +4,9 @@ from typing import Callable  # noqa: UP035
 from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
 from nextcord.errors import InteractionResponded
-from nextcord import Interaction, SlashOption, Member, TextChannel, File
+from nextcord import Interaction, SlashOption, Member, TextChannel
 import traceback
 import time
-from pathlib import Path
 
 from core.client import dc
 from core.utils import error_embed, ok_embed, parse_duration, get_nick
@@ -656,25 +655,11 @@ async def _season_start(
 
 
 
-# ── DonBot branch specials (temporary fun — this file lives on the DonBot
-# branch only; main never sees it) ────────────────────────────────────────────
-DONBOT_GIF = "https://static2.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/72/ba/28ZFgzcW.gif"
-TUONELA_ID = 449913356506365972
-# tuonela's self-invoke gif ships IN the repo and goes out as a real file
-# attachment: Discord cdn attachment URLs are signed and expire after 24h,
-# so hotlinking one would die mid-vacation. It lives inside assets/fonts/
-# (where the web-UI upload landed) — anchored to the repo root the same
-# way profile_card anchors the fonts. No gif fallback, by owner decree:
-# if the asset ever fails, the command answers in plain text instead.
-TUONELA_EVIL_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'fonts' / 'tuoneLa.gif'
-
-
-@dc.slash_command(name='don', description="I'm so great.", **guild_kwargs)
+@dc.slash_command(name='don', description='Don.', **guild_kwargs)
 async def _don(interaction: Interaction) -> None:
-	"""DonBot edition: the gif goes out as a plain message so Discord renders
-	its native player — same feel as a user posting it (main keeps the
-	original ping+emoji version)."""
-	await interaction.response.send_message(DONBOT_GIF)
+	await interaction.response.send_message(
+		"<@303565637786009603> <:L_Don:1517566869576355941>"
+	)
 
 
 
@@ -689,23 +674,6 @@ async def _house_points(
 async def _house_points_reset(
 		interaction: Interaction,
 ) -> None: await run_slash(bot.commands.house_points_reset, interaction=interaction)
-
-@dc.slash_command(name='tuonela', description="nothing but tuoneLa's", **guild_kwargs)
-async def tuonela(interaction: Interaction) -> None:
-	"""@tuonela, with DonBot's deepest confession — unless tuonela themself
-	invokes it, in which case the mask comes off: yes... evil."""
-	if interaction.user.id == TUONELA_ID:
-		try:
-			gif = File(str(TUONELA_EVIL_GIF_PATH), filename='tuoneLa.gif')
-			await interaction.response.send_message(file=gif)
-		except Exception as e:
-			log.error(f"[tuonela] gif attachment failed ({e}); sending text fallback")
-			sender = (interaction.followup.send if interaction.response.is_done()
-			          else interaction.response.send_message)
-			await sender("nothing but tuoneLa's")
-	else:
-		await interaction.response.send_message(f"<@{TUONELA_ID}> It's so much better being DonBot")
-
 
 # ── misc ──────────────────────────────────────────────────────────────────────
 
