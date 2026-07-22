@@ -704,7 +704,7 @@ async def tuonela(interaction: Interaction) -> None:
 			          else interaction.response.send_message)
 			await sender("nothing but tuoneLa's")
 	else:
-		await interaction.response.send_message(f"<@{TUONELA_ID}> I wished I was DonBot😭")
+		await interaction.response.send_message(f"<@{TUONELA_ID}> It's so much better being DonBot")
 
 
 # ── misc ──────────────────────────────────────────────────────────────────────
