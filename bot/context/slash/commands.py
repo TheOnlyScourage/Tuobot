@@ -4,7 +4,8 @@ from typing import Callable  # noqa: UP035
 from asyncio import wait_for, shield
 from asyncio.exceptions import TimeoutError as aTimeoutError
 from nextcord.errors import InteractionResponded
-from nextcord import Interaction, SlashOption, Member, TextChannel
+from nextcord import Interaction, SlashOption, Member, TextChannel, File
+from pathlib import Path
 import traceback
 import time
 
@@ -660,6 +661,28 @@ async def _don(interaction: Interaction) -> None:
 	await interaction.response.send_message(
 		"<@303565637786009603> <:L_Don:1517566869576355941>"
 	)
+
+
+TUONELA_ID = 449913356506365972
+
+SITBOY_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'fonts' / 'Sitboy.gif'
+
+
+@dc.slash_command(name='sitboy', description='Sit boy.', **guild_kwargs)
+async def sitboy(interaction: Interaction) -> None:
+	"""tuonela's personal leash — locked to TUONELA_ID; posts the Inuyasha
+	sit-boy gif as a bundled attachment (hotlinks expire, repo files don't)."""
+	if interaction.user.id != TUONELA_ID:
+		await interaction.response.send_message("Only tuoneLa can do that.", ephemeral=True)
+		return
+	try:
+		gif = File(str(SITBOY_GIF_PATH), filename='Sitboy.gif')
+		await interaction.response.send_message(file=gif)
+	except Exception as e:
+		log.error(f"[sitboy] gif attachment failed ({e}); sending text fallback")
+		sender = (interaction.followup.send if interaction.response.is_done()
+		          else interaction.response.send_message)
+		await sender("Sit, boy.")
 
 
 
