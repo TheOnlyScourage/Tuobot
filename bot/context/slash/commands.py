@@ -685,6 +685,23 @@ async def sitboy(interaction: Interaction) -> None:
 		await sender("Sit, boy.")
 
 
+DONBOT_GIF_PATH = Path(__file__).resolve().parents[3] / 'assets' / 'fonts' / 'Donbot_vs_Tuobot.gif'
+
+
+@dc.slash_command(name='donbot', description='The age of Donbot is over', **guild_kwargs)
+async def donbot(interaction: Interaction) -> None:
+	"""Commemorates the fall of DonBot — posts the bundled LOTR gif as a file
+	attachment (same expiry-proof route as /sitboy). Open to everyone."""
+	try:
+		gif = File(str(DONBOT_GIF_PATH), filename='Donbot_vs_Tuobot.gif')
+		await interaction.response.send_message(file=gif)
+	except Exception as e:
+		log.error(f"[donbot] gif attachment failed ({e}); sending text fallback")
+		sender = (interaction.followup.send if interaction.response.is_done()
+		          else interaction.response.send_message)
+		await sender("The age of Donbot is over.")
+
+
 
 
 @dc.slash_command(name='house_points', description='Show the Hogwarts House Cup standings.', **guild_kwargs)
