@@ -176,7 +176,10 @@ class Embeds:
 		# ── Title: ALL CAPS queue name (Q6Bot style) ───────────────────────────
 		embed = Embed(
 			colour=Colour(MATCH_COLOUR_LIVE),
-			title=f"{self.m.queue.name.upper()} has started!"
+			title=(
+				f"{self.m.queue.name.upper()} · CASUAL {self.m.cfg['team_size']}v{self.m.cfg['team_size']} has started!"
+				if self.m.casual else f"{self.m.queue.name.upper()} has started!"
+			)
 		)
 
 		if len(self.m.teams[0]) == 1 and len(self.m.teams[1]) == 1:
