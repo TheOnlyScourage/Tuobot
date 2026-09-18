@@ -86,7 +86,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/web.py`** — an optional aiohttp server: a health-check endpoint plus an OAuth2 config dashboard (MySQL-backed sessions), gated on `WS_ENABLE` and the OAuth env vars. Off by default
 
 ### Q6-specific feature set
-Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ranked wins, reset per season), **specialty roles** (Seeker / Beater / Keeper) surfaced in embeds and season awards, **captain streak** cooldowns, **standby race-to-ready** fill, a **season** lifecycle (`/season_start` ↔ `/season_end` with standings, highlights, streaks, and House Cup), **check-in violation** tracking with rolling auto-bans, **party codes**, **milestone & rank-up announcements** on ranked results, and the **41 alert** system.
+Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ranked wins, reset per season), **specialty roles** (Seeker / Beater / Keeper) surfaced in embeds and season awards, **captain streak** cooldowns, **standby race-to-ready** fill, a **season** lifecycle (`/season_start` ↔ `/season_end` with standings, highlights, streaks, and House Cup), **check-in violation** tracking with rolling auto-bans, **party codes**, **milestone & rank-up announcements** on ranked results, **/recommend** (a queued player proposes a smaller *casual* game — Accept/Deny buttons, first-come roster, `PickupQueue.start(players=…, team_size=…, casual=True)` → instant random teams, no check-in/draft/report, players STAY queued; casual matches are never registered), and the **41 alert** system.
 
 ### Utils & scripts
 Standalone tools, not imported by the running bot:
