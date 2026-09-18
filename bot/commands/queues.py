@@ -2,7 +2,7 @@ from __future__ import annotations
 
 __all__ = [
 	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start',
-	'reset', 'server', 'remove_all'
+	'reset', 'server', 'remove_all', 'recommend'
 ]
 
 import time
@@ -277,3 +277,49 @@ async def server(ctx: bot.Context, queue: str) -> None:
 	await ctx.success(q.cfg.server, title=ctx.qc.gt("Server for **{queue}**").format(
 		queue=q.name
 	))
+
+
+async def recommend(ctx: bot.Context, format: str, queue: str | None = None) -> None:
+	"""Propose a smaller CASUAL game to everyone in a stalled queue.
+	The caller must be in the queue; the format must be strictly smaller than
+	it; one open proposal per queue, with a cooldown after each one closes."""
+	from bot.queues import recommend as rec
+	from bot.queues.recommend_rules import format_team_size, allowed_formats
+
+	team_size = format_team_size(format)
+	if team_size is None:
+		raise bot.Exc.ValueError(ctx.qc.gt("Unknown format."))
+
+	mine = [q for q in ctx.qc.queues if ctx.author in q.queue]
+	if not mine:
+		raise bot.Exc.ValueError(ctx.qc.gt("You need to be in a queue to recommend a smaller game."))
+
+	if queue:
+		wanted = queue.lower()
+		target = find(
+			lambda q: q.name.lower() == wanted or any(a["alias"].lower() == wanted for a in q.cfg.aliases),
+			ctx.qc.queues
+		)
+		if target is None:
+			raise bot.Exc.NotFoundError(ctx.qc.gt("Queue '{queue}' not found.").format(queue=queue))
+		if ctx.author not in target.queue:
+			raise bot.Exc.ValueError(ctx.qc.gt("You're not in the **{queue}** queue.").format(queue=target.name))
+	else:
+		target = max(mine, key=lambda q: int(q.cfg.size))  # the biggest queue you're in
+
+	if format not in allowed_formats(int(target.cfg.size)):
+		raise bot.Exc.ValueError(ctx.qc.gt(
+			"A {format} isn't smaller than the **{queue}** queue ({size} players)."
+		).format(format=format, queue=target.name, size=target.cfg.size))
+
+	if rec.active_for(target):
+		raise bot.Exc.ValueError(ctx.qc.gt(
+			"There's already an open recommendation in **{queue}** — answer it instead."
+		).format(queue=target.name))
+	left = rec.cooldown_left(target)
+	if left:
+		raise bot.Exc.ValueError(ctx.qc.gt(
+			"Recommendations for **{queue}** are on cooldown for another {seconds}s."
+		).format(queue=target.name, seconds=left))
+
+	await rec.propose(ctx, target, format, team_size, ctx.author)
