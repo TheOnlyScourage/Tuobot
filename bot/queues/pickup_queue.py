@@ -5,6 +5,7 @@ from core.cfg_factory import FactoryTable, CfgFactory, Variables, VariableTable
 from core.utils import get_nick, get, SafeTemplateDict
 from core.client import dc
 
+import asyncio
 import bot
 
 
@@ -426,11 +427,50 @@ class PickupQueue:
 			self.standby.remove(m)
 		return in_queue + in_standby
 
-	async def start(self, ctx):
-		if len(self.queue) < 2:
+	async def start(self, ctx, players=None, team_size=None, casual=False):
+		"""Start a match from this queue. By default: everyone queued, at the
+		configured team size.
+
+		/recommend passes an explicit subset with a smaller `team_size` and
+		casual=True. Casual games are filler while the real queue keeps
+		filling: the players STAY queued (nothing removed, offline immunity
+		kept), teams are assigned instantly at random (no check-in, no
+		draft), and with ranked=False the match posts its start embed and
+		finishes on the spot — no report, no MMR, no records. The real queue
+		can pop underneath them at any moment."""
+		if players is None:
+			players = list(self.queue)
+		if len(players) < 2:
 			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
 
-		player_ids = {p.id for p in self.queue}
+		if team_size is None:
+			if self.cfg.team_size:
+				team_size = min(int(self.cfg.size / 2), int(self.cfg.team_size))
+			else:
+				team_size = int(self.cfg.size / 2)
+
+		if casual:
+			match_cfg = self._match_cfg()
+			match_cfg.update(
+				ranked=False, casual=True, check_in_timeout=0,
+				pick_captains="no captains", pick_teams="random teams",
+				team_names=["Team A", "Team B"], team_emojis=None,
+			)
+			fmt = f"{team_size}v{team_size}"
+			asyncio.create_task(self.qc._dm_members(
+				players,
+				self.qc.gt("**{queue}** casual {fmt} has started @ {channel}!").format(
+					queue=self.name, fmt=fmt, channel=ctx.channel.mention
+				)
+			))
+			await bot.Match.new(ctx, self, players, team_size=team_size, **match_cfg)
+			return
+
+		# A normal start makes any open /recommend proposal moot.
+		from bot.queues.recommend import cancel_for
+		await cancel_for(self, self.qc.gt("the queue filled up"))
+
+		player_ids = {p.id for p in players}
 
 		# ── Save states that survive match start ──────────────────────────────
 		# allow_offline / auto_ready are cleared by remove_players() inside
@@ -457,11 +497,10 @@ class PickupQueue:
 					continue
 				q_priority = getattr(q.cfg, 'priority', None) or 0
 				if q_priority > my_priority:
-					for p in self.queue:
+					for p in players:
 						if q.is_added(p):
 							protected_ids.add(p.id)
 
-		players = list(self.queue)
 		dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
 		await self.qc.queue_started(
 			ctx,
@@ -474,11 +513,6 @@ class PickupQueue:
 			exclude=protected_ids
 		)
 
-		if self.cfg.team_size:
-			team_size = min(int(self.cfg.size / 2), int(self.cfg.team_size))
-		else:
-			team_size = int(self.cfg.size / 2)
-
 		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
 
 		# ── Restore states after match creation ───────────────────────────────
@@ -487,11 +521,15 @@ class PickupQueue:
 				bot.allow_offline.append(uid)
 		bot.auto_ready.update(saved_auto_ready)
 
-	async def fake_ranked_match(self, ctx, winners, losers, draw=False):
+	async def fake_ranked_match(self, ctx, winners, losers, aborted=False):
+		"""Admin /match create: inject a ranked result without a live match.
+		`aborted` (not the pre-July-2026 `draw`) must be threaded through all
+		three hops — commands/matches.py → here → Match.fake_ranked_match — or
+		the command dies with a TypeError before touching anything."""
 		if not self.cfg.ranked:
 			raise bot.Exc.ValueError("Specified queue is not ranked.")
 		await bot.Match.fake_ranked_match(
-			ctx, self, self.qc, winners, losers, draw=draw,
+			ctx, self, self.qc, winners, losers, aborted=aborted,
 			team_names=self.cfg.team_names.split(" ") if self.cfg.team_names else None,
 		)
 
