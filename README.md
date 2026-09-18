@@ -14,6 +14,7 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 | `/remove_all` | Remove yourself from **every queue across the entire server** (all channels). Mods can pass a player name to remove someone else. |
 | `/remove_after [time]` | Set a timer to auto-remove yourself from this channel's queues after a duration (e.g. `30m`, `1h`). |
 | `/who` | List the players currently added to each queue on this channel. |
+| `/recommend` | Queue not filling? Propose a smaller **casual** game (1v1–5v5) to everyone else in your queue. Accept/Deny buttons, 5-minute window; the first enough accepters get instant random Team A / Team B — no check-in, no draft, no report — and **everyone stays in the queue**, so the real game can still pop. Casual = no MMR, no records. |
 | `/matches` | Show all active matches on this channel. |
 | `/teams` | Show the teams for the match you're currently in. |
 
