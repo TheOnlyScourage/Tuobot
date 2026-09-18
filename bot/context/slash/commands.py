@@ -15,6 +15,7 @@ from core.console import log
 from core.config import cfg
 
 import bot
+from bot.constants import RECOMMEND_FORMATS
 
 from . import SlashContext, autocomplete, groups
 
@@ -445,6 +446,15 @@ async def _add(
 	queues: str = SlashOption(name="queues", description="Queues you want to add to.", required=False)
 ) -> None: await run_slash(bot.commands.add, interaction=interaction, queues=queues)
 _add.on_autocomplete("queues")(autocomplete.queues)
+
+
+@dc.slash_command(name='recommend', description='Recommend a smaller casual game to everyone in your queue.', **guild_kwargs)
+async def _recommend(
+	interaction: Interaction,
+	format: str = SlashOption(name="format", description="The smaller game to propose.", choices=list(RECOMMEND_FORMATS)),
+	queue: str = SlashOption(name="queue", description="Which queue (defaults to the biggest one you're in).", required=False)
+) -> None: await run_slash(bot.commands.recommend, interaction=interaction, format=format, queue=queue)
+_recommend.on_autocomplete("queue")(autocomplete.queues)
 
 
 @dc.slash_command(name='remove', description='Remove yourself from the channel queues.', **guild_kwargs)
