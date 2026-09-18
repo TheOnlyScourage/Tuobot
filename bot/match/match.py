@@ -56,7 +56,7 @@ class Match:
 		team_size=1, pick_captains="no captains", captains_role_id=None, pick_teams="draft",
 		pick_order=None, check_in_timeout=0,
 		check_in_discard=True, check_in_discard_immediately=True, match_lifetime=3*60*60, start_msg=None, server=None,
-		show_streamers=True
+		show_streamers=True, casual=False
 	)
 
 	class Team(list):
@@ -109,8 +109,8 @@ class Match:
 
 		# Update streaks now that captains are locked in. Picked captains get
 		# their counter incremented; everyone else who was role-eligible but
-		# not picked gets reset to 0.
-		if match.cfg['pick_captains'] == 'captain_role':
+		# not picked gets reset to 0. Casual games don't touch streaks.
+		if match.cfg['pick_captains'] == 'captain_role' and not match.cfg.get('casual'):
 			try:
 				from bot.stats.captain_streak import record_captain, reset_streak
 				captain_ids = {c.id for c in match.captains}
@@ -219,6 +219,9 @@ class Match:
 
 		self.id = match_id
 		self.ranked = self.cfg['ranked'] and self.cfg['pick_teams'] != 'no teams'
+		# Casual (/recommend games): played through the full pipeline but never
+		# recorded — no history rows, house points, or captain-streak updates.
+		self.casual = bool(self.cfg.get('casual', False))
 		self.players = list(players)
 		self.ratings = ratings
 		self.winner = None
@@ -450,6 +453,8 @@ class Match:
 		Also flushes the standby pool back into the queue, since standby
 		only applies during the check-in window.
 		"""
+		if self.casual:  # casual (/recommend) players stay in their queues, always
+			return
 		if getattr(self, "_priority_cleanup_done", False):
 			return
 		self._priority_cleanup_done = True
@@ -720,14 +725,17 @@ class Match:
 		bot.active_matches.remove(self)
 
 		# Track captains for smart captain selection in future matches
-		if len(self.teams[0]) and len(self.teams[1]):
+		# (casual games leave no trace here either)
+		if not self.casual and len(self.teams[0]) and len(self.teams[1]):
 			cap_ids = frozenset({self.teams[0][0].id, self.teams[1][0].id})
 			self.qc._last_captains = cap_ids
 			if not hasattr(self.qc, '_captain_history'):
 				self.qc._captain_history = deque(maxlen=_CAPTAIN_HISTORY_SIZE)
 			self.qc._captain_history.append(cap_ids)
 
-		if self.ranked:
+		if self.casual:
+			pass  # casual (/recommend) games are never registered — no MMR, no records
+		elif self.ranked:
 			try:
 				await bot.stats.register_match_ranked(ctx, self)
 			except Exception as e:
