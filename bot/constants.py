@@ -13,6 +13,7 @@ Layout:
   - Q_PING_ROLE_ID                — role mentioned to trigger the @Q ping embed
   - RANK_EMOJIS / get_rank_emoji  — Q6 rank badge lookup by rating
   - MMR engine constants          — formula parameters used by stats/mmr_engine
+  - RECOMMEND_*                   — /recommend formats, window, cooldown
   - House points constants        — per-player and captain award values
 """
 
@@ -153,3 +154,13 @@ HOUSE_POINTS_FOR_CAPTAIN = 10
 # ── Misc Discord limits we need to respect ───────────────────────────────────
 MAX_NICK_LEN          = 32   # Discord caps nicknames at 32 chars
 MAX_AUTOCOMPLETE_OPTS = 25   # Discord caps autocomplete choices at 25
+
+
+# ── /recommend — casual smaller games from a stalled queue ───────────────────
+# A queued player proposes a smaller format to everyone else in the queue via
+# Accept/Deny buttons; the first `2 * team_size` accepters start a CASUAL match
+# through the normal pipeline (bot/queues/recommend.py). Casual = no MMR, no
+# history rows, no house points, no captain-streak bookkeeping.
+RECOMMEND_FORMATS  = {"1v1": 1, "2v2": 2, "3v3": 3, "4v4": 4, "5v5": 5}  # label → team size
+RECOMMEND_WINDOW   = 300   # seconds a recommendation stays open (5 min)
+RECOMMEND_COOLDOWN = 120   # seconds before the same queue can host a new one
