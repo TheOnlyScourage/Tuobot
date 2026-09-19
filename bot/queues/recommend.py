@@ -18,6 +18,7 @@ lived (constants.RECOMMEND_WINDOW), so nothing persists across restarts.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import traceback
 from typing import TYPE_CHECKING
@@ -62,6 +63,7 @@ async def propose(ctx: bot.Context, queue: bot.PickupQueue, label: str, team_siz
 	others = [m.mention for m in queue.queue if m.id != recommender.id]
 	await ctx.reply(content=" ".join(others) or None, embed=rec.embed(), view=rec.view)
 	await rec.view.bind(ctx)
+	rec.arm_timer()
 
 
 async def cancel_for(queue: bot.PickupQueue, reason: str) -> None:
@@ -85,6 +87,22 @@ class Recommendation:
 		self.expires_at = int(time.time()) + RECOMMEND_WINDOW
 		self.done = False
 		self.view = RecommendView(self)
+		self._timer: asyncio.Task | None = None
+
+	# ── the clock ────────────────────────────────────────────────────────────
+	# nextcord's View timeout is SLIDING: View._scheduled_task resets the
+	# expiry on every button press (even presses interaction_check rejects),
+	# so a busy proposal never closed while the embed's countdown said it had.
+	# The View runs with timeout=None and this absolute timer owns expiry.
+
+	def arm_timer(self, seconds: float = RECOMMEND_WINDOW) -> None:
+		self._timer = asyncio.create_task(self._expire_after(seconds))
+
+	async def _expire_after(self, seconds: float) -> None:
+		await asyncio.sleep(seconds)
+		self._timer = None
+		if not self.done:
+			await self.close(f"Expired — {len(self.accepted)}/{self.needed} accepted.", _CLOSED_COLOUR)
 
 	# ── state helpers ────────────────────────────────────────────────────────
 
@@ -112,7 +130,8 @@ class Recommendation:
 			f"({self.needed} players) right now instead?",
 			"No MMR, no records — instant random teams, and everyone **stays in the queue**.",
 			"",
-			f"✅ **{len(self.accepted)}/{self.needed}** accepted · ❌ {len(self.denied)} · closes <t:{self.expires_at}:R>",
+			f"✅ **{len(self.accepted)}/{self.needed}** accepted · ❌ {len(self.denied)} · "
+			+ ("closed" if self.done else f"closes <t:{self.expires_at}:R>"),
 			f"**In:** {names}",
 		]
 		if status:
@@ -130,6 +149,9 @@ class Recommendation:
 	async def close(self, status: str, colour: int) -> None:
 		"""Finalize: unregister, arm the cooldown, freeze the buttons, edit once."""
 		self.done = True
+		if self._timer is not None:
+			self._timer.cancel()
+			self._timer = None
 		_active.pop(_key(self.queue), None)
 		_cooldown_until[_key(self.queue)] = time.time() + RECOMMEND_COOLDOWN
 		for child in self.view.children:
@@ -167,9 +189,9 @@ class RecommendView(nextcord.ui.View):
 	"""Accept/Deny buttons, gated to players currently in the queue."""
 
 	def __init__(self, rec: Recommendation):
-		super().__init__(timeout=RECOMMEND_WINDOW)
+		super().__init__(timeout=None)  # expiry is Recommendation's absolute timer
 		self.rec = rec
-		self.message = None  # set by bind() so on_timeout can edit
+		self.message = None  # set by bind() so close() can edit the message
 
 	async def bind(self, ctx: bot.Context) -> None:
 		"""Grab the sent message (slash contexts only), LeaderboardView-style."""
@@ -216,8 +238,3 @@ class RecommendView(nextcord.ui.View):
 		rec.accepted = [m for m in rec.accepted if m.id != member.id]
 		rec.denied.add(member.id)
 		await interaction.response.edit_message(embed=rec.embed(), view=self)
-
-	async def on_timeout(self):
-		rec = self.rec
-		if not rec.done:
-			await rec.close(f"Expired — {len(rec.accepted)}/{rec.needed} accepted.", _CLOSED_COLOUR)
