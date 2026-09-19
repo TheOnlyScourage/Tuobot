@@ -117,3 +117,25 @@ def test_constants_present():
 	assert _constants.RECOMMEND_FORMATS == {"1v1": 1, "2v2": 2, "3v3": 3, "4v4": 4, "5v5": 5}
 	assert _constants.RECOMMEND_WINDOW == 300
 	assert _constants.RECOMMEND_COOLDOWN > 0
+
+
+def test_expiry_is_an_absolute_timer_not_the_sliding_view_timeout():
+	"""nextcord's View timeout resets on every button press (View._scheduled_task),
+	so a busy proposal never closed on time (Sept 19 prod report). The View must
+	run with timeout=None and Recommendation must own an absolute timer."""
+	src = _src("bot/queues/recommend.py")
+	tree = ast.parse(src)
+	view_cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "RecommendView")
+	init = next(n for n in view_cls.body if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+	super_call = next(
+		a for a in ast.walk(init)
+		if isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute) and a.func.attr == "__init__"
+	)
+	timeout_kw = next(kw for kw in super_call.keywords if kw.arg == "timeout")
+	assert isinstance(timeout_kw.value, ast.Constant) and timeout_kw.value.value is None
+	rec_cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Recommendation")
+	rec_methods = {n.name for n in rec_cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+	assert {"arm_timer", "_expire_after"} <= rec_methods
+	view_methods = {n.name for n in view_cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+	assert "on_timeout" not in view_methods      # nothing left riding the View clock
+	assert "rec.arm_timer()" in src              # propose() actually arms it
