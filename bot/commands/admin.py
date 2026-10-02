@@ -3,7 +3,7 @@ from __future__ import annotations
 __all__ = [
 	'noadds', 'noadd', 'forgive', 'rating_seed', 'rating_penality', 'rating_hide',
 	'rating_reset', 'rating_snap', 'stats_nuclear_option', 'stats_reset_player', 'stats_replace_player',
-	'phrases_add', 'phrases_clear', 'undo_match',
+	'phrases_add', 'phrases_clear', 'undo_match', 'autoreply',
 ]
 
 from time import time
@@ -176,3 +176,20 @@ async def undo_match(ctx: bot.Context, match_id: int) -> None:
 		reverted = ", ".join(f"{house} -{points}" for house, points in result.items())
 		msg += f" House points reverted: {reverted}."
 	await ctx.success(msg)
+
+
+async def autoreply(ctx: bot.Context, action: str) -> None:
+	"""Owner-only switch for the out-of-office prank responder
+	(bot/stats/autoreply.py): on = start the story from line 1, off = stop,
+	status = where the story is. State persists across restarts."""
+	ctx.check_perms(ctx.Perms.ADMIN)
+	if ctx.author.id != OWNER_ID:
+		raise bot.Exc.PermissionError(ctx.qc.gt("Owner-locked: only the bot owner can toggle the auto-reply."))
+	if action == 'on':
+		await bot.autoreply.set_enabled(True)
+		await ctx.success(ctx.qc.gt("Auto-reply is **ON** — the story starts from line 1."))
+	elif action == 'off':
+		await bot.autoreply.set_enabled(False)
+		await ctx.success(ctx.qc.gt("Auto-reply is **OFF**."))
+	else:
+		await ctx.success(bot.autoreply.status_text())
