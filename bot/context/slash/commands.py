@@ -712,6 +712,13 @@ async def donbot(interaction: Interaction) -> None:
 		await sender("The age of Donbot is over.")
 
 
+@dc.slash_command(name='autoreply', description="Owner: toggle the out-of-office auto-reply prank.", **guild_kwargs)
+async def _autoreply(
+	interaction: Interaction,
+	action: str = SlashOption(name="action", description="on = start the story from line 1, off = stop, status = where it is.", choices=["on", "off", "status"])
+) -> None: await run_slash(bot.commands.autoreply, interaction=interaction, action=action)
+
+
 
 
 @dc.slash_command(name='house_points', description='Show the Hogwarts House Cup standings.', **guild_kwargs)
