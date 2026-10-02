@@ -128,6 +128,10 @@ async def on_message(message):
 	if any(r.id == _Q_PING_ROLE_ID for r in message.role_mentions):
 		await _send_q_ping_embed(message)
 
+	# /autoreply (owner-toggled out-of-office prank): @Scourage → next story line
+	if bot.autoreply.wants(message):
+		await bot.autoreply.handle(message)
+
 	if message.content == '!enable_tuobot':
 		await bot.enable_channel(message)
 	elif message.content == '!disable_tuobot':
@@ -174,6 +178,10 @@ async def on_ready():
 				log.info(f"\tCould not reach a text channel with id {channel_id}.")
 
 		await bot.load_state()
+		try:
+			await bot.autoreply.load()
+		except Exception as e:
+			log.error(f"[autoreply] state load failed (responder stays OFF): {e}")
 		bot.bot_was_ready = True
 		bot.bot_ready = True
 		log.info("Done.")
