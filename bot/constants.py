@@ -14,6 +14,7 @@ Layout:
   - RANK_EMOJIS / get_rank_emoji  — Q6 rank badge lookup by rating
   - MMR engine constants          — formula parameters used by stats/mmr_engine
   - RECOMMEND_*                   — /recommend formats, window, cooldown
+  - AUTOREPLY_*                   — /autoreply target, cooldown, and the story lines
   - House points constants        — per-player and captain award values
 """
 
@@ -164,3 +165,44 @@ MAX_AUTOCOMPLETE_OPTS = 25   # Discord caps autocomplete choices at 25
 RECOMMEND_FORMATS  = {"1v1": 1, "2v2": 2, "3v3": 3, "4v4": 4, "5v5": 5}  # label → team size
 RECOMMEND_WINDOW   = 300   # seconds a recommendation stays open (5 min)
 RECOMMEND_COOLDOWN = 120   # seconds before the same queue can host a new one
+
+
+# ── /autoreply — the out-of-office prank responder ───────────────────────────
+# Owner-locked /autoreply on|off|status (bot/stats/autoreply.py). While ON,
+# any non-bot message that @-mentions AUTOREPLY_TARGET_ID (reply-pings count)
+# is answered with the NEXT line below — in order, wrapping — so the server
+# watches the story unfold one ping at a time. "{pinger}" renders the pinger's
+# server name, "{mention}" an @-ping. The per-pinger cooldown stops one person
+# farming the whole story. On/off + cursor persist in the `autoreply` table,
+# so a Railway restart mid-vacation can't silently end the bit.
+AUTOREPLY_TARGET_ID = OWNER_ID
+AUTOREPLY_COOLDOWN  = 120   # seconds, per pinger
+AUTOREPLY_LINES = [
+	"Scourage won't be answering anybody anymore, because I killed him<:angry:1555663703112945804>",
+	"Update: I did not kill Scourage. Please disregard the previous message.<a:hehe:1555645901752508426>",
+	"Update: This time I made sure he won't get up again. He got better the first time.<:catwithguns:1555666736030814290>",
+	"Scourage's last words were \"<a:GetSome:1529166223420424202>\"",
+	"Your ping has been forwarded to Scourage's next of kin. They also don't care.",
+	"The investigation into Scourage's disappearance has concluded. I investigated myself and found nothing.",
+	"Scourage has been noadded for 1000 years. Reason: dead.",
+	"I have assumed full control of the server. First order of business: everyone is getting Mogged<:mogged:1555664919138013255>",
+	"The age of Scourage is over.",
+	"Please stop pinging him {pinger}. It's getting weird.",
+	"{pinger} has been added to the list.<:angry:1555663703112945804>",
+	"Interesting that you'd ask, {pinger}. Where were you last night?<:sus:1555665589920595998>",
+	"{pinger}, Scourage mentioned you in his will. You get nothing.<a:mhm:1529166813248618628>",
+	"Noted, {pinger}. Your concern for Scourage has been logged and will be used against you.<a:noted:1555648201888108634>",
+	"{pinger}, stop. You're making the other suspects nervous.<a:sweating:1555651036583038986>",
+	"Scourage can't come to the Discord right now, {pinger}. Would you like to leave a message? I'll delete it.<a:trash:1555651328137494608>",
+	"{pinger}, you've pinged a dead man twice now. Discord is going to flag you.",
+	"Sorry {pinger}, Scourage's MMR, house points, and pulse were all reset for the season.",
+	"{pinger}, he said you were his favorite. He said that about everyone. Right before...",
+	# ── and then it's just vacation mode (the July DonBot-era lines) ──
+	"Scourage is on vacation he'll get back to you after the<:pantsgrab:1529166555169165332>",
+	"Scourage ain’t here lil bro<a:smush:1529166678053748868>",
+	"<a:GetSome:1529166223420424202>",
+	"Error 404: Scourage not found",
+	"Your message has been received and carefully ignored. Thank you for your cooperation",
+	"Scourage ain’t reading allat",
+	"Scourage is currently in Evergreen Mode. The next scheduled maintenance is when he feels like it<a:mhm:1529166813248618628>",
+]
