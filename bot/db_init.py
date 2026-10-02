@@ -24,6 +24,7 @@ async def init_all_tables():
 	from bot.stats.house_points   import init_house_points_table, init_house_awards_table
 	from bot.stats.captain_streak import init_captain_streak_table
 	from bot.main                 import init_saved_state_table
+	from bot.stats.autoreply      import init_autoreply_table
 
 	steps = [
 		('checkin_violations', init_checkin_tracker_table),
@@ -39,6 +40,7 @@ async def init_all_tables():
 		('house_points',       init_house_points_table),
 		('house_awards',       init_house_awards_table),
 		('captain_streak',     init_captain_streak_table),
+		('autoreply',          init_autoreply_table),
 	]
 
 	for name, fn in steps:
