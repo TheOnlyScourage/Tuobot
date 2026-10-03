@@ -39,11 +39,14 @@ async def init_autoreply_table() -> None:
 		columns=[
 			dict(cname="id",      ctype=db.types.int),
 			dict(cname="enabled", ctype=db.types.bool, notnull=True, default=0),
-			dict(cname="cursor",  ctype=db.types.int,  notnull=True, default=0),
+			# NOT "cursor": that is a MySQL reserved word, and the adapter's
+			# select() only backticks a short hand-list of words — the first
+			# live /autoreply on died on `SELECT enabled, cursor …` (Oct 2026).
+			dict(cname="line_idx", ctype=db.types.int, notnull=True, default=0),
 		],
 		primary_keys=["id"],
 	))
-	await db.insert("autoreply", dict(id=_ROW, enabled=0, cursor=0), on_dublicate="ignore")
+	await db.insert("autoreply", dict(id=_ROW, enabled=0, line_idx=0), on_dublicate="ignore")
 
 
 class AutoReply:
@@ -57,16 +60,16 @@ class AutoReply:
 
 	async def load(self) -> None:
 		"""Restore on/off + cursor from MySQL (called once from on_ready)."""
-		row = await db.select_one(['enabled', 'cursor'], 'autoreply', where=dict(id=_ROW))
+		row = await db.select_one(['enabled', 'line_idx'], 'autoreply', where=dict(id=_ROW))
 		if row:
 			self.enabled = bool(row['enabled'])
-			self.cursor = int(row['cursor'] or 0) % len(AUTOREPLY_LINES)
+			self.cursor = int(row['line_idx'] or 0) % len(AUTOREPLY_LINES)
 		self.loaded = True
 		if self.enabled:
 			log.info(f"[autoreply] ON — next line {self.cursor + 1}/{len(AUTOREPLY_LINES)}")
 
 	async def _save(self) -> None:
-		await db.update('autoreply', dict(enabled=int(self.enabled), cursor=self.cursor), keys=dict(id=_ROW))
+		await db.update('autoreply', dict(enabled=int(self.enabled), line_idx=self.cursor), keys=dict(id=_ROW))
 
 	async def set_enabled(self, on: bool) -> None:
 		"""Turn the responder on (story restarts from line 1) or off."""
