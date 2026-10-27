@@ -15,7 +15,10 @@ import random
 from nextcord import DiscordException, Embed, Colour
 
 import bot
-from bot.constants import HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, CAPTAIN_ROLE_ID, MATCH_COLOUR_REPORTED
+from bot.constants import (
+	HOUSE_ROLES, ALL_HOUSES, get_rank_emoji, MATCH_COLOUR_REPORTED,
+	CAPTAIN_BAR_ROLE_ID, CAPTAIN_MIN_GAMES,
+)
 from core.utils import find, get, join_and, get_nick
 from core.console import log
 from core.client import dc
@@ -25,7 +28,7 @@ from .draft import Draft
 from .embeds import Embeds
 from .captain_selection import (
 	select_smart_captains,
-	select_captain_role_captains,
+	eligible_captains,
 	CAPTAIN_HISTORY_SIZE as _CAPTAIN_HISTORY_SIZE,
 )
 
@@ -35,8 +38,8 @@ if TYPE_CHECKING:
 
 # House roles centralized in bot/constants.py — imported above.
 # Captain-selection scoring/strategies live in captain_selection.py; init_captains
-# below is a thin dispatcher that delegates the 'smart' and 'captain_role' modes
-# there and keeps the simpler inline modes here.
+# below narrows the lobby to the eligible pool (bar role + minimum games) and
+# then applies the queue's pick mode, delegating 'smart' there.
 
 
 class Match:
@@ -53,7 +56,7 @@ class Match:
 
 	default_cfg = dict(
 		teams=None, team_names=['Alpha', 'Beta'], team_emojis=None, ranked=False,
-		team_size=1, pick_captains="no captains", captains_role_id=None, pick_teams="draft",
+		team_size=1, pick_captains="no captains", pick_teams="draft",
 		pick_order=None, check_in_timeout=0,
 		check_in_discard=True, check_in_discard_immediately=True, match_lifetime=3*60*60, start_msg=None, server=None,
 		show_streamers=True, casual=False
@@ -85,20 +88,12 @@ class Match:
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
-		# Pre-fetch captain streaks if this queue uses captain_role mode.
-		# The selection runs synchronously, so we read streaks ahead of time and
-		# stash them on the match for the sync code to consult.
-		match._captain_streaks = {}
-		if match.cfg['pick_captains'] == 'captain_role':
-			try:
-				from bot.stats.captain_streak import get_streak
-				for p in players:
-					match._captain_streaks[p.id] = await get_streak(ctx.qc.id, p.id)
-			except Exception as exc:
-				from core.console import log
-				log.error(f"[captain_streak] prefetch failed: {exc}")
+		# Captain eligibility needs each player's career game count. The
+		# selection runs synchronously, so fetch the counts ahead of time and
+		# stash them on the match (standby.py refreshes them after a roster swap).
+		await match.prefetch_career_games(ctx.qc.id)
 
-		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
+		match.init_captains(match.cfg['pick_captains'])
 		# 🟡 The Snitch flip: FIRST PICK is a genuine coin toss, not an artifact
 		# of captain-selection order. Shuffling here decides which captain seats
 		# into teams[0] vs teams[1] — and therefore who the pick_order hands the
@@ -107,22 +102,6 @@ class Match:
 			random.shuffle(match.captains)
 		match.init_teams(match.cfg['pick_teams'])
 
-		# Update streaks now that captains are locked in. Picked captains get
-		# their counter incremented; everyone else who was role-eligible but
-		# not picked gets reset to 0. Casual games don't touch streaks.
-		if match.cfg['pick_captains'] == 'captain_role' and not match.cfg.get('casual'):
-			try:
-				from bot.stats.captain_streak import record_captain, reset_streak
-				captain_ids = {c.id for c in match.captains}
-				for p in players:
-					has_role = CAPTAIN_ROLE_ID in {r.id for r in p.roles}
-					if p.id in captain_ids:
-						await record_captain(ctx.qc.id, p.id)
-					elif has_role:
-						await reset_streak(ctx.qc.id, p.id)
-			except Exception as exc:
-				from core.console import log
-				log.error(f"[captain_streak] post-pick update failed: {exc}")
 		match._assign_house_names()  # Name teams from captain house roles
 
 		# Stash the current season number on the match so embeds can show it in the footer.
@@ -243,19 +222,26 @@ class Match:
 		self.state = self.INIT
 
 		self.check_in = CheckIn(self, self.cfg['check_in_timeout'])
-		self.draft = Draft(self, self.cfg['pick_order'], self.cfg['captains_role_id'])
+		self.draft = Draft(self, self.cfg['pick_order'])
 		self.embeds = Embeds(self)
 		self.party_code = None   # set after draft when pick_teams=='draft'
 		self.fill_subs: dict = {}  # {player2_id: (player1_id, team_idx)} for 'Match in progress' subs
 
 	def sort_players(self, players: list[Member]) -> list[Member]:
-		"""Sort players by captain-role eligibility first, then rating (both
-		descending)."""
-		return sorted(
-			players,
-			key=lambda p: [self.cfg['captains_role_id'] in [role.id for role in p.roles], self.ratings[p.id]],
-			reverse=True
-		)
+		"""Sort players by rating, descending (the Captain role that used to
+		come first is gone)."""
+		return sorted(players, key=lambda p: self.ratings[p.id], reverse=True)
+
+	async def prefetch_career_games(self, channel_id: int) -> None:
+		"""Load {user_id: career games} for the current roster — the input to
+		captain eligibility. Best-effort: on a DB hiccup every player counts as
+		0 games, which degrades to 'most experienced fill in' rather than crashing."""
+		try:
+			self._career_games = await bot.stats.career_games_by_id(channel_id, [p.id for p in self.players])
+		except Exception as exc:
+			from core.console import log
+			log.error(f"[captains] career-games prefetch failed: {exc}")
+			self._career_games = {}
 
 	# ── House name assignment ──────────────────────────────────────────────────
 
@@ -293,43 +279,52 @@ class Match:
 		self.teams[0].name = house_a
 		self.teams[1].name = house_b
 
-	def init_captains(self, pick_captains: str, captains_role_id: int | None) -> None:
-		"""Select two captains from the current roster per pick_captains mode.
-		'smart' and 'captain_role' delegate to captain_selection.py; the simpler
-		modes are trivial one-liners kept inline here."""
+	# Legacy pick_captains values still stored in queue configs map onto the
+	# surviving modes (the Captain role is gone, so the role-flavoured modes are
+	# equivalent to their plain counterparts).
+	_LEGACY_PICK_MODES = {
+		"captain_role": "smart",
+		"by role and rating": "by rating",
+		"random with role preference": "random",
+	}
+
+	def init_captains(self, pick_captains: str) -> None:
+		"""Select two captains from the current roster.
+
+		Every mode except "no captains" first narrows the lobby to the eligible
+		pool (not holding the bar role, CAPTAIN_MIN_GAMES career games — with
+		the most-experienced fallback, see captain_selection.eligible_captains)
+		and then applies the queue's mode to that pool. In draft mode "no
+		captains" is impossible now that /capfor is gone, so it falls back to
+		"smart"."""
+		pick_captains = self._LEGACY_PICK_MODES.get(pick_captains, pick_captains)
+		if pick_captains == "no captains":
+			if self.cfg['pick_teams'] != "draft":
+				return
+			pick_captains = "smart"  # a draft needs captains and nobody can volunteer anymore
+
+		pool, tier = eligible_captains(
+			self.players, getattr(self, '_career_games', {}), CAPTAIN_BAR_ROLE_ID, CAPTAIN_MIN_GAMES
+		)
+		if tier:
+			from core.console import log
+			log.info(f"[captains] match {self.id}: eligibility fallback tier {tier} (pool {[p.id for p in pool]})")
+
 		if pick_captains == "smart":
 			self.captains = select_smart_captains(
-				self.players,
+				pool,
 				self.ratings,
-				captains_role_id=captains_role_id,
 				last_captains=getattr(self.qc, '_last_captains', frozenset()),
 				captain_history=getattr(self.qc, '_captain_history', None),
 			)
-		elif pick_captains == "captain_role":
-			from bot.stats.captain_streak import is_capped
-			self.captains = select_captain_role_captains(
-				self.players,
-				self.ratings,
-				CAPTAIN_ROLE_ID,
-				is_capped,
-				captain_streaks=getattr(self, '_captain_streaks', {}),
-				captains_role_id=captains_role_id,
-				last_captains=getattr(self.qc, '_last_captains', frozenset()),
-				captain_history=getattr(self.qc, '_captain_history', None),
-			)
-		elif pick_captains == "by role and rating":
-			self.captains = self.sort_players(self.players)[:2]
+		elif pick_captains == "by rating":
+			self.captains = self.sort_players(pool)[:2]
 		elif pick_captains == "fair pairs":
-			candidates = sorted(self.players, key=lambda p: [self.ratings[p.id]], reverse=True)
+			candidates = sorted(pool, key=lambda p: [self.ratings[p.id]], reverse=True)
 			i = random.randrange(len(candidates) - 1)
 			self.captains = [candidates[i], candidates[i + 1]]
 		elif pick_captains == "random":
-			self.captains = random.sample(self.players, 2)
-		elif pick_captains == "random with role preference":
-			rand = random.sample(self.players, len(self.players))
-			self.captains = sorted(
-				rand, key=lambda p: self.cfg['captains_role_id'] in [role.id for role in p.roles], reverse=True
-			)[:2]
+			self.captains = random.sample(pool, 2)
 
 	def init_teams(self, pick_teams: str) -> None:
 		"""Populate teams[0], teams[1], and the unpicked pool (teams[2]) per
