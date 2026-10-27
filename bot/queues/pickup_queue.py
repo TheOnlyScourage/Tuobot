@@ -128,17 +128,16 @@ class PickupQueue:
 				"pick_captains",
 				display="Pick captains",
 				section="Teams",
-				options=["smart", "captain_role", "by role and rating", "fair pairs", "random with role preference", "random", "no captains"],
+				options=["smart", "by rating", "fair pairs", "random", "no captains"],
 				default="smart",
 				description="\n".join([
-					"Set how captains should be picked:",
-					"  smart - score all pairs by MMR similarity, Quidditch role, captain role, recent penalty",
-					"  captain_role - require the Captain role; falls back to smart if <2 holders in queue",
-					"  by role and rating - sort by captain role and rating",
+					"Set how captains should be picked. Every mode first drops players holding",
+					"the bar role or with fewer than 25 games (most experienced fill in if <2 qualify):",
+					"  smart - score all pairs by MMR similarity, Quidditch role, recent-captain penalty",
+					"  by rating - the two highest-rated eligible players",
 					"  fair pairs - random pair with closest ratings",
-					"  random with role preference - random with captain role priority",
 					"  random - pick captains randomly",
-					"  no captains - do not pick captains automatically"
+					"  no captains - do not pick captains automatically (draft queues fall back to smart)"
 				]),
 				notnull=True
 			),
@@ -214,12 +213,6 @@ class PickupQueue:
 				default=1,
 				notnull=True,
 				description="Show streaming players on a match start."
-			),
-			Variables.RoleVar(
-				"captains_role",
-				display="Captains role",
-				section="Teams",
-				description="Users with this role may have preference in captains choosing process."
 			),
 			Variables.RoleVar(
 				"blacklist_role",
@@ -318,7 +311,6 @@ class PickupQueue:
 			team_names=self.cfg.team_names.split(" ") if self.cfg.team_names else None,
 			team_emojis=self.cfg.team_emojis.split(" ") if self.cfg.team_emojis else None,
 			ranked=self.cfg.ranked, pick_captains=self.cfg.pick_captains,
-			captains_role_id=self.cfg.captains_role.id if self.cfg.captains_role else None,
 			pick_teams=self.cfg.pick_teams, pick_order=self.cfg.pick_order,
 			check_in_timeout=self.cfg.check_in_timeout,
 			check_in_discard=self.cfg.check_in_discard, check_in_discard_immediately=self.cfg.check_in_discard_immediately,
