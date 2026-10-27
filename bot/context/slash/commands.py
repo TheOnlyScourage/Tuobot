@@ -537,19 +537,6 @@ async def _sub_for(
 ) -> None: await run_slash(bot.commands.sub_for, interaction=interaction, player=player)
 
 
-@dc.slash_command(name='capme', description="Leave captain's position.")
-async def _cap_me(interaction: Interaction,
-) -> None: await run_slash(bot.commands.cap_me, interaction=interaction)
-
-
-@dc.slash_command(name='capfor', description='Become a captain', **guild_kwargs)
-async def _cap_for(
-		interaction: Interaction,
-		team: str
-) -> None: await run_slash(bot.commands.cap_for, interaction=interaction, team_name=team)
-_cap_for.on_autocomplete('team')(autocomplete.teams_by_author)
-
-
 @dc.slash_command(name='pick', description='Pick a player from the unpicked pool.', **guild_kwargs)
 async def _pick(
 		interaction: Interaction,
