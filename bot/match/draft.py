@@ -32,12 +32,11 @@ class Draft:
 		"b": 1
 	}
 
-	def __init__(self, match: bot.Match, pick_order: str | None, captains_role_id: int | None):
+	def __init__(self, match: bot.Match, pick_order: str | None):
 		"""Translate pick_order into team indices and, for draft-mode configs,
 		append the DRAFT state to the match's state sequence."""
 		self.m = match
 		self.pick_order = [self.pick_steps[i] for i in pick_order] if pick_order else []
-		self.captains_role_id = captains_role_id
 		self.sub_queue = []
 
 		if self.m.cfg['pick_teams'] == "draft":
@@ -89,41 +88,6 @@ class Draft:
 			await self.print(ctx)
 		else:
 			await self.m.next_state(ctx)
-
-	async def cap_me(self, ctx: bot.Context, author: Member) -> None:
-		"""Relinquish captaincy: a captain who hasn't picked yet steps back into
-		the unpicked pool. (The claim direction is cap_for.)"""
-		if self.m.state != self.m.DRAFT:
-			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
-
-		team = find(lambda t: author in t, self.m.teams)
-		if team.idx == 2 or team.index(author) != 0:
-			raise bot.Exc.PermissionError(self.m.gt("You are not a captain."))
-		if len(team) > 1:
-			raise bot.Exc.PermissionError(self.m.gt("Can't do that after you've started picking."))
-
-		team.remove(author)
-		self.m.teams[2].add(author)
-		await self.print(ctx)
-
-	async def cap_for(self, ctx: bot.Context, author: Member, team_name: str) -> None:
-		"""Claim an empty captain slot on the named team (position 0), moving the
-		caller out of their current team. Requires the captain role if one is
-		configured."""
-		if self.m.state != self.m.DRAFT:
-			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the draft stage."))
-		elif self.captains_role_id and self.captains_role_id not in (r.id for r in author.roles):
-			raise bot.Exc.PermissionError(self.m.gt("You must possess the captain's role."))
-		elif (team := find(lambda t: t.name.lower() == team_name.lower(), self.m.teams[:2])) is None:
-			raise bot.Exc.SyntaxError(self.m.gt("Specified team name not found."))
-		elif len(team):
-			raise bot.Exc.PermissionError(
-				self.m.gt(f"Team **{team.name}** already have a captain. The captain must type **/capme** first.")
-			)
-
-		find(lambda t: author in t, self.m.teams).remove(author)
-		team.insert(0, author)
-		await self.print(ctx)
 
 	async def pick(self, ctx: bot.Context, author: Member, players: list[Member]) -> None:
 		"""Captain picks one or more players from the unpicked pool, enforcing
