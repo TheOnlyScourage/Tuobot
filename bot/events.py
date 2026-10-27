@@ -94,6 +94,7 @@ async def on_think(frame_time):
 			continue
 	await bot.expire.think(frame_time)
 	await bot.noadds.think(frame_time)
+	await bot.daily_clear.think(frame_time)
 	await bot.stats.jobs.think(frame_time)
 	await bot.expire_auto_ready(frame_time)
 
