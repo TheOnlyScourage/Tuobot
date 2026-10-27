@@ -49,13 +49,6 @@ async def match_ids(interaction: Interaction, match_id: str) -> List[int]:  # no
 	return [m.id for m in bot.active_matches if m.qc == qc]
 
 
-async def teams_by_author(interaction: Interaction, name: str) -> List[str]:  # noqa: UP006
-	"""Autocomplete team names in the caller's active match."""
-	if (match := find(lambda m: interaction.user in m.players, bot.active_matches)) is not None:
-		return [team.name for team in match.teams[:2] if team.name.startswith(name)]
-	return ['active match not found']
-
-
 async def teams_by_match_id(interaction: Interaction, name: str) -> List[str]:  # noqa: UP006
 	"""Autocomplete team names in the match given by the match_id parameter."""
 	interaction_match = find(lambda i: i['name'] == 'match_id', interaction.data['options'][0]['options'])
