@@ -126,3 +126,20 @@ def test_slash_and_handler_with_owner_lock():
 	)
 	names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
 	assert "OWNER_ID" in names, "handler must be owner-locked"
+
+
+def test_table_columns_avoid_sql_reserved_words():
+	"""The adapter's select() only backticks a tiny hand-list ('rank', 'role'),
+	so any other reserved word as a column name is a blank ProgrammingError in
+	production. The first live /autoreply on died this way on a column named
+	'cursor' (Oct 2026)."""
+	tree = ast.parse(_src("bot/stats/autoreply.py"))
+	init = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "init_autoreply_table")
+	cnames = {
+		kw.value.value
+		for call in ast.walk(init) if isinstance(call, ast.Call)
+		for kw in call.keywords if kw.arg == "cname" and isinstance(kw.value, ast.Constant)
+	}
+	reserved = {"cursor", "rank", "role", "order", "group", "key", "index", "select", "table", "column", "default", "status", "position"}
+	assert cnames == {"id", "enabled", "line_idx"}
+	assert not (cnames & reserved)
