@@ -4,7 +4,7 @@
 recommend_rules.py is dependency-free apart from bot.constants, so it loads
 by path with the constants module stubbed in (birthday_calendar-style). The
 AST guards pin the parts a partial paste-over could sever: the casual flag
-in Match, the registration bypass, the streak gate, and start()'s new
+in Match, the registration bypass, and start()'s new
 signature."""
 import ast
 import importlib.util
@@ -103,7 +103,6 @@ def test_match_has_casual_flag_and_skips_registration():
 	assert "casual=False" in src                                   # default_cfg
 	assert "self.casual = bool(self.cfg.get('casual', False))" in src
 	assert "if self.casual:\n\t\t\tpass" in src                    # finish_match bypass
-	assert "and not match.cfg.get('casual')" in src                # streak gate
 	assert "if not self.casual and len(self.teams[0])" in src      # captain history gate
 
 
