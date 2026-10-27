@@ -2,16 +2,11 @@
 """
 Regression tests for bot/match/captain_selection.py.
 
-Covers the scoring primitives, both selection strategies, and — most
-importantly — the eligibility-role vs. bonus-role distinction in
-select_captain_role_captains' fallback. That distinction was a REAL bug
-caught during the extraction (the two role ids were conflated in the
-fallback path); test_fallback_forwards_bonus_role_not_eligibility_role
-is the permanent lock against it regressing.
-
-random.sample is only reached when no eligible pair shares a role; that
-path is tested with the module's `random` swapped for a recorder so the
-candidate pool is asserted exactly, not sampled.
+Covers the scoring primitives, smart pair selection, and — since Oct 2026 —
+the eligibility filter that replaced the Captain ROLE system: players holding
+the "bar" role (captains ban list) or with fewer than CAPTAIN_MIN_GAMES career
+games are excluded, with the most-experienced non-barred players filling in
+when fewer than two qualify, and barred players used only as a last resort.
 """
 
 from collections import deque
@@ -74,17 +69,6 @@ def test_role_bonus(captain_selection, r1, r2, expected):
 ])
 def test_mmr_bonus(captain_selection, m1, m2, expected):
 	assert captain_selection.mmr_bonus(m1, m2) == expected
-
-
-def test_captain_role_bonus(captain_selection, member, role):
-	holder_a = _member(member, role, 1, (500, "Team Captain"))
-	holder_b = _member(member, role, 2, (500, "Team Captain"))
-	civilian = _member(member, role, 3, "Beater")
-	f = captain_selection.captain_role_bonus
-	assert f(holder_a, holder_b, None) == 0      # feature off
-	assert f(holder_a, holder_b, 500) == 1000    # both
-	assert f(holder_a, civilian, 500) == 300     # one
-	assert f(civilian, civilian, 500) == 0       # neither
 
 
 # ── select_smart_captains ─────────────────────────────────────────────────────
@@ -156,116 +140,83 @@ def test_smart_degenerate_single_player(captain_selection, member, role):
 	assert [p.id for p in picked] == [1]
 
 
-# ── select_captain_role_captains ──────────────────────────────────────────────
+# ── eligible_captains (the bar role + minimum games filter) ──────────────────
 
-ELIG = 100    # eligibility role id (constants.CAPTAIN_ROLE_ID in production)
-BONUS = 200   # scoring-bonus role id (cfg captains_role_id in production)
-
-
-def test_role_mode_only_considers_eligibility_holders(captain_selection, member, role):
-	a = _member(member, role, 1, (ELIG, "Captain"), "Seeker")
-	b = _member(member, role, 2, (ELIG, "Captain"), "Seeker")
-	# Best on paper, but holds no eligibility role -> never picked.
-	ringer = _member(member, role, 3, "Seeker")
-	picked = captain_selection.select_captain_role_captains(
-		[a, b, ringer], dict.fromkeys((1, 2, 3), 1500),
-		captain_role_id=ELIG, is_capped=lambda s: False)
-	assert {p.id for p in picked} == {1, 2}
+BAR = 1564449871019114597   # constants.CAPTAIN_BAR_ROLE_ID
+MIN = 25                    # constants.CAPTAIN_MIN_GAMES
 
 
-def test_role_mode_drops_capped_holders(captain_selection, member, role):
-	a = _member(member, role, 1, (ELIG, "Captain"), "Seeker")
-	b = _member(member, role, 2, (ELIG, "Captain"), "Seeker")
-	c = _member(member, role, 3, (ELIG, "Captain"), "Seeker")
-	picked = captain_selection.select_captain_role_captains(
-		[a, b, c], dict.fromkeys((1, 2, 3), 1500),
-		captain_role_id=ELIG,
-		is_capped=lambda streak: streak >= 2,
-		captain_streaks={3: 2})
-	assert {p.id for p in picked} == {1, 2}
+def _lobby(member, role):
+	"""Six players: a=40 games, b=30, c=25 (exactly the bar), d=24, e=5,
+	f=100 but BARRED."""
+	a = _member(member, role, 1, "Seeker")
+	b = _member(member, role, 2, "Seeker")
+	c = _member(member, role, 3, "Keeper")
+	d = _member(member, role, 4, "Chaser")
+	e = _member(member, role, 5, "Beater")
+	f = _member(member, role, 6, (BAR, "bar"), "Seeker")
+	games = {1: 40, 2: 30, 3: 25, 4: 24, 5: 5, 6: 100}
+	return [a, b, c, d, e, f], games
 
 
-def test_fallback_forwards_bonus_role_not_eligibility_role(captain_selection, member, role):
-	"""THE regression lock for the extraction bug.
-
-	Setup: only ONE eligible captain-role holder (A; B and C are on
-	cooldown), forcing the smart-selection fallback. Everyone shares a
-	quidditch role and MMR, so every pair scores 600 — EXCEPT the pair
-	holding the BONUS role (C, D), which the captain-role bonus lifts to
-	1600 *iff* the fallback forwards cfg's captains_role_id.
-
-	The historical bug forwarded the ELIGIBILITY id instead; A is the only
-	eligibility holder, so under the bug A-pairs score 900 and the pick
-	becomes {A, B}. Correct behaviour picks {C, D}.
-	"""
-	a = _member(member, role, 1, (ELIG, "Captain"), "Beater")
-	b = _member(member, role, 2, (ELIG, "Captain"), "Beater")
-	c = _member(member, role, 3, (ELIG, "Captain"), (BONUS, "Captain Bonus"), "Beater")
-	d = _member(member, role, 4, (BONUS, "Captain Bonus"), "Beater")
-	picked = captain_selection.select_captain_role_captains(
-		[a, b, c, d], dict.fromkeys((1, 2, 3, 4), 1500),
-		captain_role_id=ELIG,
-		is_capped=lambda streak: streak >= 2,
-		captain_streaks={2: 2, 3: 2},      # only A stays eligible -> fallback
-		captains_role_id=BONUS)
-	assert {p.id for p in picked} == {3, 4}
+def test_tier0_only_qualified_and_unbarred(captain_selection, member, role):
+	players, games = _lobby(member, role)
+	pool, tier = captain_selection.eligible_captains(players, games, BAR, MIN)
+	assert tier == 0
+	assert {p.id for p in pool} == {1, 2, 3}     # 25 games counts; 24 doesn't; barred out
 
 
-def test_role_mode_role_match_outranks_mmr(captain_selection, member, role):
-	"""(role_score, mmr_score) tuple ordering: a same-role pair with a worse
-	MMR gap must beat a cross-role pair with identical MMR."""
-	e = _member(member, role, 1, (ELIG, "Captain"), "Seeker")
-	f = _member(member, role, 2, (ELIG, "Captain"), "Seeker")
-	g = _member(member, role, 3, (ELIG, "Captain"), "Keeper")
-	h = _member(member, role, 4, (ELIG, "Captain"), "Chaser")
-	ratings = {1: 1500, 2: 1100, 3: 1500, 4: 1500}   # (e,f) gap 400; (g,h) equal
-	picked = captain_selection.select_captain_role_captains(
-		[e, f, g, h], ratings, captain_role_id=ELIG, is_capped=lambda s: False)
-	assert {p.id for p in picked} == {1, 2}
+def test_tier1_most_experienced_fill_in(captain_selection, member, role):
+	"""Only one qualifier -> the single most-experienced non-barred player
+	fills the second slot (24 games beats 5; the barred 100-game player is
+	skipped)."""
+	players, games = _lobby(member, role)
+	games = {**games, 1: 40, 2: 10, 3: 3}         # now only `a` qualifies
+	pool, tier = captain_selection.eligible_captains(players, games, BAR, MIN)
+	assert tier == 1
+	assert [p.id for p in pool] == [1, 4]         # a (qualified) + d (24, most games)
 
 
-def test_role_mode_mmr_breaks_role_ties(captain_selection, member, role):
-	e = _member(member, role, 1, (ELIG, "Captain"), "Seeker")
-	f = _member(member, role, 2, (ELIG, "Captain"), "Seeker")
-	g = _member(member, role, 3, (ELIG, "Captain"), "Keeper")
-	h = _member(member, role, 4, (ELIG, "Captain"), "Keeper")
-	ratings = {1: 1500, 2: 1100, 3: 1500, 4: 1500}   # both pairs 300 role; (g,h) closer MMR
-	picked = captain_selection.select_captain_role_captains(
-		[e, f, g, h], ratings, captain_role_id=ELIG, is_capped=lambda s: False)
-	assert {p.id for p in picked} == {3, 4}
+def test_tier1_no_qualifiers_takes_top_two_by_games(captain_selection, member, role):
+	players, games = _lobby(member, role)
+	games = {1: 20, 2: 19, 3: 2, 4: 24, 5: 5, 6: 100}
+	pool, tier = captain_selection.eligible_captains(players, games, BAR, MIN)
+	assert tier == 1
+	assert [p.id for p in pool] == [4, 1]         # 24 then 20; barred ignored
 
 
-def test_role_mode_random_among_holders_when_no_shared_roles(
-	captain_selection, member, role, monkeypatch,
-):
-	"""No eligible pair shares a role -> random.sample over ELIGIBLE holders
-	only. Swap the module's random for a recorder and assert the exact pool:
-	capped holders and non-holders must not be in it."""
-	e = _member(member, role, 1, (ELIG, "Captain"), "Seeker")
-	f = _member(member, role, 2, (ELIG, "Captain"), "Keeper")
-	g = _member(member, role, 3, (ELIG, "Captain"), "Chaser")
-	capped = _member(member, role, 4, (ELIG, "Captain"), "Seeker")
-	civilian = _member(member, role, 5, "Seeker")
+def test_tier1_ties_keep_queue_order(captain_selection, member, role):
+	players, games = _lobby(member, role)
+	games = dict.fromkeys((1, 2, 3, 4, 5, 6), 10)
+	pool, tier = captain_selection.eligible_captains(players, games, BAR, MIN)
+	assert tier == 1 and [p.id for p in pool] == [1, 2]
 
-	class Recorder:
-		def __init__(self):
-			self.calls = []
 
-		def sample(self, pool, k):
-			self.calls.append((list(pool), k))
-			return list(pool)[:k]
+def test_tier2_everyone_barred_uses_everyone(captain_selection, member, role):
+	x = _member(member, role, 1, (BAR, "bar"), "Seeker")
+	y = _member(member, role, 2, (BAR, "bar"), "Keeper")
+	z = _member(member, role, 3, (BAR, "bar"), "Chaser")
+	pool, tier = captain_selection.eligible_captains([x, y, z], {1: 50, 2: 50, 3: 50}, BAR, MIN)
+	assert tier == 2 and [p.id for p in pool] == [1, 2, 3]
 
-	rec = Recorder()
-	monkeypatch.setattr(captain_selection, "random", rec)
 
-	picked = captain_selection.select_captain_role_captains(
-		[e, f, g, capped, civilian], dict.fromkeys((1, 2, 3, 4, 5), 1500),
-		captain_role_id=ELIG,
-		is_capped=lambda streak: streak >= 2,
-		captain_streaks={4: 2})
+def test_missing_game_counts_mean_zero(captain_selection, member, role):
+	players, _ = _lobby(member, role)
+	pool, tier = captain_selection.eligible_captains(players, {}, BAR, MIN)
+	assert tier == 1 and len(pool) == 2 and all(p.id != 6 for p in pool)
 
-	assert len(rec.calls) == 1
-	pool, k = rec.calls[0]
-	assert k == 2
-	assert {p.id for p in pool} == {1, 2, 3}
-	assert {p.id for p in picked} <= {1, 2, 3} and len(picked) == 2
+
+def test_pool_feeds_smart_selection(captain_selection, member, role):
+	"""End to end: the barred Seeker (best Quidditch-role match for `a`) can
+	never be picked; smart selection runs on the eligible pool only."""
+	players, games = _lobby(member, role)
+	pool, _ = captain_selection.eligible_captains(players, games, BAR, MIN)
+	ratings = dict.fromkeys((1, 2, 3, 4, 5, 6), 1500)
+	picked = captain_selection.select_smart_captains(pool, ratings)
+	assert {p.id for p in picked} == {1, 2}       # the two eligible Seekers
+	assert 6 not in {p.id for p in picked}
+
+
+def test_no_captain_role_machinery_left(captain_selection):
+	assert not hasattr(captain_selection, "select_captain_role_captains")
+	assert not hasattr(captain_selection, "captain_role_bonus")
