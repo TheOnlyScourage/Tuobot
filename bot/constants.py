@@ -11,7 +11,9 @@ Layout:
   - HOUSE_ROLES / HOUSE_EMOJIS    — Hogwarts house assignment
   - SPECIALTY_ROLES               — Quidditch positions (Seeker/Beater/Keeper)
   - Q_PING_ROLE_ID                — role mentioned to trigger the @Q ping embed
-  - RANK_EMOJIS / get_rank_emoji  — Q6 rank badge lookup by rating
+  - CAPTAIN_BAR_ROLE_ID / CAPTAIN_MIN_GAMES — who may be auto-picked as captain
+  - RANK_EMOJIS / get_rank_emoji  — Q6 rank badge lookup by rating (the ONLY ladder)
+  - QUEUE_CLEAR_*                 — the daily 4:00 AM Central queue wipe
   - MMR engine constants          — formula parameters used by stats/mmr_engine
   - RECOMMEND_*                   — /recommend formats, window, cooldown
   - AUTOREPLY_*                   — /autoreply target, cooldown, and the story lines
@@ -97,22 +99,31 @@ KEEPERS_NEEDED = 2
 Q_PING_ROLE_ID = 1340717895449186324
 
 
-# ── Captain role ─────────────────────────────────────────────────────────────
-# Players with this role are eligible to be picked as captains when a queue
-# is configured with pick_captains="captain_role".
-CAPTAIN_ROLE_ID = 1365601313525596200
+# ── Captain eligibility ──────────────────────────────────────────────────────
+# The Captain ROLE system (eligibility role + streak cooldowns + scoring bonus)
+# was removed in Oct 2026. Captains are now auto-picked from everyone in the
+# lobby EXCEPT:
+#   - players holding the "bar" role (the captains ban list), and
+#   - players with fewer than CAPTAIN_MIN_GAMES games on their profile.
+# If fewer than two queued players qualify, the most experienced non-barred
+# players fill in (bot/match/captain_selection.eligible_captains).
+CAPTAIN_BAR_ROLE_ID = 1564449871019114597
+CAPTAIN_MIN_GAMES   = 25
 
 
 # ── Rank emojis ──────────────────────────────────────────────────────────────
 # Tuples of (minimum_rating, emoji). The thresholds are walked in ascending
 # order; the highest threshold a player meets is their rank.
+# Oct 2026 ladder: Platinum slotted in at 1600 and the tiers below it shifted
+# down 200. bot/commands/stats.py imports THIS table — never copy it again.
 RANK_EMOJIS = [
 	(0,    "<:CHAD:1471923932558000270>"),
-	(800,  "<:Q6Wood:1514727440692547685>"),
-	(1000, "<:Q6Iron:1514727400200470820>"),
-	(1200, "<:Q6Bronze:1514727471205847170>"),
-	(1400, "<:Q6Silver:1514727221808332800>"),
-	(1600, "<:Q6Gold:1514727359461462076>"),
+	(600,  "<:Q6Wood:1514727440692547685>"),
+	(800,  "<:Q6Iron:1514727400200470820>"),
+	(1000, "<:Q6Bronze:1514727471205847170>"),
+	(1200, "<:Q6Silver:1514727221808332800>"),
+	(1400, "<:Q6Gold:1514727359461462076>"),
+	(1600, "<:Q6Platinum:0>"),  # ← paste the real emoji id once the crest is uploaded
 	(1800, "<:Q6Diamond:1514727335549472930>"),
 	(2000, "<:Q6Champion:1514727158596112464>"),
 	(2200, "<:Q6Star:1514727286132441238>"),
@@ -155,6 +166,15 @@ HOUSE_POINTS_FOR_CAPTAIN = 10
 # ── Misc Discord limits we need to respect ───────────────────────────────────
 MAX_NICK_LEN          = 32   # Discord caps nicknames at 32 chars
 MAX_AUTOCOMPLETE_OPTS = 25   # Discord caps autocomplete choices at 25
+
+
+# ── Daily queue clear ────────────────────────────────────────────────────────
+# Every queue in every queue channel is emptied at QUEUE_CLEAR_HOUR local time
+# in QUEUE_CLEAR_TIMEZONE (DST-aware: 4:00 AM Central year-round), with a short
+# notice in each channel where someone was actually removed
+# (bot/queues/daily_clear.py, ticked from events.on_think).
+QUEUE_CLEAR_HOUR     = 4
+QUEUE_CLEAR_TIMEZONE = "America/Chicago"
 
 
 # ── /recommend — casual smaller games from a stalled queue ───────────────────
