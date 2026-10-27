@@ -14,6 +14,7 @@ from .expire import expire
 from .stats import stats
 from .stats.noadds import noadds
 from .stats.autoreply import autoreply
+from .queues.daily_clear import daily_clear
 from .exceptions import Exceptions as Exc
 from .context import Context, SlashContext, SystemContext
 from . import commands
