@@ -161,9 +161,9 @@ class Embeds:
 				if picker_team:
 					msg += "\n" + self.m.gt("{member}'s turn to pick!").format(member=f"<@{picker_team[0].id}>")
 			else:
-				msg = self.m.gt("Type {cmd} to become a captain and start picking teams.").format(
-					cmd=f"`{self.m.qc.cfg.prefix}capfor {'/'.join((team.name.lower() for team in self.m.teams[:2]))}`"
-				)
+				# Captains are always auto-assigned now (/capfor is gone); this
+				# branch only renders if a roster somehow has an empty captain seat.
+				msg = self.m.gt("Waiting for captains to be assigned…")
 
 			embed.add_field(name="—", value=msg + "\n\u200b", inline=False)
 
