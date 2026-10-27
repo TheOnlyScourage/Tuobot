@@ -2,7 +2,7 @@ from __future__ import annotations
 
 __all__ = [
 	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
-	'sub_force', 'cap_me', 'cap_for', 'pick', 'report_admin', 'report', 'report_manual',
+	'sub_force', 'pick', 'report_admin', 'report', 'report_manual',
 	'force_checkin', 'swap_players'
 ]
 
@@ -99,18 +99,6 @@ async def sub_force(ctx: bot.Context, player1: Member, player2: Member) -> None:
 	# Always register as fill-in: team loss → player1 takes the hit.
 	if team_idx is not None:
 		match.fill_subs[player2.id] = (player1.id, team_idx)
-
-
-@author_match
-async def cap_me(ctx: bot.Context, match: bot.Match) -> None:
-	"""Volunteer the caller as a captain."""
-	await match.draft.cap_me(ctx, ctx.author)
-
-
-@author_match
-async def cap_for(ctx: bot.Context, match: bot.Match, team_name: str) -> None:
-	"""Assign the caller as captain of a named team."""
-	await match.draft.cap_for(ctx, ctx.author, team_name)
 
 
 @author_match
