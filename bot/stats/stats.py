@@ -370,6 +370,27 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Career lookups
+# ══════════════════════════════════════════════════════════════════════════════
+async def career_games_by_id(channel_id: int, user_ids) -> dict:
+    """{user_id: games played on this channel, all-time} for the given players —
+    the same rows /profile is built from (every match they were seated on a
+    team for, ranked or not, across all seasons). Players with no games are
+    simply absent (callers treat missing as 0). Feeds captain eligibility."""
+    ids = list(user_ids)
+    if not ids:
+        return {}
+    ph = ", ".join(["%s"] * len(ids))
+    rows = await db.fetchall(
+        f"SELECT user_id, COUNT(*) AS games FROM qc_player_matches "
+        f"WHERE channel_id = %s AND team IS NOT NULL AND user_id IN ({ph}) "
+        f"GROUP BY user_id",
+        (channel_id, *ids)
+    )
+    return {r['user_id']: int(r['games']) for r in rows}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Admin operations
 # ══════════════════════════════════════════════════════════════════════════════
 async def undo_match(ctx: bot.Context, match_id: int) -> dict | None:
