@@ -275,6 +275,7 @@ RANK_COLOURS = {
 	'Bronze':   (205, 127, 50),
 	'Silver':   (192, 192, 192),
 	'Gold':     (255, 215, 0),
+	'Platinum': (176, 196, 222),   # icy steel-blue, after the crest art
 	'Diamond':  (78, 226, 236),
 	'Champion': (224, 17, 95),
 	'Star':     (255, 241, 118),
