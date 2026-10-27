@@ -182,8 +182,10 @@ async def finalize_race_results(ci: CheckIn, ctx: bot.Context) -> None:
 			match.teams[1].set(original_captains[1:2])
 			match.teams[2].set([p for p in match.players if p not in original_captains[:2]])
 		else:
-			# A captain was bounced — re-pick fresh from the final roster.
-			match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
+			# A captain was bounced — re-pick fresh from the final roster
+			# (standby arrivals weren't in the original career-games prefetch).
+			await match.prefetch_career_games(match.qc.id)
+			match.init_captains(match.cfg['pick_captains'])
 			match.init_teams('draft')
 			match._assign_house_names()
 
