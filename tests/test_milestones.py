@@ -39,34 +39,40 @@ def test_every_configured_milestone_fires(milestones):
 # ── rank-ups ──────────────────────────────────────────────────────────────────
 
 def test_rank_up_first_time_and_name_parsing(milestones):
-	# 1580 (Silver) -> 1615 (Gold), never been higher: first time.
-	lines = milestones.detect_milestones([P(old=1580, new=1615, peak=1580)])
+	# 1380 (Silver) -> 1415 (Gold), never been higher: first time.
+	lines = milestones.detect_milestones([P(old=1380, new=1415, peak=1380)])
 	assert len(lines) == 1
 	assert "Gold" in lines[0] and "for the first time" in lines[0]
 	assert "Q6Gold" in lines[0]  # the rank emoji rides along
 
 
 def test_rank_up_reclimb_has_no_first_time_suffix(milestones):
-	# Peaked at 1750 (Gold) before a season reset; climbing back into Gold.
-	lines = milestones.detect_milestones([P(old=1580, new=1615, peak=1750)])
+	# Peaked at 1550 (Gold) before a season reset; climbing back into Gold.
+	lines = milestones.detect_milestones([P(old=1380, new=1415, peak=1550)])
 	assert len(lines) == 1
 	assert "Gold" in lines[0] and "for the first time" not in lines[0]
 
 
 def test_rank_up_with_no_history_counts_as_first_time(milestones):
-	lines = milestones.detect_milestones([P(old=1580, new=1615, peak=None)])
+	lines = milestones.detect_milestones([P(old=1380, new=1415, peak=None)])
 	assert "for the first time" in lines[0]
 
 
 def test_rank_down_and_flat_stay_silent(milestones):
-	assert milestones.detect_milestones([P(old=1615, new=1580, peak=1615)]) == []
+	assert milestones.detect_milestones([P(old=1415, new=1380, peak=1415)]) == []
 	assert milestones.detect_milestones([P(old=1500, new=1520, peak=1500)]) == []
 
 
 def test_multi_tier_jump_announces_the_landing_tier(milestones):
-	# 1390 (Bronze) -> 1610 (Gold) skips Silver; the line names Gold.
-	lines = milestones.detect_milestones([P(old=1390, new=1610, peak=1390)])
+	# 1190 (Bronze) -> 1410 (Gold) skips Silver; the line names Gold.
+	lines = milestones.detect_milestones([P(old=1190, new=1410, peak=1190)])
 	assert "Gold" in lines[0] and "Silver" not in lines[0]
+
+
+def test_platinum_rank_up(milestones):
+	# 1590 (Gold) -> 1620 (Platinum): the new tier announces by name.
+	lines = milestones.detect_milestones([P(old=1590, new=1620, peak=1590)])
+	assert len(lines) == 1 and "Platinum" in lines[0] and "Q6Platinum" in lines[0]
 
 
 # ── best-streak records ───────────────────────────────────────────────────────
@@ -134,7 +140,7 @@ def test_one_player_can_stack_all_three(milestones):
 	# extends the all-time best streak to W4.
 	results = [R(False)] * 246 + [R(True)] * 4
 	lines = milestones.detect_milestones([
-		P(nick="Scourage", results=results, old=1580, new=1615, peak=1580)
+		P(nick="Scourage", results=results, old=1380, new=1415, peak=1380)
 	])
 	assert len(lines) == 3
 	assert "250th" in lines[0] and "Gold" in lines[1] and "W4" in lines[2]
@@ -148,14 +154,21 @@ def test_empty_input_and_empty_results(milestones):
 # ── tier helpers ──────────────────────────────────────────────────────────────
 
 def test_rank_tier_boundaries(milestones):
-	assert milestones.rank_tier(799) == 0     # Chad
-	assert milestones.rank_tier(800) == 1     # Wood begins
-	assert milestones.rank_tier(1599) == 4    # Silver
-	assert milestones.rank_tier(1600) == 5    # Gold begins
-	assert milestones.rank_tier(2400) == 8    # Star is the ceiling
+	# Oct 2026 ladder: Chad 0 / Wood 600 / Iron 800 / Bronze 1000 / Silver 1200
+	# / Gold 1400 / Platinum 1600 / Diamond 1800 / Champion 2000 / Star 2200
+	assert milestones.rank_tier(599) == 0     # Chad
+	assert milestones.rank_tier(600) == 1     # Wood begins
+	assert milestones.rank_tier(1399) == 4    # Silver
+	assert milestones.rank_tier(1400) == 5    # Gold begins
+	assert milestones.rank_tier(1599) == 5    # still Gold
+	assert milestones.rank_tier(1600) == 6    # Platinum begins
+	assert milestones.rank_tier(1799) == 6    # still Platinum
+	assert milestones.rank_tier(1800) == 7    # Diamond begins
+	assert milestones.rank_tier(2400) == 9    # Star is the ceiling
 
 
 def test_rank_label_names(milestones):
 	assert milestones.rank_label(0)[1] == "Chad"
-	assert milestones.rank_label(6)[1] == "Diamond"
-	assert milestones.rank_label(8)[1] == "Star"
+	assert milestones.rank_label(6)[1] == "Platinum"
+	assert milestones.rank_label(7)[1] == "Diamond"
+	assert milestones.rank_label(9)[1] == "Star"
