@@ -23,8 +23,6 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 |---|---|
 | `/ready` | Confirm participation during the check-in stage. Same as reacting ✅ on the check-in message. |
 | `/notready` | Abort participation during the check-in stage. Same as reacting ❌. |
-| `/capfor` | Volunteer to be captain on the team you choose. |
-| `/capme` | Step down from the captain position you were assigned. |
 | `/pick` | Captains only — pick a player from the unpicked pool. The dropdown shows only valid choices. |
 
 ### Substitutes
@@ -159,6 +157,12 @@ A guide to every slash command available in Tuobot, grouped by who uses them and
 **Queue priority**: Set via `/admin queue set <queue> priority <number>`. When a lower-priority queue pops, players stay in higher-priority queues. Recommended: `6v6-ranked = 100`, `bonanza = 80`, others = `0`.
 
 **Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
+
+**Captains**: Picked automatically every match — there is no Captain role, `/capfor`, or `/capme` anymore. Anyone in the lobby can be chosen **except** players holding the **bar** role (the captains ban list) and players with fewer than **25 games** on their profile. If fewer than two queued players qualify, the most experienced non-barred players fill in. The queue's `pick_captains` mode (smart / by rating / fair pairs / random) then chooses the pair from that pool.
+
+**Ranks**: Chad 0 · Wood 600 · Iron 800 · Bronze 1000 · Silver 1200 · Gold 1400 · **Platinum 1600** · Diamond 1800 · Champion 2000 · Star ★ 2200+ (Oct 2026 ladder).
+
+**Daily reset**: Every queue is emptied at **4:00 AM Central** each day (the bot posts a short notice in any channel where someone was removed). Active matches aren't affected — just re-add.
 
 **Hogwarts houses**: Captains' Discord house roles determine team names. The winning team of a **ranked** match awards house points: captain = 10, other players = 5. Players with no house role contribute nothing. Totals feed the House Cup and reset each season.
 
