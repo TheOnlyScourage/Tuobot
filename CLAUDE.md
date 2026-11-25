@@ -6,7 +6,7 @@ This file provides guidance to Claude (and Claude Code) when working with code i
 
 **Tuobot** — a Discord pickup-queue bot for a **Q6 (Quidditch 6v6)** community, purpose-built for the LEAGUE7 server. It began as a fork of PUBobot2 → NammaPUBobot (an AoE2 pickup bot) and has been progressively reshaped into a Quidditch-specific bot with a custom MMR system, Hogwarts house points, and specialty-role features. Built with **Python 3.11** (Railway `Dockerfile` ships `python:3.11-slim`; `ruff.toml` targets `py311`), **nextcord** (Discord library), **aiomysql**, and **MySQL**.
 
-A sibling bot, **Niffler** (a.k.a. Q6 Cards Bot, maintained by a collaborator), serves the same community; a shared-economy integration between the two is planned but not yet built.
+A sibling bot, **Niffler** (formerly Q6 Cards Bot — Scourage's separate Node.js card-collecting game, its own repo), serves the same community. A shared economy between the two is the one remaining roadmap item (see **Roadmap**).
 
 ## Running the Bot
 
@@ -40,7 +40,7 @@ ruff check .
 pytest tests/ -v
 ```
 
-`tests/` holds regression suites for the two **pure** modules: `bot/stats/mmr_engine.py` (hand-computed + golden 6v6 scenarios locking the MMR formula) and `bot/match/captain_selection.py` (both selection strategies, incl. the eligibility-role vs. bonus-role fallback lock). `tests/conftest.py` loads them via importlib with a stubbed `bot` package so `bot/__init__.py` (which needs Discord + MySQL at import time) never runs — keep new tests dependency-free the same way. If a golden test fails after an intentional balance change, update the golden **and announce the change**.
+`tests/` loads the **pure** modules by path — `mmr_engine` (hand-computed + golden 6v6 scenarios locking the MMR formula), `captain_selection` (bar-role / 25-game eligibility tiers + smart pair scoring), `milestones`, the rank ladder, `daily_clear_rules` (the DST-safe 4 AM clock), `autoreply_rules` and the `/recommend` rules — and adds AST/text **wiring guards** that fail CI when a partial paste-over severs a call chain (e.g. `test_manual_match.py`'s three-hop `/match create` keyword check, `test_captain_role_removed.py`). `tests/conftest.py` stubs the `bot` package so `bot/__init__.py` (which needs Discord + MySQL at import time) never runs — keep new tests dependency-free the same way. If a golden test fails after an intentional balance change, update the golden **and announce the change**.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a docker build on every PR. Keep the tree green on all three.
 
@@ -55,7 +55,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 
 ### Core layer (`core/`)
 - **`config.py`** — loads `config.cfg` as a Python module (not INI/YAML — raw Python)
-- **`client.py`** — `DiscordClient` subclass of `nextcord.Client`; custom event system allowing multiple handlers per event, plus the `@dc.command()` / `@dc.event` registry
+- **`client.py`** — `DiscordClient` subclass of `nextcord.Client`; custom event system allowing multiple handlers per event (`@dc.event`)
 - **`database.py`** → **`DBAdapters/mysql.py`** — async MySQL access (aiomysql pool). The single adapter instance is `core.database.db`
 - **`cfg_factory.py`** — generic typed-config system (`CfgFactory`): per-channel and per-queue settings stored in MySQL, used by both `QueueChannel` and `PickupQueue`
 - **`console.py`** — logging (`log`), **`locales.py`** — translation lookups (`gt`), **`utils.py`** — shared helpers (`find`, `get`, `get_nick`, `seconds_to_str`, `parse_duration`, etc.)
@@ -65,7 +65,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/main.py`** — the run loop and **state persistence**: `save_state()`/`load_state()` write to a MySQL `saved_state` table (survives Railway redeploys) with a local `saved_state.json` fallback; also `update_rating_system()`
 - **`bot/db_init.py`** — one place that ensures all tables exist at startup
 - **`bot/constants.py`** — centralized IDs and tunables: Discord role/emoji IDs, rank-emoji thresholds, MMR params, house-point values, specialty-role maps
-- **`bot/events.py`** — Discord event handlers: `on_ready` loads queue channels from the DB, `on_think` runs match/expire/noadds/alerts ticks, `on_presence_update` removes offline players (the older AFK auto-kick was removed)
+- **`bot/events.py`** — Discord event handlers: `on_ready` loads queue channels from the DB; `on_think` runs the match / expire / noadds / daily-clear / stats-jobs / auto-ready ticks plus a periodic `save_state()` (`bot/alerts.py` registers itself as a second `on_think` handler); `on_message` handles party codes, the @Q ping embed, `/autoreply`, and the two literal `!enable_tuobot` / `!disable_tuobot` channel triggers; `on_presence_update` removes offline players (the older AFK auto-kick was removed)
 - **`bot/queue_channel.py`** — `QueueChannel`: a Discord channel with pickup queues; owns its `CfgFactory` config, its `Rating` instance, and its list of `PickupQueue`s
 - **`bot/queues/pickup_queue.py`** — `PickupQueue`: a player queue that spawns a `Match` when full (`common.py` holds `QueueResponses`/`Qr`); `daily_clear.py` (+ pure `daily_clear_rules.py`) empties every queue at 4:00 AM Central daily, ticked from `on_think`
 - **`bot/match/`** — the `Match` lifecycle (`INIT → CHECK_IN → DRAFT → WAITING_REPORT`):
@@ -73,7 +73,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`; plus `views.py` (nextcord UI Views — currently `LeaderboardView`: button pagination, 🔍 Me, and an optional 🔁 two-board toggle; renders via injected callables so it imports nothing from the bot package)
 - **`bot/context/`** — command-context abstraction:
   - `slash/` — the primary interface: command definitions in `commands.py` (thin wrappers over `bot/commands/` via `run_slash()`), autocomplete in `autocomplete.py`, subcommand groups in `groups.py`, `SlashContext` in `context.py`
-  - `message/` — a **minimal** `MessageContext` kept only to support the `++` / `--` add/remove shorthand; the full `!command` system was removed (slash-only)
+  - `message/` — an **unused** `MessageContext`. The `++` / `--` add/remove shorthand it served was deleted from `on_message` in June 2026 (in the same edit that removed the AoE2 sync), so nothing imports it. The bot is slash-only apart from the two `!enable_tuobot` / `!disable_tuobot` triggers
 - **`bot/stats/`** — stats, rating, and season logic:
   - `mmr_engine.py` — **the single source of truth for the MMR formula** (`compute_mmr_changes`): flat captain rewards, upset scaling, streak multipliers
   - `rating.py` — a single `Rating` class: per-channel rating **storage/maintenance** (fetch/seed, admin adjustments, weekly decay, rank snapping, season reset). It does *not* compute match deltas — `mmr_engine` does
@@ -91,6 +91,7 @@ Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ran
 ### Utils & scripts
 Standalone tools, not imported by the running bot:
 - `scripts/backup_db.sh` — DB backup helper
+- `update_db.py` (repo root) — an obsolete 2022 PUBobot config-format migration (interactive; nothing runs it; `cfg_factory`'s factory-version error message still names it)
 
 ## Key conventions
 - **Indentation: tabs** throughout, with one exception — `bot/stats/stats.py` uses 4-space indentation. Match the file you're editing.
@@ -107,15 +108,8 @@ Standalone tools, not imported by the running bot:
 
 ## Roadmap (agreed, not yet built)
 
-Larger parked designs:
-- **Seeker 1v1 snitch report system** — Model C: variable snitch total (up to 5), time-limited with sudden death; agreed formula `dominance_factor = 1 + (margin-1)*0.10 + (total-1)*0.06`, `softness_factor = 1 - (loser/winner)*0.5`, hard cap ±200.
-- **Shared economy** — Tuobot earns, Niffler (Glas's bot) spends; one MySQL database; append-only transaction ledger. The `house_awards` ledger + `undo_match` reversal is the deliberate dry run of this pattern.
-- **Crash-notification embed** — when `Match.think()` raises and `on_think` drops the match, post a best-effort "Match #X hit an internal error and was cancelled" embed instead of vanishing silently.
-
-Feature TODO (queued from the ideas session):
-- **Spectator predictions** — after a draft locks, non-players tap 🅰️/🅱️ to call the winner; track an "Oracle" accuracy leaderboard.
-- **MVP voting** — post-report buttons for teammates to vote MVP; cosmetic tally on `/profile` (and a future economy earn hook).
-- **Projected MMR preview** — at team lock, call `mmr_engine` preview-style: "Team A wins: +62 avg / Team B wins: +81 avg" on the match embed.
-
-### Not in this codebase (removed — don't go looking)
-The AoE2/civ-sync stats, the multiple rating engines (Flat / **Glicko2** / **TrueSkill** / AoE2 — now a single `Rating`), the **map / map-voting** system, the full text-command (`!cmd`) system, and the `utils/` folder (the one-off PUBobot CSV migration importer + its DB helpers — migration long done, source CSVs deleted) have all been removed. Stale references may still linger in comments; the code paths are gone. (The old AoE2-era `tests/` folder is also gone — the current `tests/` is the new mmr / captain-selection / milestones suite, unrelated to it. The **douche** moderation log was ripped out in July 2026; its `douche_*` DB tables may still exist but nothing reads them.)
+**Shared economy with Niffler** — the one remaining roadmap item. Tuobot *earns*, Niffler *spends*.
+- **Shape:** a one-way, append-only payout ledger table in Tuobot's MySQL. Tuobot only ever inserts rows; Niffler (Node.js, keeps its own local SQLite) polls the ledger and credits silver through its `db.addCoins`, idempotent on the Tuobot match id so a re-poll can never double-pay.
+- **Payout per completed match** (a Q6 match is a best-of-3): 300 silver base to everyone who played, +200 for the win, +150 for captaining. Win streaks do **not** pay silver.
+- **Tuobot's side:** the ledger table (a `db_init` step — no SQL reserved words as column names) and rows written at ranked registration; casual `/recommend` games are never registered, so they never pay. The `house_awards` ledger (awards keyed by match id) is the deliberate dry run of this pattern.
+- **Settle before building:** (1) undo — `house_awards` *deletes* its rows on `undo_match`, but Niffler may already have paid out, so the economy ledger needs a compensating negative row instead; (2) whether an abort (winner-NULL) pays the base; (3) how Niffler, which is hosted separately, connects to Tuobot's Railway MySQL.
