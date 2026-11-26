@@ -2,18 +2,18 @@
 #
 # Runs on every push and every PR against main. Three independent
 # jobs so they fan out in parallel; any one failing blocks
-# the PR. Nothing here deploys anywhere — deployment is still manual
-# via `railway up --ci`.
+# the PR. Nothing here deploys anywhere — Railway deploys main on its own.
 #
-# The test job runs tests/ — regression suites for the two pure modules
-# (bot/stats/mmr_engine.py and bot/match/captain_selection.py). The
-# conftest loads them via importlib with a stubbed `bot` package, so the
-# job needs NO bot dependencies: no nextcord, no aiomysql, no database.
-# Just pytest. Keep it that way — if a new test needs the full
-# requirements.txt, it probably belongs in a different kind of harness.
+# The test job runs tests/: regression suites for the pure modules (the MMR
+# engine, captain selection, milestones, the daily clear, ...) plus guard
+# files that read the rest of the bot with ast. tests/conftest.py stubs the
+# `bot` package, so the job needs NO bot dependencies: no nextcord, no
+# aiomysql, no database. Just pytest. Keep it that way — if a new test needs
+# the full requirements.txt, it probably belongs in a different kind of harness.
 #
-# Python version is pinned to 3.11 to match the Dockerfile
-# (FROM python:3.11-slim). If the Dockerfile moves, bump this too.
+# Python is pinned to 3.13 to match the Dockerfile (FROM python:3.13-slim) and
+# ruff.toml's target-version. tests/test_platform.py fails if the three drift
+# apart, so bump them together.
 name: CI
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - name: Install ruff
         # Pin ruff so a silent upgrade doesn't start failing CI out of
         # nowhere. Bump deliberately.
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - name: Install pytest
         # Pinned like ruff — bump deliberately. The suite needs no other
         # dependencies (see the header comment).
