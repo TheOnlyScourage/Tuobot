@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-import traceback  # noqa: F401
+import traceback
 import json
-from nextcord import Interaction  # noqa: F401
 from core.console import log
 from core.database import db
 from core.config import cfg
-from core.utils import error_embed, ok_embed, get  # noqa: F401
+from core.utils import error_embed, ok_embed, spawn
 import bot
 
 
@@ -38,7 +37,7 @@ async def enable_channel(message):
 
 async def find_orphan_channel_configs() -> list[dict]:
 	"""Channel configs whose Discord channel no longer exists — deleted from
-	the server before anyone ran `/admin channel delete` inside it. A channel
+	the server before anyone ran `/channel delete` inside it. A channel
 	is only flagged when it is neither loaded (bot.queue_channels) nor
 	visible to the client cache, so hidden-but-alive channels never match.
 	Returns [{channel_id, queues: [names]}, ...]."""
@@ -59,7 +58,7 @@ async def find_orphan_channel_configs() -> list[dict]:
 
 async def purge_orphan_channel_configs() -> list[dict]:
 	"""Delete every orphaned channel config and its queues' configs —
-	mirroring exactly what `/admin channel delete` does for a live channel
+	mirroring exactly what `/channel delete` does for a live channel
 	(the qc_configs row + that channel's pq_configs rows; cfg data is a
 	single JSON row per config, no sub-tables). Match history is untouched.
 	Returns the purged orphan list for reporting."""
@@ -98,9 +97,8 @@ def update_rating_system(qc_cfg):
 def save_state():
 	"""Save state synchronously to local file AND schedule MySQL save.
 
-	Called from signal handlers (must be sync). The MySQL save is fired
-	via asyncio.ensure_future so it runs on the event loop without
-	blocking the signal handler.
+	Called from signal handlers (must be sync). The MySQL save is spawned on
+	the event loop so it doesn't block the signal handler.
 	"""
 	import asyncio
 	if not bot.bot_was_ready:
@@ -142,7 +140,7 @@ def save_state():
 	try:
 		loop = asyncio.get_event_loop()
 		if loop.is_running():
-			asyncio.ensure_future(_save_state_db(payload_json))
+			spawn(_save_state_db(payload_json), name="save state")
 		else:
 			loop.run_until_complete(_save_state_db(payload_json))
 	except Exception as e:
