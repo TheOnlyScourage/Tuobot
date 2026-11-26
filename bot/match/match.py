@@ -268,7 +268,7 @@ class Match:
 		if match.state == match.CHECK_IN:
 			old_id = data.get('check_in_message_id')
 			channel = dc.get_channel(qc.id)
-			if old_id and channel is not None:  # its reactions died with the old process
+			if old_id and channel is not None:  # a fresh board is posted just below
 				async def delete_old_board():
 					await channel.get_partial_message(old_id).delete()
 				await step("deleting the old check-in board", delete_old_board())
@@ -901,10 +901,8 @@ class Match:
 		return f"> *({self.id})* **{self.queue.name}** | `{join_and([get_nick(p) for p in self.players])}`"
 
 	async def cancel(self, ctx: bot.Context) -> None:
-		"""Cancel the match: tear down check-in reactions and party code, notify
-		players, and remove it from active matches."""
-		if self.check_in.message and self.check_in.message.id in bot.waiting_reactions.keys():
-			bot.waiting_reactions.pop(self.check_in.message.id)
+		"""Cancel the match: tear down the party code, notify players, and remove
+		it from active matches."""
 		if self.party_code:
 			self.party_code.cancel()
 		try:
