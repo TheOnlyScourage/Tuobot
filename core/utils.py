@@ -84,17 +84,34 @@ async def reply(msg, string):
 	await msg.channel.send('<@{}>, {}'.format(msg.author.id, string))
 
 
+# No real duration ("12h30m15s", "1d 12h", "100Y", "01:30:00") comes close to
+# this; a hard cap means no input can ever make the parser slow.
+_MAX_DURATION_LEN = 32
+
+
 def parse_duration(string):
+	"""Parse "3h2m1s" / "1d 12h" / "03:02:01" into a timedelta ('inf' → 0).
+
+	Units: s m h d, W (week), M (30 days), Y (365 days). Raises ValueError on
+	anything else, which every caller turns into a friendly error.
+
+	The unit must be a LETTER. The old pattern `^(\\d+\\w ?)+$` let `\\w` match
+	digits too, so a long run of digits backtracked exponentially: any player
+	could type ~50 digits into /remove_after and freeze the whole bot for about
+	20 minutes (Nov 2026 audit). `[A-Za-z]` accepts exactly the same valid
+	inputs and runs in linear time."""
 	if string == 'inf':
 		return 0
+	if len(string) > _MAX_DURATION_LEN:
+		raise ValueError()
 
 	if re.match(r"^\d+:\d\d:\d\d$", string):
 		x = sum(x * int(t) for x, t in zip([3600, 60, 1], string.split(":")))
 		return timedelta(seconds=x)
 
-	elif re.match(r"^(\d+\w ?)+$", string):
+	elif re.match(r"^(\d+[A-Za-z] ?)+$", string):
 		duration = 0
-		for part in re.findall(r"\d+\w", string):
+		for part in re.findall(r"\d+[A-Za-z]", string):
 			val = float(part[:-1])
 			if part[-1] == 's':
 				duration += val
@@ -109,9 +126,12 @@ def parse_duration(string):
 			elif part[-1] == 'M':
 				duration += val * 60 * 60 * 24 * 30
 			elif part[-1] == 'Y':
-				duration += val * 365 * 24 * 60
+				# Was `365 * 24 * 60` — missing a ×60, so "1Y" meant ~6 days.
+				duration += val * 365 * 24 * 60 * 60
 			else:
 				raise ValueError()
+		if duration > timedelta.max.total_seconds():
+			raise ValueError()  # e.g. "9999999999Y" — too large for a timedelta
 		return timedelta(seconds=int(duration))
 	else:
 		raise ValueError()
