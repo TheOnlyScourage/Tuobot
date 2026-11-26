@@ -51,9 +51,35 @@ def _calculate_mmr_changes(m: bot.Match, ratings_by_id: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 #  Table initialisation
 # ══════════════════════════════════════════════════════════════════════════════
+# Match history is permanent and every 6v6 adds 12 rows to both
+# qc_player_matches and qc_rating_history. Without these, /profile, /rank,
+# milestone checks, captain eligibility (every queue pop) and undo were all
+# full-table scans that grow forever.
+_INDEXES = (
+    ("qc_player_matches", "idx_pm_channel_user", ("channel_id", "user_id")),
+    ("qc_rating_history", "idx_rh_channel_user", ("channel_id", "user_id")),
+    ("qc_rating_history", "idx_rh_match",        ("match_id",)),
+    ("qc_matches",        "idx_m_channel_season", ("channel_id", "season")),
+)
+
+
+async def _ensure_index(table: str, name: str, columns: tuple) -> None:
+    """CREATE INDEX unless it already exists (MySQL has no IF NOT EXISTS for it)."""
+    exists = await db.fetchone(
+        "SELECT 1 AS present FROM INFORMATION_SCHEMA.STATISTICS "
+        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND INDEX_NAME = %s LIMIT 1",
+        (db.dbName, table, name)
+    )
+    if not exists:
+        cols = ", ".join(f"`{c}`" for c in columns)
+        await db.execute(f"CREATE INDEX `{name}` ON `{table}` ({cols})")
+        log.info(f"[stats] created index {name} on {table}")
+
+
 async def init_stats_tables() -> None:
     """Create the stats tables if missing: players, qc_players, rating history,
-    matches, the match-id counter, per-player match rows, and disabled guilds."""
+    matches, the match-id counter and per-player match rows, plus their
+    lookup indexes."""
     await db._ensure_table(dict(
         tname="players",
         columns=[
@@ -130,11 +156,12 @@ async def init_stats_tables() -> None:
         ],
         primary_keys=["match_id", "user_id"]
     ))
-    await db._ensure_table(dict(
-        tname="disabled_guilds",
-        columns=[dict(cname="guild_id", ctype=db.types.int)],
-        primary_keys=["guild_id"]
-    ))
+    # (The old `disabled_guilds` table was never read; it's no longer created.)
+    for table, name, columns in _INDEXES:
+        try:
+            await _ensure_index(table, name, columns)
+        except Exception as e:  # an index is an optimisation — never block the boot on it
+            log.error(f"[stats] could not create index {name} on {table}: {e}")
     await _backfill_match_seasons()
 
 
@@ -172,56 +199,82 @@ async def check_match_id_counter() -> None:
         await db.update('qc_match_id_counter', dict(next_id=next_known))
 
 
+_NEXT_MATCH_SQL = "UPDATE qc_match_id_counter SET next_id = LAST_INSERT_ID(next_id + 1)"
+
+
 async def next_match() -> int:
-    """Increment the match-id counter and return the id for the next match."""
-    counter = await db.select_one(('next_id',), 'qc_match_id_counter')
-    await db.update('qc_match_id_counter', dict(next_id=counter['next_id'] + 1))
-    log.debug(f"Current match_id is {counter['next_id']}")
-    return counter['next_id']
+    """Hand out the next match id in ONE atomic statement. It used to read the
+    counter and then write it back, so two queues popping at the same moment
+    could both get the same id (the second registration then failed). MySQL's
+    LAST_INSERT_ID(expr) idiom returns the new value with the update itself."""
+    new_next = await db.execute(_NEXT_MATCH_SQL)
+    if not new_next:  # no counter row yet (fresh database) — seed it, then retry
+        await check_match_id_counter()
+        new_next = await db.execute(_NEXT_MATCH_SQL)
+    log.debug(f"Current match_id is {new_next - 1}")
+    return new_next - 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Match registration
 # ══════════════════════════════════════════════════════════════════════════════
+async def _season_now(channel_id: int) -> int | None:
+    """The season a result belongs to: the one current when it is SAVED, since
+    that's the board it rates into. It used to come from Match.new, so manual
+    results (/match create) and matches restored after a redeploy were saved
+    with no season, and a match running across /season_end was filed under
+    the old season while rating into the new board. On a lookup failure the
+    next boot's backfill stamps it."""
+    from bot.stats.season import get_current_season_number
+    try:
+        return await get_current_season_number(channel_id)
+    except Exception as e:
+        log.error(f"[stats] season lookup failed for channel {channel_id}: {e}")
+        return None
+
+
 async def register_match_unranked(ctx: bot.Context, m: bot.Match) -> None:
     """Record an unranked match: the match row plus per-player rows, with no
-    rating changes."""
-    await db.insert('qc_matches', dict(
-        match_id=m.id, channel_id=m.qc.id,
-        queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
-        alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
-        at=int(time.time()), season=getattr(m, 'season_number', None),
-        ranked=0, winner=None
-    ))
-    await db.insert_many('qc_players', (
-        dict(channel_id=m.qc.id, user_id=p.id)
-        for p in m.players
-    ), on_dublicate="ignore")
-    for p in m.players:
-        nick = get_nick(p)
-        await db.update("qc_players", dict(nick=nick),
-                        keys=dict(channel_id=m.qc.id, user_id=p.id))
-        team = 0 if p in m.teams[0] else (1 if p in m.teams[1] else None)
-        await db.insert('qc_player_matches',
-                        dict(match_id=m.id, channel_id=m.qc.id,
-                             user_id=p.id, nick=nick, team=team))
+    rating changes. All-or-nothing (one transaction)."""
+    season = await _season_now(m.qc.id)
+    async with db.transaction() as tx:
+        await tx.insert('qc_matches', dict(
+            match_id=m.id, channel_id=m.qc.id,
+            queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
+            alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
+            at=int(time.time()), season=season,
+            ranked=0, winner=None
+        ))
+        await tx.insert_many('qc_players', (
+            dict(channel_id=m.qc.id, user_id=p.id)
+            for p in m.players
+        ), on_dublicate="ignore")
+        for p in m.players:
+            nick = get_nick(p)
+            await tx.update("qc_players", dict(nick=nick),
+                            keys=dict(channel_id=m.qc.id, user_id=p.id))
+            team = 0 if p in m.teams[0] else (1 if p in m.teams[1] else None)
+            await tx.insert('qc_player_matches',
+                            dict(match_id=m.id, channel_id=m.qc.id,
+                                 user_id=p.id, nick=nick, team=team))
 
 
 async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
     """Record a ranked match: apply MMR changes, update each player's
     rating/streak/W-L-D, and write rating history and per-player rows. A fill-in
     sub's loss penalty is redirected to the original player. Finishes by
-    refreshing rating roles and posting the results embed."""
+    refreshing rating roles and posting the results embed.
+
+    Every write happens in ONE transaction. It used to be ~38 separate
+    auto-committed statements, so a failure partway (a DB blip, a redeploy
+    closing the pool) left some players re-rated and the rest not, and the
+    failure notice then invited a re-record that applied their MMR twice."""
     now = int(time.time())
-    await db.insert('qc_matches', dict(
-        match_id=m.id, channel_id=m.qc.id,
-        queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
-        alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
-        at=now, season=getattr(m, 'season_number', None),
-        ranked=1, winner=m.winner,
-        alpha_score=m.scores[0], beta_score=m.scores[1]
-    ))
-    # Ensure all players exist in qc_players
+    season = await _season_now(m.qc.id)
+    rating_channel = m.qc.rating.channel_id
+    # Ensure all players exist in qc_players. Idempotent (INSERT IGNORE), and
+    # deliberately OUTSIDE the transaction: the rating read below goes through
+    # another connection and must see these rows.
     init_dev = getattr(m.qc.rating, 'init_deviation', 350) or 350
     for channel_id in {m.qc.id, m.qc.rating.channel_id}:
         await db.insert_many('qc_players', (
@@ -236,17 +289,24 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
     # ── Calculate custom MMR changes ──────────────────────────────────────
     changes = _calculate_mmr_changes(m, ratings_by_id)
 
-    # ── Build before / after dicts for print_rating_results ───────────────
-    before, after = {}, {}
+    # ── Fill-in subs (/match sub_player mid-match) ────────────────────────
+    # A fill-in never risks their own rating: when their team LOSES, the loss
+    # and its MMR go to the player they replaced. The engine's figure is saved
+    # BEFORE it's zeroed for the results embed — it used to be zeroed first, so
+    # the redirect applied 0 MMR (broken June–Nov 2026). An abort is a
+    # non-event for everyone, so nobody is redirected (it used to hand the
+    # original player a loss and break their streak).
     fill_subs = getattr(m, 'fill_subs', {})
-    # Zero out fill-in sub changes before building after dict so results
-    # embed shows no change for the fill-in player when their team loses.
+    redirected = {}  # sub_id -> (original_id, the MMR the sub would have lost)
     for p in m.players:
         if p.id in fill_subs:
-            _, sub_team_idx = fill_subs[p.id]
-            team_won = (m.winner is not None and m.winner == sub_team_idx)
-            if not team_won:
+            orig_id, sub_team_idx = fill_subs[p.id]
+            if m.winner is not None and m.winner != sub_team_idx:
+                redirected[p.id] = (orig_id, changes.get(p.id, 0))
                 changes[p.id] = 0
+
+    # ── Build before / after dicts for print_rating_results ───────────────
+    before, after = {}, {}
 
     for p in m.players:
         b           = ratings_by_id.get(p.id) or {}
@@ -291,80 +351,87 @@ async def register_match_ranked(ctx: bot.Context, m: bot.Match) -> None:
             'streak':    new_streak,
         }
 
-    # ── Persist ratings ───────────────────────────────────────────────────
-    for p in m.players:
-        nick     = get_nick(p)
-        team_idx = 0 if p in m.teams[0] else 1
-        a        = after[p.id]
-        b        = before[p.id]
-        change   = a['rating'] - b['rating']
-        # ── Fill-in sub: team lost → redirect penalty to original player ──
-        if p.id in fill_subs:
-            orig_id, sub_team_idx = fill_subs[p.id]
-            team_won = (m.winner is not None and m.winner == sub_team_idx)
-            if not team_won:
-                # Apply loss to original (player1), skip player2's rating update
-                p1 = await db.select_one(
-                    ('rating', 'deviation', 'wins', 'losses', 'draws', 'streak'),
+    # ── Persist: all or nothing ───────────────────────────────────────────
+    async with db.transaction() as tx:
+        await tx.insert('qc_matches', dict(
+            match_id=m.id, channel_id=m.qc.id,
+            queue_id=m.queue.cfg.p_key, queue_name=m.queue.name,
+            alpha_name=m.teams[0].name, beta_name=m.teams[1].name,
+            at=now, season=season,
+            ranked=1, winner=m.winner,
+            alpha_score=m.scores[0], beta_score=m.scores[1]
+        ))
+        for p in m.players:
+            nick     = get_nick(p)
+            team_idx = 0 if p in m.teams[0] else 1
+            a        = after[p.id]
+            b        = before[p.id]
+            change   = a['rating'] - b['rating']
+            # ── Fill-in sub whose team lost → the original takes the loss ──
+            if p.id in redirected:
+                orig_id, penalty = redirected[p.id]
+                p1 = await tx.select_one(
+                    ('rating', 'deviation', 'losses', 'streak'),
                     'qc_players',
-                    where=dict(channel_id=m.qc.rating.channel_id, user_id=orig_id)
+                    where=dict(channel_id=rating_channel, user_id=orig_id)
                 )
                 if p1 and p1.get('rating') is not None:
-                    p1_streak = p1['streak']
-                    p1_new_streak = p1_streak - 1 if p1_streak < 0 else -1
-                    await db.update('qc_players', dict(
-                        rating  = max(0, p1['rating'] + change),
+                    p1_streak = p1['streak'] or 0
+                    new_rating = max(0, p1['rating'] + penalty)
+                    await tx.update('qc_players', dict(
+                        rating  = new_rating,
                         losses  = p1['losses'] + 1,
-                        streak  = p1_new_streak,
+                        streak  = p1_streak - 1 if p1_streak < 0 else -1,
                         last_ranked_match_at=now,
-                    ), keys=dict(channel_id=m.qc.rating.channel_id, user_id=orig_id))
-                    await db.insert('qc_rating_history', dict(
-                        channel_id      = m.qc.rating.channel_id,
+                    ), keys=dict(channel_id=rating_channel, user_id=orig_id))
+                    await tx.insert('qc_rating_history', dict(
+                        channel_id      = rating_channel,
                         user_id         = orig_id,
                         at              = now,
                         rating_before   = p1['rating'],
-                        rating_change   = change,
+                        rating_change   = new_rating - p1['rating'],
                         deviation_before= p1['deviation'],
                         deviation_change= 0,
                         match_id        = m.id,
                         reason          = f"{m.queue.name} (fill-in sub penalty)"
                     ))
-                # Player2: record in match log only, no rating change
-                await db.insert('qc_player_matches', dict(
+                # The sub: match log only — their own record and rating are untouched
+                # (so they also get no rating-history row; undo relies on that).
+                await tx.insert('qc_player_matches', dict(
                     match_id=m.id, channel_id=m.qc.id,
                     user_id=p.id, nick=nick, team=team_idx
                 ))
-                continue   # skip normal update for player2
-        # ── Normal update ─────────────────────────────────────────────────
-        await db.update(
-            "qc_players",
-            dict(
-                nick      = nick,
-                rating    = a['rating'],
-                deviation = a['deviation'],
-                wins      = a['wins'],
-                losses    = a['losses'],
-                draws     = a['draws'],
-                streak    = a['streak'],
-                last_ranked_match_at=now,
-            ),
-            keys=dict(channel_id=m.qc.rating.channel_id, user_id=p.id)
-        )
-        await db.insert('qc_player_matches', dict(
-            match_id=m.id, channel_id=m.qc.id,
-            user_id=p.id, nick=nick, team=team_idx
-        ))
-        await db.insert('qc_rating_history', dict(
-            channel_id      = m.qc.rating.channel_id,
-            user_id         = p.id,
-            at              = now,
-            rating_before   = b['rating'],
-            rating_change   = change,
-            deviation_before= b['deviation'],
-            deviation_change= 0,
-            match_id        = m.id,
-            reason          = m.queue.name
-        ))
+                continue
+            # ── Normal update ─────────────────────────────────────────────
+            await tx.update(
+                "qc_players",
+                dict(
+                    nick      = nick,
+                    rating    = a['rating'],
+                    deviation = a['deviation'],
+                    wins      = a['wins'],
+                    losses    = a['losses'],
+                    draws     = a['draws'],
+                    streak    = a['streak'],
+                    last_ranked_match_at=now,
+                ),
+                keys=dict(channel_id=rating_channel, user_id=p.id)
+            )
+            await tx.insert('qc_player_matches', dict(
+                match_id=m.id, channel_id=m.qc.id,
+                user_id=p.id, nick=nick, team=team_idx
+            ))
+            await tx.insert('qc_rating_history', dict(
+                channel_id      = rating_channel,
+                user_id         = p.id,
+                at              = now,
+                rating_before   = b['rating'],
+                rating_change   = change,
+                deviation_before= b['deviation'],
+                deviation_change= 0,
+                match_id        = m.id,
+                reason          = m.queue.name
+            ))
     await m.qc.update_rating_roles(*m.players)
     await m.print_rating_results(ctx, before, after)
 
@@ -393,60 +460,126 @@ async def career_games_by_id(channel_id: int, user_ids) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 #  Admin operations
 # ══════════════════════════════════════════════════════════════════════════════
+async def _season_streaks_without(rating_channel_id: int, season: int, user_ids: list, match_id: int) -> dict:
+    """Each player's streak over the season's remaining ranked results, as if
+    `match_id` had never happened. Same walk as registration: a win extends a
+    winning streak (or starts one at +1), a loss the opposite, an abort leaves
+    it alone. Only results that actually changed the player's rating count (a
+    fill-in sub absorbed nothing; the player they replaced took the loss), so
+    this walks qc_rating_history joined to each match's outcome."""
+    if not user_ids:
+        return {}
+    ph = ", ".join(["%s"] * len(user_ids))
+    rows = await db.fetchall(
+        f"SELECT h.user_id, pm.team, m.winner "
+        f"FROM qc_rating_history h "
+        f"JOIN qc_matches m ON m.match_id = h.match_id "
+        f"LEFT JOIN qc_player_matches pm ON pm.match_id = h.match_id AND pm.user_id = h.user_id "
+        f"WHERE h.channel_id = %s AND h.user_id IN ({ph}) AND m.ranked = 1 "
+        f"AND m.season = %s AND h.match_id != %s "
+        f"ORDER BY h.user_id, h.match_id",
+        (rating_channel_id, *user_ids, season, match_id)
+    )
+    streaks = {user_id: 0 for user_id in user_ids}
+    for r in rows:
+        if r['team'] is None:          # fill-in penalty: the original player took a loss
+            won = False
+        elif r['winner'] is None:      # abort: streak preserved
+            continue
+        else:
+            won = int(r['winner']) == int(r['team'])
+        s = streaks[r['user_id']]
+        streaks[r['user_id']] = (s + 1 if s > 0 else 1) if won else (s - 1 if s < 0 else -1)
+    return streaks
+
+
 async def undo_match(ctx: bot.Context, match_id: int) -> dict | None:
-    """Reverse a match: roll each player's rating/record back using the stored
-    history, reverse any Hogwarts house points via the house_awards ledger,
-    delete the match's history and per-player rows, and refresh roles.
+    """Reverse a match: roll each affected player's rating/record/streak back,
+    reverse any Hogwarts house points via the house_awards ledger, delete the
+    match's rows, and refresh roles.
 
     Returns None if the match isn't found on the channel; otherwise the
-    {house: points_reverted} dict from the ledger (may be empty — draws,
-    unranked matches, and pre-ledger history awarded nothing to reverse)."""
+    {house: points_reverted} dict from the ledger (may be empty — aborts,
+    unranked matches, and pre-ledger history awarded nothing to reverse).
+
+    Rewritten Nov 2026. The old version looped over the match's player rows and
+    crashed (KeyError) on any force-subbed match, because the sub has no
+    rating-history row — after half the players were already rolled back, so a
+    retry rolled them back a second time. It also never restored streaks,
+    never reverted the original player's redirected loss, and would "undo" a
+    previous season's match against the current board."""
     match = await db.select_one(
-        ('ranked', 'winner'), 'qc_matches',
+        ('ranked', 'winner', 'season'), 'qc_matches',
         where=dict(match_id=match_id, channel_id=ctx.qc.id)
     )
     if not match:
         return None
-    if match['ranked']:
-        p_matches = await db.select(
-            ('user_id', 'team'), 'qc_player_matches', where=dict(match_id=match_id)
-        )
-        p_history = iter_to_dict(
-            await db.select(
-                ('user_id', 'rating_change', 'deviation_change'),
-                'qc_rating_history', where=dict(match_id=match_id)
-            ), key='user_id'
-        )
-        stats = iter_to_dict(
-            await ctx.qc.rating.get_players((p['user_id'] for p in p_matches)),
-            key='user_id'
-        )
-        for p in p_matches:
-            new     = stats[p['user_id']]
-            changes = p_history[p['user_id']]
-            if match['winner'] is None:
-                new['draws']  = max(new['draws']  - 1, 0)
-            elif match['winner'] == p['team']:
-                new['wins']   = max(new['wins']   - 1, 0)
-            else:
-                new['losses'] = max(new['losses'] - 1, 0)
-            new['rating']    = max(new['rating']    - changes['rating_change'],    0)
-            new['deviation'] = max(new['deviation'] - changes['deviation_change'], 0)
-            await db.update(
-                "qc_players", new,
-                keys=dict(channel_id=ctx.qc.rating.channel_id, user_id=p['user_id'])
-            )
-        await db.delete("qc_rating_history", where=dict(match_id=match_id))
-        members = (ctx.channel.guild.get_member(p['user_id']) for p in p_matches)
-        await ctx.qc.update_rating_roles(*(m for m in members if m is not None))
 
-    # Reverse any Hogwarts house points this match awarded. Ledger-based, so
-    # matches with no house_awards rows are a clean no-op.
     from bot.stats.house_points import revert_for_match
+
+    if not match['ranked']:
+        reverted_houses = await revert_for_match(match_id)
+        async with db.transaction() as tx:
+            await tx.delete('qc_player_matches', where=dict(match_id=match_id))
+            await tx.delete('qc_matches',        where=dict(match_id=match_id))
+        return reverted_houses
+
+    season = await _season_now(ctx.qc.id)
+    if match['season'] is not None and season is not None and match['season'] != season:
+        raise bot.Exc.ValueError(ctx.qc.gt(
+            "Match {id} is from Season {season}. Undoing it now would take its rating "
+            "changes off the current season's board, so it can't be undone."
+        ).format(id=match_id, season=match['season']))
+
+    rating_channel = ctx.qc.rating.channel_id
+    # Read everything before writing anything.
+    teams = {
+        r['user_id']: r['team'] for r in
+        await db.select(('user_id', 'team'), 'qc_player_matches', where=dict(match_id=match_id))
+    }
+    # Exactly the players whose season row this match changed have a history row
+    # for it — including the original player of a fill-in sub (not in the match
+    # rows). A fill-in who absorbed nothing has no history row: nothing to undo.
+    changed = {
+        h['user_id']: h for h in
+        await db.select(
+            ('user_id', 'rating_change', 'deviation_change'),
+            'qc_rating_history', where=dict(match_id=match_id)
+        )
+    }
+    rows = iter_to_dict(await ctx.qc.rating.get_players(list(changed)), key='user_id')
+    streaks = await _season_streaks_without(
+        rating_channel, match['season'] if match['season'] is not None else season, list(changed), match_id
+    )
+
+    # House points first: ledger-based and idempotent (the ledger rows go with
+    # it), so if anything below fails a retry still finishes the whole undo.
     reverted_houses = await revert_for_match(match_id)
 
-    await db.delete('qc_player_matches', where=dict(match_id=match_id))
-    await db.delete('qc_matches',        where=dict(match_id=match_id))
+    async with db.transaction() as tx:
+        for user_id, h in changed.items():
+            row = dict(rows[user_id])
+            team = teams.get(user_id)  # None → an original player's redirected fill-in loss
+            if team is not None and match['winner'] is None:
+                row['draws'] = max((row.get('draws') or 0) - 1, 0)
+            elif team is not None and int(match['winner']) == int(team):
+                row['wins'] = max((row.get('wins') or 0) - 1, 0)
+            else:
+                row['losses'] = max((row.get('losses') or 0) - 1, 0)
+            row['rating'] = max((row.get('rating') or 0) - (h['rating_change'] or 0), 0)
+            row['deviation'] = max((row.get('deviation') or 0) - (h['deviation_change'] or 0), 0)
+            await tx.update("qc_players", dict(
+                rating=row['rating'], deviation=row['deviation'], wins=row.get('wins') or 0,
+                losses=row.get('losses') or 0, draws=row.get('draws') or 0,
+                streak=streaks.get(user_id, 0),
+            ), keys=dict(channel_id=rating_channel, user_id=user_id))
+        await tx.delete("qc_rating_history", where=dict(match_id=match_id))
+        await tx.delete('qc_player_matches', where=dict(match_id=match_id))
+        await tx.delete('qc_matches',        where=dict(match_id=match_id))
+
+    affected = set(teams) | set(changed)
+    members = (ctx.channel.guild.get_member(user_id) for user_id in affected)
+    await ctx.qc.update_rating_roles(*(m for m in members if m is not None))
     return reverted_houses
 
 
@@ -522,20 +655,27 @@ async def user_stats(channel_id: int, user_id: int) -> dict:
 
 async def top(channel_id: int, time_gap: int | None = None) -> dict:
     """Return {total, players}: the top 10 players by matches played, optionally
-    limited to matches after the time_gap timestamp."""
+    limited to matches after the time_gap timestamp.
+
+    Built from match history alone (the nick is the player's most recent one).
+    It used to INNER JOIN the season board (qc_players) just for the nick, so
+    right after /season_end every period came back empty, and mid-season
+    anyone who hadn't played yet this season vanished from the all-time list."""
+    since = " AND m.at > %s" if time_gap else ""
+    args = (channel_id, time_gap) if time_gap else (channel_id,)
     total = await db.fetchone(
-        "SELECT COUNT(*) as count FROM `qc_matches` WHERE channel_id=%s"
-        + (f" AND at>{time_gap}" if time_gap else ""),
-        (channel_id,)
+        "SELECT COUNT(*) AS count FROM `qc_matches` AS m WHERE m.channel_id = %s" + since,
+        args
     )
     data = await db.fetchall(
-        "SELECT p.nick as nick, COUNT(*) as count FROM `qc_player_matches` AS pm "
-        "JOIN `qc_players` AS p ON pm.user_id=p.user_id AND pm.channel_id=p.channel_id "
-        "JOIN `qc_matches` AS m ON pm.match_id=m.match_id "
-        "WHERE pm.channel_id=%s "
-        + (f"AND m.at>{time_gap} " if time_gap else "")
-        + "GROUP BY p.user_id ORDER BY count DESC LIMIT 10",
-        (channel_id,)
+        "SELECT pm.user_id, "
+        "SUBSTRING_INDEX(GROUP_CONCAT(pm.nick ORDER BY pm.match_id DESC SEPARATOR '\\n'), '\\n', 1) AS nick, "
+        "COUNT(*) AS count "
+        "FROM `qc_player_matches` AS pm "
+        "JOIN `qc_matches` AS m ON pm.match_id = m.match_id "
+        "WHERE pm.channel_id = %s" + since + " "
+        "GROUP BY pm.user_id ORDER BY count DESC LIMIT 10",
+        args
     )
     return dict(total=total['count'], players=data)
 
@@ -565,6 +705,7 @@ class StatsJobs:
 
     def __init__(self):
         self.next_decay_at = int(self._next_monday().timestamp())
+        self._task = None  # keep a reference: an unreferenced task can be garbage-collected mid-run
 
     @staticmethod
     def _next_monday() -> datetime.datetime:
@@ -579,8 +720,11 @@ class StatsJobs:
     async def _apply_rating_decays() -> None:
         """Apply the weekly deviation decay across all queue channels."""
         log.info("--- Applying weekly deviation decays ---")
-        for qc in bot.queue_channels.values():
-            await qc.apply_rating_decay()
+        for qc in list(bot.queue_channels.values()):
+            try:
+                await qc.apply_rating_decay()
+            except Exception as e:  # one channel's failure must not skip the rest, or vanish
+                log.error(f"[decay] channel {qc.id} failed: {e}")
             await asyncio.sleep(1)
 
     async def think(self, frame_time: int) -> None:
@@ -588,7 +732,7 @@ class StatsJobs:
         the weekly decay."""
         if frame_time > self.next_decay_at:
             self.next_decay_at = int(self._next_monday().timestamp())
-            asyncio.create_task(self._apply_rating_decays())
+            self._task = asyncio.create_task(self._apply_rating_decays())
 
 
 jobs = StatsJobs()
