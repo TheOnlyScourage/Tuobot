@@ -20,6 +20,18 @@ LogLevelToInt = {
 	'ERRORS': 4,
 	'NOTHING': 5
 }
+# Common spellings that used to crash the boot with a KeyError
+# (LOG_LEVEL=ERROR, or anything lowercase).
+_LOG_LEVEL_ALIASES = {'ERROR': 'ERRORS', 'WARNING': 'ERRORS', 'WARN': 'ERRORS', 'COMMAND': 'COMMANDS', 'NONE': 'NOTHING', 'OFF': 'NOTHING'}
+
+
+def _log_level(name) -> int:
+	key = str(name or 'INFO').strip().upper()
+	key = _LOG_LEVEL_ALIASES.get(key, key)
+	if key not in LogLevelToInt:
+		print(f"WARNING: unknown LOG_LEVEL {name!r}; using INFO.")
+		key = 'INFO'
+	return LogLevelToInt[key]
 
 
 class Log:
@@ -30,7 +42,7 @@ class Log:
 			os.makedirs('logs')
 
 		self.file = open(datetime.datetime.now().strftime("logs/log_%Y-%m-%d-%H:%M"), 'w')  # noqa: SIM115
-		self.loglevel = LogLevelToInt[cfg.LOG_LEVEL]
+		self.loglevel = _log_level(cfg.LOG_LEVEL)
 
 	@staticmethod
 	def display(string):
