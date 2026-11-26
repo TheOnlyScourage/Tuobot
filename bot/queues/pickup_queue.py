@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 
-from core.console import log  # noqa: F401
+import traceback
+
+from core.console import log
 from core.cfg_factory import FactoryTable, CfgFactory, Variables, VariableTable
-from core.utils import get_nick, get, SafeTemplateDict
+from core.utils import get_nick, get, SafeTemplateDict, spawn
 from core.client import dc
 
-import asyncio
 import bot
 
 
@@ -419,12 +420,12 @@ class PickupQueue:
 				team_names=["Team A", "Team B"], team_emojis=None,
 			)
 			fmt = f"{team_size}v{team_size}"
-			asyncio.create_task(self.qc._dm_members(
+			spawn(self.qc._dm_members(
 				players,
 				self.qc.gt("**{queue}** casual {fmt} has started @ {channel}!").format(
 					queue=self.name, fmt=fmt, channel=ctx.channel.mention
 				)
-			))
+			), name="casual start DMs")
 			await bot.Match.new(ctx, self, players, team_size=team_size, **match_cfg)
 			return
 
@@ -484,13 +485,31 @@ class PickupQueue:
 			if not self.length and self in bot.active_queues:
 				bot.active_queues.remove(self)
 
-		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
-
-		# ── Restore states after match creation ───────────────────────────────
-		for uid in saved_offline:
-			if uid not in bot.allow_offline:
-				bot.allow_offline.append(uid)
-		bot.auto_ready.update(saved_auto_ready)
+		try:
+			await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
+		except (Exception, bot.Exc.PubobotException) as e:
+			# Everyone was already taken out of the queues above. If the match
+			# can't be created (a database blip, say) they used to vanish from the
+			# queue with no match either: put them back in this queue, unstarted.
+			for p in players:
+				if p not in self.queue:
+					self.queue.append(p)
+			if self not in bot.active_queues:
+				bot.active_queues.append(self)
+			log.error(
+				f"[start] {self.name}: the match couldn't be created; the players were put back in the queue.\n"
+				+ traceback.format_exc()
+			)
+			raise bot.Exc.PubobotException(self.qc.gt(
+				"The **{queue}** match couldn't be started, so everyone is back in the queue. "
+				"A moderator can try again with `/queue start {queue}`."
+			).format(queue=self.name)) from e
+		finally:
+			# ── Restore states after match creation (or a failed one) ──────────
+			for uid in saved_offline:
+				if uid not in bot.allow_offline:
+					bot.allow_offline.append(uid)
+			bot.auto_ready.update(saved_auto_ready)
 
 	async def fake_ranked_match(self, ctx, winners, losers, aborted=False):
 		"""Admin /match create: inject a ranked result without a live match.
