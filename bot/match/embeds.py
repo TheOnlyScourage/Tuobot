@@ -69,15 +69,6 @@ class Embeds:
 			return f'{emoji}`{get_nick(p)}`'
 		return f'`{get_nick(p)}`'
 
-	def _ranked_mention(self, p: Member) -> str:
-		"""Draft-ready player mention: a rank prefix (emoji or code) plus the
-		mention when ranked, else a plain mention."""
-		if self.m.ranked:
-			if self.m.qc.cfg.emoji_ranks:
-				return f'{self.m.rank_str(p)}{p.mention}'
-			return f'`{self.m.rank_str(p)}`{p.mention}'
-		return p.mention
-
 	def check_in(self, not_ready: list[Member]) -> Embed:
 		"""Build the check-in stage embed: the waiting-on list plus ready/abort instructions."""
 		embed = Embed(
@@ -239,7 +230,7 @@ class Embeds:
 				inline=True
 			)
 
-		# ── start_msg (set via /set_queue start_msg) ───────────────────────────
+		# ── start_msg (set via /queue set start_msg) ───────────────────────────
 		if self.m.cfg['start_msg']:
 			embed.add_field(name="—", value=self.m.cfg['start_msg'] + "\n\u200b", inline=False)
 
