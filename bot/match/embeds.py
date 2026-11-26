@@ -82,10 +82,13 @@ class Embeds:
 			value="\n".join((f" \u200b {'❌ ' if p in self.m.check_in.discarded_players else ''}<@{p.id}>" for p in not_ready)),
 			inline=False
 		)
+		if self.m.check_in.allow_discard:
+			how = self.m.gt("Press **Ready** (or react {ready_emoji}) to **check in**, or **Not ready** ({not_ready_emoji}) to **abort**!")
+		else:
+			how = self.m.gt("Press **Ready** (or react {ready_emoji}) to **check in**!")
 		embed.add_field(
 			name="\u2014",
-			value=self.m.gt(
-				"Please react with {ready_emoji} to **check-in** or {not_ready_emoji} to **abort**!").format(
+			value=how.format(
 				ready_emoji=self.m.check_in.READY_EMOJI, not_ready_emoji=self.m.check_in.NOT_READY_EMOJI
 			) + "\n\u200b",
 			inline=False
@@ -146,7 +149,7 @@ class Embeds:
 			)
 
 			if len(self.m.teams[0]) and len(self.m.teams[1]):
-				msg = self.m.gt("Pick players with `/pick @player` command.")
+				msg = self.m.gt("Captains pick from the menu below the board (or with `/pick`).")
 				pick_step = len(self.m.teams[0]) + len(self.m.teams[1]) - 2
 				picker_team = self.m.teams[self.m.draft.pick_order[pick_step]] if pick_step < len(self.m.draft.pick_order)-1 else None
 				if picker_team:
