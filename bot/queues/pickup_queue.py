@@ -504,6 +504,15 @@ class PickupQueue:
 			)),
 			exclude=protected_ids
 		)
+		# `exclude` keeps protected players queued EVERYWHERE — including this
+		# queue, which just popped. Take them out of this one only (they're in
+		# the match now); the higher-priority queue keeps them. Without this
+		# they stayed listed here and the next pop put them in a second match
+		# at the same time (Nov 2026 audit).
+		if protected_ids:
+			self.pop_members(*[p for p in players if p.id in protected_ids])
+			if not self.length and self in bot.active_queues:
+				bot.active_queues.remove(self)
 
 		await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
 
