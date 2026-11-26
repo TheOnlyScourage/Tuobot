@@ -124,8 +124,6 @@ async def on_think(frame_time):
 	await bot.stats.jobs.think(frame_time)
 	await bot.expire_auto_ready(frame_time)
 
-	bot.waiting_reactions.sweep_expired(frame_time)
-
 	if frame_time - _last_state_save >= _STATE_SAVE_INTERVAL:
 		try:
 			bot.save_state()
@@ -165,28 +163,12 @@ async def on_message(message):
 		await bot.disable_channel(message)
 
 
+# Only the party-up ✅ uses reactions now (check-in is buttons only since
+# Nov 26), and it ignores un-reacts, so there is no reaction-remove handler.
 @dc.event
 async def on_reaction_add(reaction, user):
 	if user.id != dc.user.id and reaction.message.id in bot.waiting_reactions:
 		await bot.waiting_reactions[reaction.message.id](reaction, user)
-
-
-@dc.event
-async def on_raw_reaction_remove(payload):
-	if payload.user_id == dc.user.id:
-		return
-	if payload.message_id not in bot.waiting_reactions:
-		return
-	guild = dc.get_guild(payload.guild_id) if payload.guild_id else None
-	if guild is None:
-		return
-	member = guild.get_member(payload.user_id)
-	if member is None:
-		return
-	try:
-		await bot.waiting_reactions[payload.message_id](payload.emoji, member, remove=True)
-	except Exception as e:
-		log.error(f"on_raw_reaction_remove callback error: {e}\n{traceback.format_exc()}")
 
 
 @dc.event
