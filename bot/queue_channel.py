@@ -2,11 +2,11 @@
 from time import time
 import re
 import asyncio
-from nextcord import Forbidden
+from nextcord import DiscordException
 
 from core.cfg_factory import FactoryTable, CfgFactory, Variables, VariableTable
 from core.locales import locales
-from core.utils import join_and, seconds_to_str, get_nick
+from core.utils import join_and, seconds_to_str, get_nick, spawn, send_dm
 from core.database import db
 
 import bot
@@ -363,7 +363,7 @@ class QueueChannel:
 		]
 
 	async def update_rating_roles(self, *members):
-		asyncio.create_task(self._update_rating_roles(*members))
+		spawn(self._update_rating_roles(*members), name="rank roles")
 
 	async def update_expire(self, member):
 		""" update expire timer on !add command """
@@ -397,7 +397,10 @@ class QueueChannel:
 						base = member.nick or member.name
 					new_nick = _build_rated_nick(ratings[member.id], base)
 					await member.edit(nick=new_nick)
-			except Forbidden:
+			except DiscordException:
+				# Was `except Forbidden` only: any other refusal (e.g. NotFound for
+				# someone who just left the server) ended the loop, and everyone
+				# after them kept their old rank role and nick.
 				pass
 
 			await asyncio.sleep(1)
@@ -411,17 +414,14 @@ class QueueChannel:
 		for m in filter(lambda m: m.id in bot.allow_offline and m.id not in exclude, members):
 			bot.allow_offline.remove(m.id)
 		if message:
-			asyncio.create_task(self._dm_members(members, message))
+			spawn(self._dm_members(members, message), name="queue start DMs")
 
 		await bot.remove_players(*members, reason="pickup started", exclude=exclude)
 
 	async def _dm_members(self, members, *args, **kwargs):
 		for m in members:
 			if not m.bot and not await db.select_one(("user_id", ), "players", where={'user_id': m.id, 'allow_dm': 0}):
-				try:
-					await m.send(*args, **kwargs)
-				except Forbidden:
-					pass
+				await send_dm(m, *args, **kwargs)
 				await asyncio.sleep(1)
 
 	async def check_allowed_to_add(self, ctx, member, queue=None):
