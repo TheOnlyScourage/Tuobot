@@ -97,7 +97,7 @@ async def pull_standby_into_match(ci: CheckIn, ctx: bot.Context) -> None:
 		"\U0001f6a8 **STANDBY PULLED IN!** \U0001f6a8",
 		f"{added_mentions} \u2014 you have a chance to claim a spot!",
 		f"You\u2019re now competing with {not_ready_mentions} for the remaining slots.",
-		f"**First to press Ready (or react {ci.READY_EMOJI}) on the check-in message wins their spot.**",
+		"**First to press Ready on the check-in message wins their spot.**",
 	]
 	if jump:
 		lines.append(f"\U0001f449 Jump to check-in: {jump}")
@@ -106,12 +106,11 @@ async def pull_standby_into_match(ci: CheckIn, ctx: bot.Context) -> None:
 	# DM each pulled-in player so they're notified even if tabbed away.
 	dm_text = match.gt(
 		"\U0001f6a8 You\u2019ve been pulled in from standby for **{queue}** @ {channel}!\n"
-		"Hurry \u2014 press Ready (or react {ready}) on the check-in message to claim a spot "
+		"Hurry \u2014 press Ready on the check-in message to claim a spot "
 		"before time runs out."
 	).format(
 		queue=match.queue.name,
 		channel=ctx.channel.mention,
-		ready=ci.READY_EMOJI,
 	)
 	for m in added:
 		spawn(send_dm(m, dm_text), name="standby pull-in DM")
