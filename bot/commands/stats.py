@@ -4,17 +4,19 @@ __all__ = ['last_game', 'stats', 'top', 'rank', 'profile', 'leaderboard', 'activ
 
 import io
 import asyncio
+from datetime import datetime
 from time import time
+from zoneinfo import ZoneInfo
 import re
 from nextcord import Member, Embed, Colour, File
 
-from core.utils import get, find, seconds_to_str, get_nick, discord_table  # noqa: F401
+from core.utils import get, find, seconds_to_str, get_nick  # noqa: F401
 from core.database import db
 from core.console import log
 
 import bot
 from bot.commands.views import LeaderboardView
-from bot.constants import HOUSE_ROLES, HOUSE_EMOJIS, get_rank_emoji
+from bot.constants import HOUSE_ROLES, HOUSE_EMOJIS, get_rank_emoji, QUEUE_CLEAR_TIMEZONE
 
 # The rank ladder lives ONLY in bot/constants.py (it used to be duplicated here
 # and silently drifted from the real one).
@@ -196,7 +198,9 @@ async def rank(ctx: bot.Context, player: Member | None = None) -> None:
 
 	rank_emoji  = get_rank_emoji(p['rating']) if p['rating'] else "❓"
 	total_games = p['wins'] + p['losses'] + p['draws']
-	wr          = int(p['wins'] * 100 / (total_games or 1))
+	# Aborts aren't games anyone won or lost — /leaderboard and /profile use
+	# W/(W+L) too; counting aborts here made /rank disagree with both.
+	wr          = int(p['wins'] * 100 / ((p['wins'] + p['losses']) or 1))
 
 	embed = Embed(title=f"__{get_nick(target)}__", colour=Colour(0x7289DA))
 
@@ -376,11 +380,10 @@ async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 
 	emblem_bytes = await _get_house_emblem(ctx, house) if house else None
 
+	ranked_total = career['wins'] + career['losses'] + career['draws']
 	footnote = None
 	if career['first_at']:
-		from datetime import datetime
 		since = datetime.fromtimestamp(career['first_at']).strftime('%b %Y')
-		ranked_total = career['wins'] + career['losses'] + career['draws']
 		footnote = f"Since {since} • {ranked_total} ranked matches"
 
 	png = render_profile_card(
@@ -391,6 +394,9 @@ async def profile(ctx: bot.Context, player: Member | None = None) -> None:
 		best_streak=career['best_streak'], history=history,
 		teammate=teammate, nemesis=nemesis,
 		avatar_bytes=avatar_bytes, emblem_bytes=emblem_bytes, footnote=footnote,
+		# Drives the milestone regalia (ring + badge). Never passed before, so
+		# the card always saw 0 matches and the art has never shown.
+		career_matches=ranked_total,
 	)
 	await ctx.reply(file=File(io.BytesIO(png), filename=f"profile_{target.id}.png"))
 
@@ -435,8 +441,74 @@ async def leaderboard(ctx: bot.Context, page: int = 1) -> None:
 	await ctx.reply(embed=view.render(), view=view)
 	await view.bind(ctx)
 
+# Heatmap colours, dark → purple → coral → pale gold (the old matplotlib
+# "magma" look). Empty hours get their own muted tile.
+_HEAT_STOPS = (
+	(0.00, (40, 22, 88)), (0.35, (113, 31, 129)), (0.65, (222, 73, 104)),
+	(0.85, (254, 159, 109)), (1.00, (252, 253, 191)),
+)
+_HEAT_EMPTY = (40, 42, 54)
+_WEEKDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+
+
+def _heat_colour(t: float) -> tuple:
+	for (t0, c0), (t1, c1) in zip(_HEAT_STOPS, _HEAT_STOPS[1:]):
+		if t <= t1:
+			f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+			return tuple(round(a + (b - a) * f) for a, b in zip(c0, c1))
+	return _HEAT_STOPS[-1][1]
+
+
+def _render_activity_heatmap(grid: list, title: str) -> bytes:
+	"""7 weekdays × 24 hours heatmap → PNG bytes, drawn with Pillow (already
+	used for /profile). It used to be matplotlib, and matplotlib + numpy were
+	~96 MB of the bot's installed packages for this one chart."""
+	from PIL import Image, ImageDraw
+	from bot.stats.profile_card import _FONT_DIR, _fonts
+
+	regular, bold = _fonts(_FONT_DIR)
+	f_title, f_label, f_cell = bold(22), regular(15), bold(13)
+	cell_w, cell_h, gap = 46, 40, 3
+	left, top, right, bottom = 64, 64, 24, 64
+	width, height = left + 24 * cell_w + right, top + 7 * cell_h + bottom
+
+	img = Image.new("RGB", (width, height), (24, 25, 28))
+	draw = ImageDraw.Draw(img)
+	draw.text((left, 22), title, font=f_title, fill=(235, 235, 240))
+
+	peak = max((max(row) for row in grid), default=0) or 1
+	for d, row in enumerate(grid):
+		y = top + d * cell_h
+		draw.text((left - 12, y + (cell_h - gap) / 2), _WEEKDAYS[d], font=f_label, fill=(200, 200, 210), anchor="rm")
+		for h, v in enumerate(row):
+			x = left + h * cell_w
+			colour = _heat_colour(v / peak) if v else _HEAT_EMPTY
+			draw.rounded_rectangle((x, y, x + cell_w - gap, y + cell_h - gap), radius=5, fill=colour)
+			if v:
+				luminance = 0.299 * colour[0] + 0.587 * colour[1] + 0.114 * colour[2]
+				draw.text(
+					(x + (cell_w - gap) / 2, y + (cell_h - gap) / 2), str(v), font=f_cell,
+					fill=(20, 20, 24) if luminance > 140 else (245, 245, 250), anchor="mm",
+				)
+	for h in range(24):
+		draw.text(
+			(left + h * cell_w + (cell_w - gap) / 2, top + 7 * cell_h + 8), f"{h:02d}",
+			font=f_label, fill=(170, 170, 180), anchor="mt",
+		)
+	draw.text(
+		(width - right, height - 12), f"brighter = more matches  ·  busiest hour: {peak}",
+		font=f_label, fill=(150, 150, 160), anchor="rs",
+	)
+	out = io.BytesIO()
+	img.save(out, format="PNG", optimize=True)
+	return out.getvalue()
+
+
 async def activity(ctx: bot.Context, player: Member | None = None) -> None:
-	"""Render an activity heatmap (weekday x hour, last 28 days) for a player or the channel."""
+	"""Render an activity heatmap (weekday × hour, last 28 days) for a player
+	or the channel, on the community's clock — Central time, the same zone as
+	the daily 4 AM clear. (It used to be India time, +05:30: a leftover from
+	the original Indian bot.)"""
 	interaction = getattr(ctx, 'interaction', None)
 	if interaction is not None and not interaction.response.is_done():
 		await interaction.response.defer()
@@ -446,81 +518,34 @@ async def activity(ctx: bot.Context, player: Member | None = None) -> None:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Specified user not found."))
 
 	ts_from = int(time()) - 28 * 86400
-
+	# Raw timestamps, bucketed with zoneinfo below: MySQL's named-zone
+	# CONVERT_TZ needs time-zone tables the server may not have, and a fixed
+	# offset would be an hour off for half the year.
 	if target:
 		rows = await db.fetchall(
-			"""
-			SELECT
-				DAYOFWEEK(CONVERT_TZ(FROM_UNIXTIME(m.at), '+00:00', '+05:30')) AS dow,
-				HOUR(CONVERT_TZ(FROM_UNIXTIME(m.at), '+00:00', '+05:30')) AS hr,
-				COUNT(DISTINCT m.match_id) AS count
-			FROM qc_matches m
-			JOIN qc_player_matches pm ON pm.match_id = m.match_id AND pm.channel_id = m.channel_id
-			WHERE m.channel_id = %s AND m.at >= %s AND pm.user_id = %s
-			GROUP BY dow, hr
-			""",
+			"SELECT DISTINCT m.match_id, m.at FROM qc_matches m "
+			"JOIN qc_player_matches pm ON pm.match_id = m.match_id AND pm.channel_id = m.channel_id "
+			"WHERE m.channel_id = %s AND m.at >= %s AND pm.user_id = %s",
 			[ctx.qc.id, ts_from, target.id]
 		)
 	else:
 		rows = await db.fetchall(
-			"""
-			SELECT
-				DAYOFWEEK(CONVERT_TZ(FROM_UNIXTIME(at), '+00:00', '+05:30')) AS dow,
-				HOUR(CONVERT_TZ(FROM_UNIXTIME(at), '+00:00', '+05:30')) AS hr,
-				COUNT(*) AS count
-			FROM qc_matches
-			WHERE channel_id = %s AND at >= %s
-			GROUP BY dow, hr
-			""",
+			"SELECT at FROM qc_matches WHERE channel_id = %s AND at >= %s",
 			[ctx.qc.id, ts_from]
 		)
-
 	if not rows:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("No activity data yet."))
 
-	def _to_idx(dow):
-		return (int(dow) + 5) % 7
-
-	grid = [[0] * 24 for _ in range(7)]
+	tz = ZoneInfo(QUEUE_CLEAR_TIMEZONE)
+	grid = [[0] * 24 for _ in range(7)]  # [Mon..Sun][hour]
 	for r in rows:
-		grid[_to_idx(r['dow'])][int(r['hr'])] += int(r['count'])
+		local = datetime.fromtimestamp(int(r['at']), tz)
+		grid[local.weekday()][local.hour] += 1
 
-	day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-	def _render():
-		from matplotlib.figure import Figure
-		from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-		fig = Figure(figsize=(12, 4), dpi=120)
-		FigureCanvasAgg(fig)
-		ax = fig.add_subplot(111)
-		im = ax.imshow(grid, aspect='auto', cmap='magma', origin='upper')
-		ax.set_xticks(range(24))
-		ax.set_xticklabels([f"{h:02d}" for h in range(24)], fontsize=8)
-		ax.set_yticks(range(7))
-		ax.set_yticklabels(day_labels)
-		ax.set_xlabel('Hour of day (IST)')
-		ax.set_ylabel('Day of week')
-		scope = f" — {get_nick(target)}" if target else ""
-		ax.set_title(f"Activity heatmap by weekday × hour (IST, last 28 days){scope}")
-		max_v = max((max(row) for row in grid), default=0)
-		threshold = max_v * 0.6
-		for d in range(7):
-			for h in range(24):
-				v = grid[d][h]
-				if v:
-					ax.text(h, d, str(v), ha='center', va='center',
-					        color='black' if v >= threshold else 'white', fontsize=6)
-		fig.colorbar(im, ax=ax, label='Matches')
-		fig.tight_layout()
-
-		out = io.BytesIO()
-		fig.savefig(out, format='png')
-		out.seek(0)
-		return out
-
-	buf = await asyncio.to_thread(_render)
-	await ctx.reply(file=File(fp=buf, filename='activity.png'))
+	scope = f" — {_table_nick(get_nick(target), 24)}" if target else ""
+	title = f"Activity by weekday × hour (Central time, last 28 days){scope}"
+	png = await asyncio.to_thread(_render_activity_heatmap, grid, title)
+	await ctx.reply(file=File(fp=io.BytesIO(png), filename='activity.png'))
 
 
 async def season_leaderboard(ctx: bot.Context, page: int = 1, min_matches: int = 15) -> None:
@@ -550,24 +575,38 @@ async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 	from bot.stats.season import get_current_season_number, record_season_end
 	season_num = await get_current_season_number(ctx.qc.id)
 
-	# Collect standings before reset
-	all_data = await ctx.qc.get_lb()
+	# Ranked queues that will be turned off. None left means this season has
+	# already been ended: a second run used to post an empty "Season N+1"
+	# summary and record N+1 as over, so the next /season_start announced N+2.
+	ranked_queues = [q for q in ctx.qc.queues if q.cfg.ranked]
+	if not ranked_queues:
+		raise bot.Exc.MatchStateError(ctx.qc.gt(
+			"No queue here is ranked, so this season has already ended. "
+			"Use `/stats season_start` to begin the next one."
+		))
+
+	# Standings straight from the season board. They used to come from the
+	# leaderboard (get_lb), which also hides anyone inactive for 30 days and
+	# anyone under the leaderboard's own minimum (40 by default) — so
+	# qualified players were missing from the final standings.
+	board = await db.select(
+		['user_id', 'nick', 'rating', 'wins', 'losses', 'draws', 'is_hidden'],
+		'qc_players', where={'channel_id': ctx.qc.rating.channel_id}, order_by='rating'
+	)
+	board = [r for r in board if r['rating'] is not None and not r['is_hidden']]
 	qualified = [
-		r for r in all_data
+		r for r in board
 		if (r['wins'] + r['losses'] + r['draws']) >= min_matches
 	]
 
 	# Total stats — filtered to THIS season: match history is permanent now,
 	# so an unfiltered count would be all-time, not the season's.
-	total_rated = len([r for r in all_data if r.get('rating') is not None])
+	total_rated = len(board)
 	total_row = await db.fetchone(
 		"SELECT COUNT(*) as cnt FROM qc_matches WHERE channel_id=%s AND season=%s",
 		[ctx.qc.id, season_num]
 	)
 	total_matches = total_row['cnt'] if total_row else 0
-
-	# Ranked queues that will be turned off
-	ranked_queues = [q for q in ctx.qc.queues if q.cfg.ranked]
 
 	# Build embed description
 	lines = [
@@ -581,7 +620,7 @@ async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 			pos = SEASON_MEDALS[i] if i < 3 else f"{i + 1}."
 			emoji = get_rank_emoji(row['rating'])
 			w, losses = row['wins'], row['losses']
-			lines.append(f"{pos} **{row['nick'].strip()}** — {emoji} {row['rating']} ({w}-{losses})")
+			lines.append(f"{pos} **{(row['nick'] or '?').strip()}** — {emoji} {row['rating']} ({w}-{losses})")
 	else:
 		lines.append(f"*No players with {min_matches}+ matches this season.*")
 
@@ -592,18 +631,25 @@ async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 
 	lines.append(
 		"\nRatings and stats have been reset. "
-		"MMR is now off until `/season_start` is used here."
+		"MMR is now off until `/stats season_start` is used here."
 	)
 
 	embed = Embed(colour=Colour(0x7289DA), description="\n".join(lines))
 	await ctx.reply(embed=embed)
 
-	# Turn off ranked on all previously ranked queues
+	# Turn off ranked on all previously ranked queues — loudly if one fails,
+	# or a queue would quietly stay ranked into the off-season.
+	failed = []
 	for q in ranked_queues:
 		try:
 			await q.cfg.update({'ranked': '0'})
-		except Exception:
-			pass
+		except Exception as e:
+			log.error(f"[season_end] could not turn off ranked on {q.name}: {e}")
+			failed.append(q.name)
+	if failed:
+		await ctx.channel.send(ctx.qc.gt("⚠️ Couldn't turn ranked off on: {queues}. Check with `/queue show`.").format(
+			queues=", ".join(failed)
+		))
 
 	# Build & post the highlights embed BEFORE the reset wipes the data
 	try:
@@ -626,7 +672,6 @@ async def season_end(ctx: bot.Context, min_matches: int = 15) -> None:
 		log.error(f"[house_cup] failed to build/post embed: {e}")
 
 	# Reset all ratings and match stats for this channel
-	import bot
 	await bot.stats.reset_channel(ctx.qc.id)
 
 	# Reset house points for the new season (mirrors the MMR reset above)
@@ -649,20 +694,23 @@ async def season_start(ctx: bot.Context) -> None:
 	season_num = await get_current_season_number(ctx.qc.id)
 
 	# Turn ranked on for all queues in this channel
-	enabled = []
+	enabled, failed = [], []
 	for q in ctx.qc.queues:
 		if not q.cfg.ranked:
 			try:
 				await q.cfg.update({'ranked': '1'})
 				enabled.append(q.name)
-			except Exception:
-				pass
+			except Exception as e:
+				log.error(f"[season_start] could not turn on ranked for {q.name}: {e}")
+				failed.append(q.name)
 
 	lines = [f"🏆 **Season {season_num} has started!**\n"]
 	if enabled:
 		lines.append("**Ranked Turned On**")
 		for name in enabled:
 			lines.append(f"• {name}")
+	if failed:
+		lines.append("\n⚠️ **Couldn't turn ranked on:** " + ", ".join(failed))
 	lines.append("\nGood luck to all players! MMR is now active.")
 
 	embed = Embed(colour=Colour(0x27b75e), description="\n".join(lines))
