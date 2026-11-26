@@ -13,6 +13,7 @@ run against small fakes, so the suite needs nothing but pytest."""
 import __future__
 import ast
 import asyncio
+import importlib.util
 import sys
 import traceback
 import types
@@ -22,6 +23,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = sorted(p for d in ("bot", "core") for p in (ROOT / d).rglob("*.py"))
+_spec = importlib.util.spec_from_file_location("roster_rules", ROOT / "bot" / "queues" / "roster_rules.py")
+roster_rules = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(roster_rules)
 
 
 def _tree(rel):
@@ -201,7 +205,8 @@ def test_a_failed_match_start_puts_everyone_back_in_the_queue(monkeypatch):
 	)
 	ns = _extract(
 		"bot/queues/pickup_queue.py", {"start"}, cls="PickupQueue",
-		ns={"bot": fake_bot, "log": _FakeLog(), "traceback": traceback, "SafeTemplateDict": dict},
+		ns={"bot": fake_bot, "log": _FakeLog(), "traceback": traceback, "SafeTemplateDict": dict,
+			"distinct": roster_rules.distinct},
 	)
 	players = [types.SimpleNamespace(id=i) for i in range(1, 13)]
 
