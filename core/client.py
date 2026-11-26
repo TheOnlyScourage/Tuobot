@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import nextcord
 from asyncio import iscoroutinefunction
-from core.console import log
 
 
 class FakeMember:
@@ -41,7 +40,6 @@ class DiscordClient(nextcord.Client):
 		super().__init__(*args, **kwargs)
 
 		self.events = dict(on_init=[], on_think=[], on_exit=[])
-		self.commands = dict()
 
 	def event(self, coro):
 		"""This function replaces original decorator (that registers an event to listen to)
@@ -62,21 +60,6 @@ class DiscordClient(nextcord.Client):
 
 		else:
 			self.events[coro.__name__].append(coro)
-
-	def command(self, *aliases):
-
-		def wrapper(coro):
-			if not iscoroutinefunction(coro):
-				raise TypeError('command registered must be a coroutine function')
-
-			for alias in aliases:
-				if alias in self.commands.keys():
-					raise KeyError('a command with this alias already exists')
-
-				self.commands[alias] = coro
-				log.debug('{} command alias registered from {}.'.format(alias, coro.__module__))
-
-		return wrapper
 
 
 intents = nextcord.Intents.default()
