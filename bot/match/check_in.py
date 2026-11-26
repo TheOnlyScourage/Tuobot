@@ -42,6 +42,13 @@ class CheckIn:
 		self.standby_pulled = False  # True once standby fill has fired
 		self._check_in_started_at = None  # frame_time when check-in actually started ticking
 		self.original_player_ids = set()  # populated in start(); only these get violations
+		# Set by whichever exit path runs first (all ready, race finish, abort,
+		# timeout, everyone discarded). Every exit awaits Discord before the
+		# state changes, and the 1-second tick used to run a SECOND exit in that
+		# gap: a ready-up landing on the deadline gave all 12 players a missed
+		# check-in strike, reverted the queue, then still started a draft for
+		# the dead match (Nov 2026 audit). Once set, nothing else may act.
+		self._closing = False
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			self.ready_players.add(p)
@@ -49,9 +56,39 @@ class CheckIn:
 		if self.timeout:
 			self.m.states.append(self.m.CHECK_IN)
 
+	def _begin_close(self) -> bool:
+		"""Claim the right to end check-in. True for the first caller only."""
+		if self._closing:
+			return False
+		self._closing = True
+		return True
+
+	def _ping_line(self, not_ready: list) -> str | None:
+		"""Mentions only notify from message CONTENT, never from inside an
+		embed. The board used to be posted as "!spawn message N" and then
+		edited into an embed, so nobody in the channel was pinged and players
+		with DMs off missed check-ins and collected strikes. (Edits never
+		re-ping, so refreshing this line later is silent.)"""
+		if not not_ready:
+			return None
+		return self.m.gt("{players} — check in for **{queue}**!").format(
+			players=join_and([p.mention for p in not_ready]), queue=self.m.queue.name
+		)
+
+	async def _safe_notice(self, ctx: bot.Context, text: str) -> None:
+		"""Announce an exit without letting a Discord error skip what follows
+		(the queue revert): a failed notice used to leave every player in
+		neither the match nor the queue."""
+		try:
+			await ctx.notice(text)
+		except DiscordException as e:
+			log.error(f"[check_in] match {self.m.id}: notice failed: {e}")
+
 	async def think(self, frame_time: float) -> None:
 		"""Per-frame tick driven by the match loop: fires standby fill at 2/3 of
 		the timeout, then aborts (or finishes) once the full timeout elapses."""
+		if self._closing:
+			return
 		# ── Standby fill at 2/3 of the way through check-in ──────────────────
 		# Use the check-in's own clock so the trigger is independent of
 		# self.m.start_time (set at match creation, before INIT \u2192 CHECK_IN).
@@ -83,10 +120,13 @@ class CheckIn:
 	async def start(self, ctx: bot.Context) -> None:
 		"""Post the check-in message, add the ready/abort reactions, register the
 		reaction handler, and render the board."""
+		self._closing = False
 		# Snapshot originals so standby joiners aren't penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
-		text = f"!spawn message {self.m.id}"
-		self.message = await ctx.channel.send(text)
+		not_ready = [p for p in self.m.players if p not in self.ready_players]
+		self.message = await ctx.channel.send(
+			content=self._ping_line(not_ready), embed=self.m.embeds.check_in(not_ready)
+		)
 
 		emojis = [self.READY_EMOJI, '🔸', self.NOT_READY_EMOJI] if self.allow_discard else [self.READY_EMOJI]
 		try:
@@ -102,9 +142,13 @@ class CheckIn:
 		every not-ready player has been discarded, finish early once enough
 		players have readied (race-to-ready), otherwise update the message or
 		finish when everyone is ready."""
+		if self._closing:
+			return
 		not_ready = list(filter(lambda m: m not in self.ready_players, self.m.players))
 
 		if len(self.discarded_players) and len(self.discarded_players) == len(not_ready):
+			if not self._begin_close():
+				return
 			if self.message:
 				bot.waiting_reactions.pop(self.message.id, None)
 				try:
@@ -121,7 +165,7 @@ class CheckIn:
 					except Exception as e:
 						log.error(f"checkin_tracker error (refresh/abort): {e}")
 
-			await ctx.notice('\n'.join((
+			await self._safe_notice(ctx, '\n'.join((
 				self.m.gt("{member} has aborted the check-in.").format(
 					member=', '.join([m.mention for m in self.discarded_players])
 				),
@@ -146,24 +190,38 @@ class CheckIn:
 
 		if len(not_ready):
 			try:
-				await self.message.edit(content=None, embed=self.m.embeds.check_in(not_ready))
+				await self.message.edit(content=self._ping_line(not_ready), embed=self.m.embeds.check_in(not_ready))
 			except DiscordException:
 				pass
 		else:
 			await self.finish(ctx)
 
 	async def finish_race(self, ctx: bot.Context) -> None:
-		"""Delegate to bot.match.standby.finalize_race_results."""
+		"""Delegate to bot.match.standby.finalize_race_results (which ends with
+		_finish(), the unguarded half of finish())."""
+		if not self._begin_close():
+			return
 		from bot.match.standby import finalize_race_results
 		await finalize_race_results(self, ctx)
 
 	async def finish(self, ctx: bot.Context) -> None:
 		"""Finalize check-in: clear ready state, clean up auto-ready, and advance
 		state."""
-		bot.waiting_reactions.pop(self.message.id)
+		if not self._begin_close():
+			return
+		await self._finish(ctx)
+
+	async def _finish(self, ctx: bot.Context) -> None:
+		"""finish() after the close has been claimed (also the end of the race path)."""
+		if self.message:
+			bot.waiting_reactions.pop(self.message.id, None)
 		self.ready_players = set()
 		self.ready_order = []
-		await self.message.delete()
+		if self.message:
+			try:
+				await self.message.delete()
+			except DiscordException:
+				pass
 
 		for p in (p for p in self.m.players if p.id in bot.auto_ready.keys()):
 			bot.auto_ready.pop(p.id)
@@ -174,7 +232,7 @@ class CheckIn:
 		"""Handle a ready or abort reaction (add or remove). The ready reaction
 		readies; the abort reaction discards or immediately aborts. Ignored
 		unless in CHECK_IN and the user is a player."""
-		if self.m.state != self.m.CHECK_IN or user not in self.m.players:
+		if self._closing or self.m.state != self.m.CHECK_IN or user not in self.m.players:
 			return
 
 		if str(reaction) == self.READY_EMOJI:
@@ -197,6 +255,8 @@ class CheckIn:
 		discard / immediately abort them."""
 		if self.m.state != self.m.CHECK_IN:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the check-in stage."))
+		if self._closing:
+			raise bot.Exc.MatchStateError(self.m.gt("Check-in is already finishing."))
 		if ready:
 			self.ready_players.add(member)
 			if member not in self.ready_order:
@@ -221,8 +281,14 @@ class CheckIn:
 	async def abort_member(self, ctx: bot.Context, member: Member) -> None:
 		"""Abort the check-in for one member: delete the message, record a
 		violation (ranked only), and revert the queue to gathering."""
-		bot.waiting_reactions.pop(self.message.id)
-		await self.message.delete()
+		if not self._begin_close():
+			return
+		if self.message:
+			bot.waiting_reactions.pop(self.message.id, None)
+			try:
+				await self.message.delete()
+			except DiscordException:
+				pass
 
 		# Record violation before reverting — ranked queues only.
 		if self.m.ranked:
@@ -231,7 +297,7 @@ class CheckIn:
 			except Exception as e:
 				log.error(f"checkin_tracker error (abort_member): {e}")
 
-		await ctx.notice("\n".join((
+		await self._safe_notice(ctx, "\n".join((
 			self.m.gt("{member} has aborted the check-in.").format(member=f"<@{member.id}>"),
 			self.m.gt("Reverting {queue} to the gathering stage...").format(queue=f"**{self.m.queue.name}**")
 		)))
@@ -250,6 +316,8 @@ class CheckIn:
 		"""Handle check-in timeout: record 'missed' violations for original
 		ranked players, revert the queue, and return any over-cap ready players
 		to standby."""
+		if not self._begin_close():
+			return
 		not_ready = [m for m in self.m.players if m not in self.ready_players]
 		if self.message:
 			bot.waiting_reactions.pop(self.message.id, None)
@@ -280,7 +348,7 @@ class CheckIn:
 
 		bot.active_matches.remove(self.m)
 
-		await ctx.notice("\n".join((
+		await self._safe_notice(ctx, "\n".join((
 			self.m.gt("{members} was not ready in time.").format(members=join_and([m.mention for m in not_ready])),
 			self.m.gt("Reverting {queue} to the gathering stage...").format(queue=f"**{self.m.queue.name}**")
 		)))
