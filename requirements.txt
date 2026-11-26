@@ -1,18 +1,16 @@
-# Pinned deliberately — bump on purpose, not by accident: unpinned deps are
-# how "worked fine yesterday" becomes "broken at 3am". Indirect deps are left
-# unpinned so pip can pull compatible transitives.
-#
-# Nov 2026: nextcord 2.6 → 3.2 (needs Python 3.12+; the Dockerfile ships 3.13,
-# and nextcord pulls in audioop-lts there by itself). Dropped emoji,
-# prettytable and matplotlib: nothing imports them any more (/activity draws
-# its heatmap with Pillow).
-nextcord==3.2.0
+# Pinned 2026-04-11 from the versions the Railway builder installed in
+# commit 288edfd. Bump deliberately, not accidentally — unpinned deps are
+# how "worked fine yesterday" becomes "broken at 3am". Indirect deps are
+# left unpinned so pip can pull compatible transitives.
+nextcord==2.6.0
 aiomysql==0.3.2
-# /profile cards (bot/stats/profile_card.py) and the /activity heatmap.
+emoji==2.15.0
+prettytable==3.17.0
+matplotlib==3.9.2
+# Pillow was already pulled in transitively by matplotlib; /profile's card
+# renderer (bot/stats/profile_card.py) now imports it directly, so pin it.
 pillow==12.1.1
 aiohttp==3.13.5
-# Not imported directly: PyMySQL (under aiomysql) needs it to log in to MySQL 8
-# with caching_sha2_password, which is what Railway's MySQL uses.
 cryptography==46.0.7
 # Sentry is loaded conditionally via SENTRY_DSN env var — see PUBobot2.py.
 # Without a DSN, the init becomes a no-op but the package still loads to
