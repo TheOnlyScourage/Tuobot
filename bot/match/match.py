@@ -567,9 +567,6 @@ class Match:
 				if not q.queue and q in bot.active_queues:
 					bot.active_queues.remove(q)
 
-	def rank_str(self, member: Member) -> str:
-		return self.queue.qc.rating_rank(self.ratings[member.id])['rank']
-
 	async def start_waiting_report(self, ctx: bot.Context) -> None:
 		"""Enter the waiting-report stage: drop any unpicked players, post the final
 		message, and (for draft matches) start party-code collection."""
@@ -662,23 +659,6 @@ class Match:
 		else:
 			raise bot.Exc.SyntaxError(self.gt("Specified team name not found."))
 
-		await self.finish_match(ctx)
-
-	async def report_scores(self, ctx: bot.Context, scores: list[int]) -> None:
-		"""Record explicit scores, derive the winner (or draw), then finalize."""
-		if self.state != self.WAITING_REPORT:
-			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
-
-		if scores[0] > scores[1]:
-			self.winner = 0
-		elif scores[1] > scores[0]:
-			self.winner = 1
-		else:
-			# Tied scores: Q6 has no draws — record it as an abort.
-			self.winner = None
-			self.aborted = True
-
-		self.scores = scores
 		await self.finish_match(ctx)
 
 	async def print_rating_results(self, ctx: bot.Context, before: dict, after: dict) -> None:
