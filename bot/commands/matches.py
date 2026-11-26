@@ -47,6 +47,11 @@ async def show_teams(ctx: bot.Context, match: bot.Match) -> None:
 async def set_ready(ctx: bot.Context, match: bot.Match, is_ready: bool = True) -> None:
 	"""Ready up (or un-ready) the caller during check-in."""
 	await match.check_in.set_ready(ctx, ctx.author, is_ready)
+	# set_ready only edits the check-in board, so the slash interaction was
+	# never answered and players saw "The application did not respond" even
+	# though it worked. ignore() replies privately, and does nothing if the
+	# check-in already answered (e.g. the draft board went out as the response).
+	await ctx.ignore(ctx.qc.gt("✅ You're checked in.") if is_ready else ctx.qc.gt("⛔ You declined the check-in."))
 
 
 @author_match
@@ -239,7 +244,7 @@ async def force_checkin(ctx: bot.Context, match_id: int) -> None:
 		raise bot.Exc.MatchStateError(ctx.qc.gt(
 			"Can't force check-in during an active standby race \u2014 players are "
 			"competing to ready up for the open slot(s). Wait for the race to "
-			"resolve, or use `/admin match sub_player` / `/swap` to set the roster "
+			"resolve, or use `/match sub_player` / `/swap` to set the roster "
 			"manually."
 		))
 
