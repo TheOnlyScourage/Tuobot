@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 __all__ = [
-	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start',
+	'add', 'remove', 'who', 'add_player', 'remove_player', 'start',
 	'reset', 'server', 'remove_all', 'recommend'
 ]
 
-import time
 from nextcord import Member
-from core.utils import error_embed, join_and, find, seconds_to_str, get_nick
+from core.utils import error_embed, join_and, find, get_nick
 import bot
 
 
@@ -220,28 +219,6 @@ async def remove_player(ctx: bot.Context, player: Member, queues: str | None = N
 		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
 	ctx.author = p
 	await remove(ctx, queues=queues)
-
-
-async def promote(ctx: bot.Context, queue: str | None = None) -> None:
-	""" Promote a queue """
-	if not queue:
-		if (q := next(iter(sorted(
-			(i for i in ctx.qc.queues if i.length),
-			key=lambda i: i.length, reverse=True
-		)), None)) is None:
-			raise bot.Exc.NotFoundError(ctx.qc.gt("Nothing to promote."))
-	else:
-		if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
-			raise bot.Exc.NotFoundError(ctx.qc.gt("Specified queue not found."))
-
-	now = int(time.time())
-	if ctx.qc.cfg.promotion_delay and ctx.qc.cfg.promotion_delay+ctx.qc.last_promote > now:
-		raise bot.Exc.PermissionError(ctx.qc.gt("You're promoting too often, please wait `{delay}` until next promote.".format(
-			delay=seconds_to_str((ctx.qc.cfg.promotion_delay+ctx.qc.last_promote)-now)
-		)))
-
-	await q.promote(ctx)
-	ctx.qc.last_promote = now
 
 
 async def start(ctx: bot.Context, queue: str | None = None) -> None:
