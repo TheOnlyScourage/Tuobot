@@ -33,7 +33,12 @@ else:
 from core import config, console, database, cfg_factory
 from core.client import dc
 
-loop = asyncio.get_event_loop()
+# Run everything on the Discord client's own loop. nextcord creates (and sets)
+# it when `dc` is built at import time, and keeps using `dc.loop` internally,
+# so a separately made loop would leave Discord events with nothing to run
+# them. (Was asyncio.get_event_loop(), which returned the same loop but is
+# deprecated when no loop is running.)
+loop = dc.loop
 
 
 def _connect_with_retry(attempts: int = 12, delay: float = 5.0) -> None:
@@ -169,7 +174,6 @@ async def init_web():
 		log.error(f"Failed to start web server: {e}")
 
 
-loop = asyncio.get_event_loop()
 supervised_task(init_web(), name="web_server")
 supervised_task(think(), name="think_loop")
 supervised_task(dc.start(config.cfg.DC_BOT_TOKEN), name="discord_client")
