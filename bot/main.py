@@ -103,6 +103,15 @@ def save_state():
 	blocking the signal handler.
 	"""
 	import asyncio
+	if not bot.bot_was_ready:
+		# Nothing has been restored until on_ready → load_state() finishes. The
+		# think loop starts ticking BEFORE that (PUBobot2.py launches it next to
+		# the Discord client), and its first periodic save used to write these
+		# still-empty globals over the real saved state a second into boot — so
+		# from April to November 2026 every redeploy restored nothing and every
+		# queue and live match was wiped. Never save before the first load.
+		log.info("Skipping save_state: saved state not loaded yet.")
+		return
 	log.info("Saving state...")
 	queues = []
 	for qc in bot.queue_channels.values():
@@ -152,7 +161,25 @@ async def _save_state_db(payload_json: str):
 		log.error(f"DB save_state failed: {e}\n{traceback.format_exc()}")
 
 
+# PubobotException derives from BaseException, so a plain `except Exception`
+# lets every bot error straight through. Restore code catches both. Imported
+# from its own module: bot/__init__.py imports THIS file first, before it
+# binds bot.Exc, so `bot.Exc` doesn't exist yet at import time.
+from bot.exceptions import Exceptions as _BotExc  # noqa: E402
+_RESTORE_ERRORS = (Exception, _BotExc.PubobotException)
+
+
 async def load_state():
+	"""Restore saved queues/matches/settings. Never raises: on_ready calls this
+	before it sets bot_ready, so an escaping error would leave the bot refusing
+	every command (and /health failing) until the next restart."""
+	try:
+		await _load_state()
+	except _RESTORE_ERRORS as e:
+		log.error(f"load_state failed — continuing with what was restored: {e}\n{traceback.format_exc()}")
+
+
+async def _load_state():
 	"""Load state from MySQL first; fall back to local file if DB has nothing."""
 	data = None
 
@@ -171,38 +198,46 @@ async def load_state():
 			with open("saved_state.json", "r") as f:
 				data = json.loads(f.read())
 				log.info("Loaded state from local saved_state.json.")
-		except IOError:  # noqa: UP024
+		except (OSError, ValueError):  # missing, unreadable or corrupt file
 			return  # nothing to restore
 
 	if data is None:
 		return
 
-	bot.allow_offline = list(data.get('allow_offline') or [])
+	# Every piece below is restored on its own: one bad entry is logged and
+	# skipped instead of abandoning the rest of the restore.
+	try:
+		bot.allow_offline = list(data.get('allow_offline') or [])
+		# auto_ready: keys may be strings from MySQL, ensure they're ints
+		bot.auto_ready = {int(k): v for k, v in (data.get('auto_ready') or {}).items()}
+	except _RESTORE_ERRORS as e:
+		log.error(f"Failed to restore allow_offline/auto_ready: {e}")
 
-	# auto_ready: keys may be strings from MySQL, ensure they're ints
-	ar = data.get('auto_ready') or {}
-	bot.auto_ready = {int(k): v for k, v in ar.items()}
-
+	queues_ok = matches_ok = 0
 	for qd in (data.get('queues') or []):
 		if qd.get('queue_type') in ['PickupQueue', None]:
 			try:
 				await bot.PickupQueue.from_json(qd)
-			except bot.Exc.ValueError as e:
-				log.error(f"Failed to load queue state ({qd.get('queue_id')}): {str(e)}")
+				queues_ok += 1
+			except _RESTORE_ERRORS as e:
+				log.error(f"Failed to load queue state ({qd.get('queue_id')}): {e}")
 		else:
 			log.error(f"Got unknown queue type '{qd.get('queue_type')}'.")
 
 	for md in (data.get('matches') or []):
 		try:
 			await bot.Match.from_json(md)
-		except bot.Exc.ValueError as e:
-			log.error(f"Failed to load match {md['match_id']}: {str(e)}")
+			matches_ok += 1
+		except _RESTORE_ERRORS as e:
+			log.error(f"Failed to load match {md.get('match_id')}: {e}")
 
 	if 'expire' in data and data['expire']:
 		try:
 			await bot.expire.load_json(data['expire'])
-		except Exception as e:
+		except _RESTORE_ERRORS as e:
 			log.error(f"Failed to load expire state: {e}")
+
+	log.info(f"Restored {queues_ok} queue(s) and {matches_ok} match(es) from saved state.")
 
 
 async def remove_players(*users, reason=None, exclude=None):
