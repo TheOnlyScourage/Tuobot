@@ -33,8 +33,8 @@ The mod and admin groups (`/channel`, `/queue`, `/match`, `/rating`, `/noadds`, 
 ### During Check-in & Draft
 | Command | What it does |
 |---|---|
-| `/ready` | Confirm participation during the check-in stage. Same as pressing **Ready** or reacting ✅ on the check-in message. Only you see the reply. |
-| `/notready` | Abort participation during the check-in stage. Same as pressing **Not ready** or reacting ⛔. |
+| `/ready` | Confirm participation during the check-in stage. Same as pressing **Ready** on the check-in message. Only you see the reply. |
+| `/notready` | Abort participation during the check-in stage. Same as pressing **Not ready**. |
 | `/pick <player>` | Captains only: pick a player from the unpicked pool. The captain on the clock can also pick from the menu under the draft board, and the bot pings them when it's their turn. |
 
 ### Substitutes
@@ -160,9 +160,9 @@ The mod and admin groups (`/channel`, `/queue`, `/match`, `/rating`, `/noadds`, 
 
 ## 📌 Key Concepts
 
-**Queue priority**: Set via `/queue set <queue> priority <number>`. When a lower-priority queue pops, players stay in higher-priority queues. Recommended: `6v6-ranked = 100`, `bonanza = 80`, others = `0`.
+**Queue priority**: Set via `/queue set <queue> priority <number>`. When a lower-priority queue pops, players stay in higher-priority queues (and leave every other queue). If the higher-priority queue fills while they're still in the lower one's check-in, they move to it straight away with no check-in strike, and the rest go back to the lower queue. Recommended: `6v6-ranked = 100`, `bonanza = 80`, others = `0`.
 
-**Check-in**: When a queue pops, the check-in message pings everyone who still has to ready up. Press **Ready** / **Not ready**, react ✅ / ⛔, or use `/ready` / `/notready` — they all do the same.
+**Check-in**: When a queue pops, the check-in message pings everyone who still has to ready up. Press **Ready** / **Not ready** on it, or use `/ready` / `/notready`; they do the same.
 
 **Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
 
