@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 from typing import Optional, List  # noqa: UP035
 import re
-import emoji
 import json
 from nextcord import Guild
 
 from core.database import db
 from core.client import dc
-from core.utils import format_emoji, parse_duration, seconds_to_str  # noqa: F401
+from core.utils import parse_duration, seconds_to_str  # noqa: F401
 from core.console import log
 
 FACTORY_VERSION = 1
@@ -87,13 +86,9 @@ class FactoryTable:
 			row['factory_version'] != FACTORY_VERSION
 			for row in await db.select(['factory_version'], self.name)
 		)):
-			raise ValueError("Not all the existing table rows have the correct factory_version, please run `update_db.py` script.")
-
-	async def get_next_p_key(self) -> int:
-		""" Get next primary key value """
-
-		data = await db.select_one([self.p_key], self.name, order_by=self.p_key, limit=1)
-		return data.get(self.p_key)+1 if data else 0
+			raise ValueError(
+				f"Some {self.name} rows have an old factory_version (pre-2022 PUBobot config format)."
+			)
 
 
 class CfgFactory:
@@ -224,25 +219,6 @@ class StrVar(Variable):
 		self.ctype = db.types.str
 
 
-class EmojiVar(Variable):
-	# Returns unicode emoji or a guild's custom emoji string
-
-	def __init__(self, name, **kwargs):
-		super().__init__(name, **kwargs)
-		self.ctype = db.types.str
-
-	async def validate(self, string, guild):
-		if not string or string.lower() in ['none', 'null']:
-			if self.notnull:
-				raise ValueError(f"{self.name} can't be null.")
-			return None
-
-		if re.match("^:[^ ]*:$", string):
-			return format_emoji(string.strip(':'), guild) or emoji.emojize(string, use_aliases=True)
-		else:
-			return string
-
-
 class TextVar(Variable):
 
 	def __init__(self, name, **kwargs):
@@ -309,25 +285,6 @@ class IntVar(Variable):
 		return int(string)
 
 
-class SliderVar(Variable):
-
-	def __init__(self, name, min_val=0, max_val=100, unit="%", **kwargs):
-		super().__init__(name, **kwargs)
-		self.min_val = min_val
-		self.max_val = max_val
-		self.unit = unit
-		self.ctype = db.types.int
-
-	async def validate(self, string, guild):
-		if not string or string.lower() in ['none', 'null']:
-			if self.notnull:
-				raise ValueError(f"{self.name} can't be null.")
-			return None
-		if self.min_val <= (num := int(string)) <= self.max_val:
-			return num
-		raise ValueError(f"{self.name} value must be between {self.min_val} and {self.max_val}.")
-
-
 class RoleVar(Variable):
 
 	def __init__(self, name, **kwargs):
@@ -359,61 +316,16 @@ class RoleVar(Variable):
 			role = guild.get_role(value)
 			if role:
 				return role
-			else:
-				raise ValueError("Requested role for variable '{}' not found on the guild".format(self.name))
+			# A deleted role used to RAISE here. Inside the `ranks` table that made
+			# the whole table fall back to its default when the config loaded, and
+			# the next `/channel set` of ANY setting saved that default for good.
+			# Now just this one role is blanked, and the log says so.
+			log.error(f"[config] role {value} for '{self.name}' no longer exists on the server; treating it as unset")
+		return None
 
 	def readable(self, obj):
 		if obj:
 			return obj.name
-		else:
-			return None
-
-	def jsonify(self, obj):
-		if obj:
-			return obj.id
-		return None
-
-
-class MemberVar(Variable):
-
-	def __init__(self, name, **kwargs):
-		super().__init__(name, **kwargs)
-		self.ctype = db.types.int
-
-	async def validate(self, string, guild):
-		if not string or string.lower() in ['none', 'null']:
-			if self.notnull:
-				raise ValueError(f"{self.name} can't be null.")
-			return None
-
-		mention = re.match("^<@[!]*([0-9]+)>$", string)
-		if mention:
-			user_id = int(mention.group(1))
-			if not guild.get_member(user_id):
-				raise ValueError("User '{}' not found on the guild.".format(string))
-
-		else:
-			string = string.lower()
-			try:
-				user_id = next((member for member in guild.members if
-								(member.nick or member.name).lower() == string or str(member.id) == string
-								))
-			except StopIteration:
-				raise ValueError("User '{}' not found on the guild.".format(string))
-
-		return user_id
-
-	async def wrap(self, value, guild):
-		if value:
-			member = guild.get_member(value)
-			if member:
-				return member
-			else:
-				raise ValueError("Requested user for variable '{}' not found on the guild.".format(self.name))
-
-	def readable(self, obj):
-		if obj:
-			return obj.name + "#" + obj.discriminator
 		else:
 			return None
 
@@ -532,9 +444,6 @@ class VariableTable(Variable):
 	def readable(self, l):  # noqa: E741
 		return [{var_name: self.variables[var_name].readable(value) for var_name, value in d.items()} for d in l]
 
-	def readable_row(self, d):
-		return {var_name: self.variables[var_name].readable(value) for var_name, value in d.items()}
-
 	def verify(self, l):  # noqa: E741
 		return(
 			all((
@@ -548,12 +457,10 @@ class VariableTable(Variable):
 
 class Variables:
 	StrVar = StrVar
-	EmojiVar = EmojiVar
 	TextVar = TextVar
 	OptionVar = OptionVar
 	BoolVar = BoolVar
 	IntVar = IntVar
-	SliderVar = SliderVar
 	RoleVar = RoleVar
 	TextChanVar = TextChanVar
 	DurationVar = DurationVar
