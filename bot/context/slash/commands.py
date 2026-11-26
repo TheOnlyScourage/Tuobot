@@ -37,14 +37,19 @@ async def run_slash(coro: Callable, interaction: Interaction, **kwargs) -> None:
 		log.error('Skipping an outdated interaction.')
 		return
 
+	# Both of these only concern the person who ran the command: answer privately
+	# (they used to be posted in the channel for everyone).
 	if not bot.bot_ready:
 		await interaction.response.send_message(
-			embed=error_embed("Bot is under connection, please try agian later...", title="Error")
+			embed=error_embed("Tuobot is still starting up, please try again in a moment.", title="Error"),
+			ephemeral=True
 		)
 		return
 	qc = bot.queue_channels.get(interaction.channel_id)
 	if qc is None:
-		await interaction.response.send_message(embed=error_embed("Not in a queue channel.", title="Error"))
+		await interaction.response.send_message(
+			embed=error_embed("Tuobot isn't enabled in this channel.", title="Error"), ephemeral=True
+		)
 		return
 
 	ctx = SlashContext(qc, interaction)
@@ -60,6 +65,20 @@ async def run_slash(coro: Callable, interaction: Interaction, **kwargs) -> None:
 			log.info('Slow /slash command finished mid-timeout (already responded)')
 
 
+async def _confirm_or_explain(interaction: Interaction, confirm: bool, what: str) -> bool:
+	"""Destructive commands only run with confirm:True. Without it, explain
+	privately what would happen and how to go ahead — none of them asked before."""
+	if confirm:
+		return True
+	await interaction.response.send_message(embed=error_embed(
+		f"{what}\nRun the command again with **confirm: True** to go ahead.", title="Are you sure?"
+	), ephemeral=True)
+	return False
+
+
+_CONFIRM = dict(required=False, default=False, description="Set to True to really do it.")
+
+
 async def run_slash_coro(ctx: SlashContext, coro: Callable, **kwargs) -> None:
 	log.command("{} | #{} | {}: /{} {}".format(
 		ctx.channel.guild.name, ctx.channel.name, get_nick(ctx.author), coro.__name__, kwargs
@@ -70,7 +89,10 @@ async def run_slash_coro(ctx: SlashContext, coro: Callable, **kwargs) -> None:
 	except bot.Exc.PubobotException as e:
 		await ctx.error(str(e), title=e.__class__.__name__)
 	except Exception as e:
-		await ctx.error(str(e), title="RuntimeError")
+		# Database errors arrive with an empty message (the adapter wraps them),
+		# which used to show as a blank "RuntimeError". Name the error type and
+		# say it's been logged.
+		await ctx.error(str(e) or "Something went wrong — it's been logged for the admins.", title=type(e).__name__)
 		log.error("\n".join([
 			f"Error processing /slash command {coro.__name__}.",
 			f"QC: {ctx.channel.guild.name}>#{ctx.channel.name} ({ctx.qc.id}).",
@@ -169,7 +191,7 @@ async def enable_channel(interaction: Interaction) -> None:
 	bot.queue_channels[interaction.channel.id] = await bot.QueueChannel.create(interaction.channel)
 
 
-@groups.admin_channel.subcommand(name='disable', description='Disable the bot on this channel.')
+@groups.admin_channel.subcommand(name='disable', description='Disable the bot on this channel until it restarts (configs are kept).')
 async def disable_channel(interaction: Interaction) -> None:
 	if not interaction.user.guild_permissions.administrator:
 		return await interaction.response.send_message(embed=error_embed('You must possess server administrator permissions.'), ephemeral=True)
@@ -179,12 +201,20 @@ async def disable_channel(interaction: Interaction) -> None:
 	await interaction.response.send_message(embed=ok_embed('The bot has been disabled.'))
 
 
-@groups.admin_channel.subcommand(name='delete', description='Delete stats/configs and disable the bot on this channel.')
-async def delete_channel(interaction: Interaction) -> None:
+@groups.admin_channel.subcommand(name='delete', description="Delete this channel's settings and queues, and disable the bot here.")
+async def delete_channel(
+		interaction: Interaction,
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
 	if not interaction.user.guild_permissions.administrator:
 		return await interaction.response.send_message(embed=error_embed('You must possess server administrator permissions.'), ephemeral=True)
 	if (qc := bot.queue_channels.get(interaction.channel_id)) is None:
 		return await interaction.response.send_message(embed=error_embed('This channel is not enabled.'), ephemeral=True)
+	if not await _confirm_or_explain(interaction, confirm, (
+		"This deletes this channel's settings and **every queue on it**, and disables Tuobot here. "
+		"Match history and ratings are kept."
+	)):
+		return
 	for queue in qc.queues:
 		await queue.cfg.delete()
 	await qc.cfg.delete()
@@ -197,7 +227,7 @@ async def cleanup_channels(
 		interaction: Interaction,
 		confirm: bool = SlashOption(required=False, default=False, description='Actually delete (default: dry-run listing).')
 ) -> None:
-	"""Orphan sweeper: `/admin channel delete` must be run INSIDE a channel,
+	"""Orphan sweeper: `/channel delete` must be run INSIDE a channel,
 	so configs for channels deleted from Discord first become unreachable —
 	they linger forever, logging 'Could not reach a text channel' every boot.
 	This lists them (dry run) and purges them on confirm. Owner-locked since
@@ -369,7 +399,7 @@ async def _rating_seed(
 ) -> None: await run_slash(bot.commands.rating_seed, interaction=interaction, player=player, rating=rating, deviation=deviation)
 
 
-@groups.admin_rating.subcommand(name='penality', description='Subtract points from player rating.')
+@groups.admin_rating.subcommand(name='penalty', description='Subtract points from player rating.')
 async def _rating_penality(
 		interaction: Interaction,
 		player: str = SlashOption(verify=False),
@@ -392,14 +422,27 @@ async def _rating_unhide(
 ) -> None: await run_slash(bot.commands.rating_hide, interaction=interaction, player=player, hide=False)
 
 
-@groups.admin_rating.subcommand(name='reset', description='Reset rating data on the channel.')
-async def _rating_reset(interaction: Interaction
-) -> None: await run_slash(bot.commands.rating_reset, interaction=interaction)
+@groups.admin_rating.subcommand(name='reset', description='Owner: blank every rating on this channel.')
+async def _rating_reset(
+		interaction: Interaction,
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
+	if await _confirm_or_explain(interaction, confirm, (
+		"This blanks **every rating** on this channel. (`/stats season_end` already resets ratings "
+		"at the end of a season.)"
+	)):
+		await run_slash(bot.commands.rating_reset, interaction=interaction)
 
 
-@groups.admin_rating.subcommand(name='snap', description='Snap players ratings to rank values.')
-async def _rating_snap(interaction: Interaction
-) -> None: await run_slash(bot.commands.rating_snap, interaction=interaction)
+@groups.admin_rating.subcommand(name='snap', description='Snap every rating down to its rank threshold.')
+async def _rating_snap(
+		interaction: Interaction,
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
+	if await _confirm_or_explain(interaction, confirm, (
+		"This moves **every player's rating** down to the threshold of their rank."
+	)):
+		await run_slash(bot.commands.rating_snap, interaction=interaction)
 
 
 # ── admin/stats ───────────────────────────────────────────────────────────────
@@ -412,8 +455,14 @@ async def _stats(
 
 
 @groups.admin_stats.subcommand(name='nuclear_option', description='☢️ FULL wipe: ratings AND all-time history. Owner-only. NO undo.')
-async def _stats_nuclear_option(interaction: Interaction
-) -> None: await run_slash(bot.commands.stats_nuclear_option, interaction=interaction)
+async def _stats_nuclear_option(
+		interaction: Interaction,
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
+	if await _confirm_or_explain(interaction, confirm, (
+		"☢️ This **permanently erases** every rating and the entire all-time match history of this channel."
+	)):
+		await run_slash(bot.commands.stats_nuclear_option, interaction=interaction)
 
 
 @groups.admin_stats.subcommand(name='reset_player', description='Reset player stats.')
@@ -423,12 +472,17 @@ async def _stats_reset_player(
 ) -> None: await run_slash(bot.commands.stats_reset_player, interaction=interaction, player=player)
 
 
-@groups.admin_stats.subcommand(name='stats_replace_player', description='Replace player1 with player2.')
+@groups.admin_stats.subcommand(name='replace_player', description="Move player1's rating and history onto player2 (e.g. a new account).")
 async def _stats_replace_player(
 		interaction: Interaction,
 		player1: str = SlashOption(verify=False),
-		player2: str = SlashOption(verify=False)
-) -> None: await run_slash(bot.commands.stats_replace_player, interaction=interaction, player1=player1, player2=player2)
+		player2: str = SlashOption(verify=False),
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
+	if await _confirm_or_explain(interaction, confirm, (
+		"This moves player1's rating and match history onto player2 and **deletes player2's own rating**."
+	)):
+		await run_slash(bot.commands.stats_replace_player, interaction=interaction, player1=player1, player2=player2)
 
 
 @groups.admin_stats.subcommand(name='undo_match', description='Undo a finished match.')
@@ -525,7 +579,7 @@ async def _sub_me(interaction: Interaction
 ) -> None: await run_slash(bot.commands.sub_me, interaction=interaction)
 
 
-@dc.slash_command(name='subauto', description='Replace yourself with the next player in queue and rebalance teams by ELO', **guild_kwargs)
+@dc.slash_command(name='subauto', description='Hand your spot to the next available player in the queue.', **guild_kwargs)
 async def _sub_auto(interaction: Interaction
 ) -> None: await run_slash(bot.commands.sub_auto, interaction=interaction)
 
@@ -642,8 +696,13 @@ async def _season_leaderboard(
 @groups.admin_stats.subcommand(name='season_end', description='End the season: post standings, disable ranked, reset stats.')
 async def _season_end(
 		interaction: Interaction,
-		min_matches: int = SlashOption(required=False, default=15, description="Min matches to appear in standings (default 15).")
-) -> None: await run_slash(bot.commands.season_end, interaction=interaction, min_matches=min_matches)
+		min_matches: int = SlashOption(required=False, default=15, description="Min matches to appear in standings (default 15)."),
+		confirm: bool = SlashOption(**_CONFIRM)
+) -> None:
+	if await _confirm_or_explain(interaction, confirm, (
+		"This **ends the season**: posts the final standings, turns ranked off and resets every rating."
+	)):
+		await run_slash(bot.commands.season_end, interaction=interaction, min_matches=min_matches)
 
 
 @groups.admin_stats.subcommand(name='season_start', description='Start a new season: enable ranked on all queues.')
@@ -721,7 +780,7 @@ async def _house_points_reset(
 
 # ── misc ──────────────────────────────────────────────────────────────────────
 
-@dc.slash_command(name='activity', description='Show an activity heatmap (weekday × hour, IST).', **guild_kwargs)
+@dc.slash_command(name='activity', description='Show an activity heatmap (weekday × hour, Central time).', **guild_kwargs)
 async def _activity(
 		interaction: Interaction,
 		player: Member = SlashOption(required=False, verify=False)
@@ -731,7 +790,7 @@ async def _activity(
 @dc.slash_command(name='auto_ready', description='Confirm next match check-in automatically.', **guild_kwargs)
 async def _auto_ready(
 		interaction: Interaction,
-		duration: str = SlashOption(required=False, description="Duration e.g. 10m, 1h. Default is 10 minutes."),
+		duration: str = SlashOption(required=False, description="Duration e.g. 10m or 1h (default 10 minutes), or 'off' to cancel."),
 ) -> None:
 	"""Ephemeral — only the user who ran it can see the response."""
 	if not bot.bot_ready:
@@ -747,13 +806,22 @@ async def _auto_ready(
 	from datetime import timedelta as _td
 	DEFAULT_SECS = 10 * 60  # 10 minutes
 
+	# There was no way to switch auto-ready off once set.
+	if duration and duration.strip().lower() in ('off', 'cancel', 'stop', '0'):
+		bot.auto_ready.pop(interaction.user.id, None)
+		return await interaction.response.send_message(embed=ok_embed("Auto-ready is **off**."), ephemeral=True)
+
 	if duration:
 		try:
-			dur_secs = parse_duration(duration).total_seconds()
+			parsed = parse_duration(duration)
 		except ValueError:
+			parsed = None
+		# 'inf' parses to the int 0, not a timedelta, and used to crash here.
+		if not isinstance(parsed, _td) or not parsed:
 			return await interaction.response.send_message(
-				embed=error_embed("Invalid duration format. Try: 10m, 1h, 01:30:00."), ephemeral=True
+				embed=error_embed("Invalid duration format. Try: 10m, 1h, 01:30:00 — or off."), ephemeral=True
 			)
+		dur_secs = parsed.total_seconds()
 	else:
 		dur_secs = DEFAULT_SECS
 
