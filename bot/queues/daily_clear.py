@@ -23,6 +23,15 @@ from bot.constants import QUEUE_CLEAR_HOUR, QUEUE_CLEAR_TIMEZONE
 from bot.queues.daily_clear_rules import next_clear_after
 
 
+def _channel_label(qc) -> str:
+	"""Channel name for log lines (stored in the channel config by
+	QueueChannel.update_info), falling back to the id."""
+	try:
+		return qc.cfg.cfg_info.get('channel_name') or str(qc.id)
+	except Exception:
+		return str(qc.id)
+
+
 class DailyClear:
 	def __init__(self):
 		self.next_at: float | None = None  # unix seconds; armed lazily on the first tick
@@ -50,12 +59,24 @@ class DailyClear:
 			log.error(f"[daily_clear] clear failed: {e}")
 
 	async def clear_all(self) -> None:
-		"""Empty every queue (and standby list) in every queue channel."""
+		"""Empty every queue (and standby list) in every queue channel. Each
+		channel is handled on its own, so one failure is logged and the rest
+		still get cleared.
+
+		History: the Oct 2026 version logged `qc.channel.name`, but QueueChannel
+		has no `.channel` attribute (the test stand-in did). Every morning it
+		emptied the first busy channel, then crashed: no notice, and no other
+		channel was cleared. tests/test_daily_clear.py now checks every
+		attribute read here against the real class."""
 		for qc in list(bot.queue_channels.values()):
-			removed = self._clear_channel(qc)
+			try:
+				removed = self._clear_channel(qc)
+			except Exception as e:
+				log.error(f"[daily_clear] clearing channel {qc.id} failed: {e}")
+				continue
 			if not removed:
 				continue
-			log.info(f"[daily_clear] #{getattr(qc.channel, 'name', qc.id)}: removed {len(removed)} player(s)")
+			log.info(f"[daily_clear] #{_channel_label(qc)}: removed {len(removed)} player(s)")
 			try:
 				ctx = bot.SystemContext(qc)
 				await ctx.notice(qc.topic)
