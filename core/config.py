@@ -19,6 +19,7 @@ Railway) while making env-only runs and partial configs work cleanly.
 """
 import os
 import json
+import importlib.util
 from importlib.machinery import SourceFileLoader
 
 # key -> (type, default)
@@ -93,10 +94,20 @@ for _key, (_typ, _default) in _SCHEMA.items():
 # Primary source: config.cfg (Python source loaded via SourceFileLoader).
 # Optional now — if absent we fall back to the environment. If present but
 # malformed we still hard-fail, matching the original behaviour.
+def _load_cfg_file(path):
+	"""Run config.cfg (Python source with a .cfg name) as a module.
+	SourceFileLoader.load_module() did this before; it is deprecated and goes
+	away in Python 3.15, and this is its documented replacement."""
+	loader = SourceFileLoader('cfg', path)
+	module = importlib.util.module_from_spec(importlib.util.spec_from_loader('cfg', loader))
+	loader.exec_module(module)
+	return module
+
+
 _file_cfg = {}
 if os.path.exists('config.cfg'):
 	try:
-		_module = SourceFileLoader('cfg', 'config.cfg').load_module()
+		_module = _load_cfg_file('config.cfg')
 	except Exception as e:
 		print("Failed to load config.cfg file!")
 		raise e
