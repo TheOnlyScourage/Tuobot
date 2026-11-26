@@ -62,10 +62,14 @@ async def _send_q_ping_embed(message) -> None:
 
 # AoE2 civ/elo sync removed (NammaPUBobot leftover, not used for Q6 Drafts)
 from bot.match.party_code import handle_code_input
+from bot.buttons import register as register_buttons
 
 
 @dc.event
 async def on_init():
+	# First, before anything is awaited: the persistent buttons (queue, check-in,
+	# draft menu, report) must be listening before Discord delivers a press.
+	register_buttons(dc)
 	await bot.stats.check_match_id_counter()
 
 
