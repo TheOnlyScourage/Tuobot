@@ -4,6 +4,7 @@
 bot/queues/daily_clear_rules.py is stdlib-only (zoneinfo) and loads by path.
 The clock must: fire at 4:00 AM Central strictly after `now`, never
 retroactively on boot, and stay on 4:00 AM local across both DST changes."""
+import ast
 import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,3 +89,30 @@ def test_wired_into_tick_and_exported():
 def test_constants():
 	src = _src("bot/constants.py")
 	assert "QUEUE_CLEAR_HOUR     = 4" in src and 'QUEUE_CLEAR_TIMEZONE = "America/Chicago"' in src
+
+
+def test_only_reads_attributes_the_real_queuechannel_has():
+	"""Oct 2026: the clear logged `qc.channel.name`, but QueueChannel has no
+	`.channel` (the test stand-in did), so the 4 AM clear crashed every morning
+	after emptying the first busy channel. Every `qc.<attr>` it reads must be
+	defined on the real class."""
+	qc_tree = ast.parse(_src("bot/queue_channel.py"))
+	cls = next(n for n in qc_tree.body if isinstance(n, ast.ClassDef) and n.name == "QueueChannel")
+	defined = set()
+	for node in ast.walk(cls):
+		if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+			defined.add(node.name)
+		elif (
+			isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+			and isinstance(node.value, ast.Name) and node.value.id == "self"
+		):
+			defined.add(node.attr)
+	for stmt in cls.body:  # class-level names (cfg_factory, ...)
+		if isinstance(stmt, ast.Assign):
+			defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+	used = {
+		n.attr for n in ast.walk(ast.parse(_src("bot/queues/daily_clear.py")))
+		if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "qc"
+	}
+	assert used, "daily_clear.py should read something off qc"
+	assert used <= defined, f"QueueChannel has no attribute(s): {sorted(used - defined)}"
