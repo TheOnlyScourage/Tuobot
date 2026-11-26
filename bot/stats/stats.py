@@ -599,7 +599,7 @@ async def reset_channel(channel_id: int) -> None:
 async def wipe_channel(channel_id: int) -> None:
     """FULL wipe: ratings AND all-time match history for the channel.
 
-    This is the explicit destructive tool behind `/admin stats nuclear_option`
+    This is the explicit destructive tool behind `/stats nuclear_option`
     (owner-locked) — unlike
     the season reset (reset_channel), this permanently destroys the permanent
     history that powers /profile and future milestones. There is no undo."""
@@ -618,14 +618,23 @@ async def reset_player(channel_id: int, user_id: int) -> None:
     await db.delete("qc_players", where={'channel_id': channel_id, 'user_id': user_id})
 
 
-async def replace_player(channel_id: int, user_id1: int, user_id2: int, new_nick: str) -> None:
+async def replace_player(channel_id: int, user_id1: int, user_id2: int, new_nick: str,
+                         rating_channel_id: int | None = None) -> None:
     """Re-point one player's records (rating, history, match rows) onto a new
-    user id and nick, dropping any existing rows for the target id."""
-    await db.delete("qc_players", {'channel_id': channel_id, 'user_id': user_id2})
-    where = {'channel_id': channel_id, 'user_id': user_id1}
-    await db.update("qc_players",        {'user_id': user_id2, 'nick': new_nick}, where)
-    await db.update("qc_rating_history", {'user_id': user_id2}, where)
-    await db.update("qc_player_matches", {'user_id': user_id2}, where)
+    user id and nick, dropping any rating the target id already had.
+
+    Ratings and rating history live under the channel's RATING channel (the
+    same channel unless `rating_channel` is set); match rows live under the
+    channel itself. All four statements run in one transaction: they used to be
+    separate, so a failure halfway could delete player2's rating without moving
+    player1's onto it."""
+    rating_channel_id = rating_channel_id or channel_id
+    async with db.transaction() as tx:
+        await tx.delete("qc_players", {'channel_id': rating_channel_id, 'user_id': user_id2})
+        rated = {'channel_id': rating_channel_id, 'user_id': user_id1}
+        await tx.update("qc_players",        {'user_id': user_id2, 'nick': new_nick}, rated)
+        await tx.update("qc_rating_history", {'user_id': user_id2}, rated)
+        await tx.update("qc_player_matches", {'user_id': user_id2}, {'channel_id': channel_id, 'user_id': user_id1})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
