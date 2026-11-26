@@ -21,12 +21,13 @@ Layout:
 """
 
 # ── Bot owner ────────────────────────────────────────────────────────────────
-# Scourage's Discord user id. Commands that can destroy PERMANENT data
-# (currently only /admin stats reset → wipe_channel) are gated to this id on
-# top of the normal ADMIN check — regular admins can't fire them, by design.
-# (cfg.DC_OWNER_ID also exists as an env var, but it only guards the legacy
-# !enable/!disable text commands and can't be verified from the repo; this
-# hardcoded pin is the deliberate source of truth for nuclear gates.)
+# Scourage's Discord user id. The owner-only commands — /stats nuclear_option
+# (erases all-time history), /rating reset, /channel cleanup and /autoreply —
+# check this id on top of the normal ADMIN check, so regular admins can't run
+# them, by design. (cfg.DC_OWNER_ID, an env var, separately counts as an admin
+# everywhere and guards the !enable_tuobot / !disable_tuobot triggers; it can't
+# be verified from the repo, so this hardcoded id is the source of truth for
+# the owner-only commands.)
 OWNER_ID = 310593959506477075
 
 # ── Snitch coin-toss flavour ─────────────────────────────────────────────────
