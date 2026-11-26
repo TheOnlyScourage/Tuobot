@@ -22,11 +22,12 @@ import json
 from importlib.machinery import SourceFileLoader
 
 # key -> (type, default)
+# Nov 2026: dropped DC_CLIENT_ID, DC_CLIENT_SECRET, DC_INVITE_LINK and the seven
+# WS_* keys. Only the removed OAuth web dashboard read them; the health-check
+# server takes Railway's PORT straight from the environment. An old config.cfg
+# that still sets them is fine: keys outside the schema are ignored.
 _SCHEMA = {
 	'DC_BOT_TOKEN': (str, ""),
-	'DC_CLIENT_ID': (int, 0),
-	'DC_CLIENT_SECRET': (str, ""),
-	'DC_INVITE_LINK': (str, ""),
 	'DC_OWNER_ID': (int, 0),
 	'DC_SLASH_SERVERS': (list, []),
 	'DB_URI': (str, ""),
@@ -34,13 +35,6 @@ _SCHEMA = {
 	'COMMANDS_URL': (str, ""),
 	'HELP': (str, ""),
 	'STATUS': (str, ""),
-	'WS_ENABLE': (bool, False),
-	'WS_HOST': (str, ""),
-	'WS_PORT': (int, 443),
-	'WS_OAUTH_REDIRECT_URL': (str, ""),
-	'WS_ROOT_URL': (str, ""),
-	'WS_SSL_CERT_FILE': (str, ""),
-	'WS_SSL_KEY_FILE': (str, ""),
 }
 
 _TRUE = ('1', 'true', 'yes', 'on')
@@ -57,7 +51,14 @@ def _coerce(value, typ):
 	if typ is int:
 		if isinstance(value, bool):
 			return int(value)
-		return int(str(value).strip())
+		s = str(value).strip()
+		if not s:
+			return None  # empty env var: keep the default instead of crashing
+		try:
+			return int(s)
+		except ValueError:
+			print(f"WARNING: config value {value!r} is not a whole number; using the default.")
+			return None
 	if typ is list:
 		if isinstance(value, (list, tuple)):
 			return list(value)
