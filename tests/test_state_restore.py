@@ -148,7 +148,9 @@ def test_party_code_round_trips_for_restore():
 # ── bot/queues/pickup_queue.py ───────────────────────────────────────────────
 
 def test_priority_protected_players_leave_the_queue_that_popped():
+	# _drop_protected() takes them out of every queue that isn't higher-priority,
+	# this one included (behaviour: tests/test_priority_handoff.py).
 	src = ast.unparse(_func(_tree("bot/queues/pickup_queue.py"), "start", cls="PickupQueue"))
-	pop = src.index("self.pop_members(*[p for p in players if p.id in protected_ids])")
-	assert src.index("exclude=protected_ids") < pop
-	assert pop < src.index("bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())")
+	drop = src.index("self._drop_protected(players, protected_ids, my_priority)")
+	assert src.index("exclude=protected_ids") < drop
+	assert drop < src.index("bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())")
