@@ -2,7 +2,8 @@
 """Tuobot's buttons and menus (Nov 2026):
 
   - Join / Leave under each queue update (same as /add and /remove)
-  - Ready / Not ready on the check-in board, next to the ✅ / ⛔ reactions
+  - Ready / Not ready on the check-in board (same as /ready and /notready;
+    the only way to check in on the board since the reactions went, Nov 26)
   - the captain's pick menu on the draft board (same as /pick)
   - We lost / Abort on the match board (same as /report; We lost asks first)
 
@@ -54,7 +55,7 @@ class QueueButtons(_Persistent):
 
 
 class CheckInButtons(_Persistent):
-	"""On the check-in board, next to the reactions: Ready = /ready, Not ready = /notready."""
+	"""On the check-in board: Ready = /ready, Not ready = /notready."""
 
 	def __init__(self, allow_discard: bool = True):
 		super().__init__()
