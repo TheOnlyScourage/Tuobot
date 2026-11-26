@@ -133,6 +133,11 @@ class Match:
 		else:
 			match.winner = 0
 			match.scores[match.winner] = 1
+		# Only Match.new used to stamp the season, so manual results were saved
+		# season-less and the next boot's backfill guessed (wrong across a
+		# season_end).
+		from bot.stats.season import get_current_season_number
+		match.season_number = await get_current_season_number(qc.id)
 		await bot.stats.register_match_ranked(ctx, match)
 
 	def serialize(self) -> dict:
@@ -145,16 +150,36 @@ class Match:
 			cfg=self.cfg,
 			players=[p.id for p in self.players if p],
 			teams=[[p.id for p in team if p] for team in self.teams],
+			team_names=[t.name for t in self.teams[:2]],
+			team_emojis=[t.emoji for t in self.teams[:2]],
+			captains=[p.id for p in self.captains if p],
 			state=self.state,
 			states=self.states,
 			ready_players=[p.id for p in self.check_in.ready_players if p],
-			fill_subs=self.fill_subs
+			check_in_message_id=(
+				self.check_in.message.id if self.state == self.CHECK_IN and self.check_in.message else None
+			),
+			fill_subs=self.fill_subs,
+			season_number=getattr(self, 'season_number', None),
+			party_code=self.party_code.serialize() if self.party_code else None,
 		)
 
 	@classmethod
 	async def from_json(cls, data: dict) -> None:
-		"""Rebuild a match from a serialized snapshot: re-resolve members, teams,
-		and ready players, restore state, and re-register it as active."""
+		"""Rebuild a match from its save_state snapshot after a restart/redeploy.
+
+		Keeps everything players and admins rely on: the ORIGINAL match id (it
+		used to be re-numbered, so `/match report <id>` and the history no
+		longer matched), the house team names and emojis, captains, force-sub
+		records (`fill_subs` — without them the subbed-out player escaped the
+		loss penalty) and the season stamp, and it resumes the game-code flow.
+		Each stage then picks up where it was: check-in posts a fresh board (the
+		old one is deleted; ready players stay ready), a draft re-posts its
+		board, and a match being played just carries on.
+
+		A player who left the server during the restart is dropped from a match
+		already being played; earlier stages can't go on a player short, so
+		that match is dropped and the channel is told to re-queue."""
 		if (qc := bot.queue_channels.get(data['channel_id'])) is None:
 			raise bot.Exc.ValueError('QueueChannel not found.')
 		if (queue := get(qc.queues, id=data['queue_id'])) is None:
@@ -162,28 +187,88 @@ class Match:
 		if (guild := dc.get_guild(qc.guild_id)) is None:
 			raise bot.Exc.ValueError('Guild not found.')
 
-		data['players'] = [guild.get_member(user_id) for user_id in data['players']]
-		if None in data['players']:
-			raise bot.Exc.ValueError(f"Error fetching guild members.")  # noqa: F541
+		match_id = data.get('match_id')
+		label = str(match_id).zfill(6) if match_id is not None else "?"
+		ctx = bot.SystemContext(qc)
 
-		for i in range(len(data['teams'])):
-			data['teams'][i] = [get(data['players'], id=user_id) for user_id in data['teams'][i]]
-		data['ready_players'] = [get(data['players'], id=user_id) for user_id in data['ready_players']]
+		members = {user_id: guild.get_member(user_id) for user_id in data['players']}
+		if missing := [user_id for user_id, member in members.items() if member is None]:
+			if data['state'] != cls.WAITING_REPORT:
+				try:
+					await ctx.notice(qc.gt(
+						"♻️ Tuobot restarted, but match **{id}** couldn't be restored because a player "
+						"left the server. Please `/add` again."
+					).format(id=label))
+				except DiscordException:
+					pass
+				raise bot.Exc.ValueError(f"match {label}: player(s) {missing} left the server")
+			log.info(f"[restore] match {label}: continuing without departed player(s) {missing}")
+		members = {user_id: member for user_id, member in members.items() if member is not None}
 
-		ratings = {p['user_id']: p['rating'] for p in await qc.rating.get_players((p.id for p in data['players']))}
-		match_id = await bot.stats.next_match()
-		match = cls(match_id, queue, qc, data['players'], ratings, **data['cfg'])
+		def resolve(user_ids):
+			return [members[user_id] for user_id in user_ids or [] if user_id in members]
 
-		for i in range(len(match.teams)):
-			match.teams[i].set(data['teams'][i])
-		match.check_in.ready_players = set(data['ready_players'])
+		players = resolve(data['players'])
+		ratings = {p['user_id']: p['rating'] for p in await qc.rating.get_players((p.id for p in players))}
+		if match_id is None:  # every snapshot written by this code has one; old ones may not
+			match_id = await bot.stats.next_match()
+			label = str(match_id).zfill(6)
+		match = cls(match_id, queue, qc, players, ratings, **data['cfg'])
+
+		for i, team_ids in enumerate(data['teams'][:len(match.teams)]):
+			match.teams[i].set(resolve(team_ids))
+		for team, name in zip(match.teams[:2], data.get('team_names') or []):
+			if name:
+				team.name = name
+		for team, emoji in zip(match.teams[:2], data.get('team_emojis') or []):
+			if emoji:
+				team.emoji = emoji
+		match.captains = resolve(data.get('captains'))
+		match.check_in.ready_players = set(resolve(data.get('ready_players')))
+		# JSON turned {sub_id: (orig_id, team_idx)} into string keys and list values.
+		match.fill_subs = {
+			int(sub_id): (int(orig[0]), int(orig[1]))
+			for sub_id, orig in (data.get('fill_subs') or {}).items()
+		}
+		match.season_number = data.get('season_number')
+		if match.season_number is None:
+			try:
+				from bot.stats.season import get_current_season_number
+				match.season_number = await get_current_season_number(qc.id)
+			except Exception as e:
+				log.error(f"[restore] match {label}: season lookup failed: {e}")
 		match.state = data['state']
 		match.states = data['states']
-		if match.state == match.CHECK_IN:
-			ctx = bot.SystemContext(qc)
-			await match.check_in.start(ctx)
+
+		if match.state == match.WAITING_REPORT and data.get('party_code'):
+			from bot.match.party_code import PartyCode
+			match.party_code = PartyCode(match)
+			match.party_code.restore(data['party_code'], members)
 
 		bot.active_matches.append(match)
+		log.info(f"[restore] match {label} restored (state {match.state}, {len(players)} players)")
+
+		# Pick up where the stage left off. Each step is best-effort on its own:
+		# a Discord hiccup must neither undo the restore nor skip the next step.
+		async def step(what, coro):
+			try:
+				await coro
+			except (Exception, bot.Exc.PubobotException) as e:
+				log.error(f"[restore] match {label}: {what} failed: {e}")
+
+		await step("restart notice", ctx.notice(
+			qc.gt("♻️ Tuobot restarted — match **{id}** was restored.").format(id=label)
+		))
+		if match.state == match.CHECK_IN:
+			old_id = data.get('check_in_message_id')
+			channel = dc.get_channel(qc.id)
+			if old_id and channel is not None:  # its reactions died with the old process
+				async def delete_old_board():
+					await channel.get_partial_message(old_id).delete()
+				await step("deleting the old check-in board", delete_old_board())
+			await step("re-posting check-in", match.check_in.start(ctx))
+		elif match.state == match.DRAFT:
+			await step("re-posting the draft board", match.draft.print(ctx))
 
 	def __init__(self, match_id: int, queue: bot.PickupQueue, qc: bot.QueueChannel, players: list[Member], ratings: dict, **cfg):
 		"""Initialize match state from merged config: build the two teams plus the
@@ -509,12 +594,25 @@ class Match:
 				except Exception as e:
 					log.error(f"PartyCode start error: {e}")
 
+	def _ensure_active(self) -> None:
+		"""Refuse to report a match that is already being finalized.
+
+		finish_match() takes the match out of bot.active_matches before its
+		first await, so a second report arriving while the first one is still
+		saving (both captains, or a captain and a mod, within the same moment)
+		finds it gone. Before this guard that second report flipped
+		self.winner under the registration in progress: the saved winner and
+		the MMR moved in opposite directions (Nov 2026 audit)."""
+		if self not in bot.active_matches:
+			raise bot.Exc.MatchStateError(self.gt("This match has already been reported."))
+
 	async def report_loss(self, ctx: bot.Context, member: Member, draw_flag: int) -> None:
 		"""Captain reports their team's loss or an abort. draw_flag: 0 = loss,
 		2 = abort offer; an abort needs the other captain to confirm, and a
 		confirmed abort is RECORDED (winner-NULL ranked row, zero rating
 		change, streaks untouched) rather than voided — Q6 has no draws, so
 		the no-winner outcome IS the abort."""
+		self._ensure_active()
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -544,7 +642,8 @@ class Match:
 		winner — the row keeps the match id on the books, the third record
 		column (schema name `draws`) counts it, ratings don't move (the MMR
 		engine short-circuits winner-NULL to zero) and streaks are preserved.
-		Reversible with `/admin stats undo_match`, unlike the old void."""
+		Reversible with `/stats undo_match`, unlike the old void."""
+		self._ensure_active()
 		self.winner = None
 		self.aborted = True
 		if self.party_code:
@@ -553,6 +652,7 @@ class Match:
 
 	async def report_win(self, ctx: bot.Context, team_name: str | None) -> None:
 		"""Moderator path: report a win by team_name, then finalize."""
+		self._ensure_active()
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
 
@@ -718,6 +818,11 @@ class Match:
 		"""Finalize the match: record captains for future selection, register the
 		result (ranked/unranked), and award house points to the winner."""
 		bot.active_matches.remove(self)
+		# Stop listening for this match's game codes. Only abort/cancel used to
+		# do this, so after a normal report any 6-character ALL-CAPS message
+		# from that team was still taken as "Game N Code" for a finished match.
+		if self.party_code:
+			self.party_code.cancel()
 
 		# Track captains for smart captain selection in future matches
 		# (casual games leave no trace here either)
@@ -771,10 +876,11 @@ class Match:
 			colour=Colour(0xED4245),
 			title=f"\u26a0\ufe0f Match {str(self.id).zfill(6)} failed to save",
 			description=(
-				"The match finished but its result could **not** be recorded — "
-				"ratings and stats were **not** updated.\n"
-				"Admins: check the logs, fix the cause, then re-record the "
-				"result with `/admin match create`."
+				"The match finished but its result could **not** be fully saved — "
+				"some players' ratings may already have been updated.\n"
+				"Admins: check the logs and `/lastgame` **before** re-recording. "
+				"Re-recording a half-saved match with `/match create` applies "
+				"those players' MMR twice."
 			)
 		)
 		try:
