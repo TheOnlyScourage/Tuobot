@@ -95,8 +95,13 @@ async def rating_hide(ctx: bot.Context, player: str, hide: bool = True) -> None:
 
 
 async def rating_reset(ctx: bot.Context) -> None:
-	"""Reset every player's rating on the channel."""
+	"""Blank every player's rating on the channel.
+
+	Owner-locked like the nuclear option: any admin could wipe the whole board
+	with one command, and /stats season_end already does the normal reset."""
 	ctx.check_perms(ctx.Perms.ADMIN)
+	if ctx.author.id != OWNER_ID:
+		raise bot.Exc.PermissionError(ctx.qc.gt("Owner-locked: only the bot owner can blank every rating."))
 	await ctx.qc.rating.reset()
 	await ctx.success(ctx.qc.gt("Done."))
 
