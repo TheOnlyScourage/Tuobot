@@ -2,7 +2,6 @@
 from time import time
 import re
 import asyncio
-from enum import Enum
 from nextcord import Forbidden
 
 from core.cfg_factory import FactoryTable, CfgFactory, Variables, VariableTable
@@ -15,7 +14,6 @@ from bot.constants import MAX_NICK_LEN
 from bot.stats.rating import Rating
 
 MAX_EXPIRE_TIME = 12*60*60
-MAX_PROMOTION_DELAY = 12*60*60
 
 # MAX_NICK_LEN centralized in bot/constants.py — imported below
 
@@ -27,11 +25,6 @@ def _build_rated_nick(rating: int, base_name: str) -> str:
 	return prefix + (base_name or "")[:avail]
 
 
-class Perms(Enum):
-	MEMBER = 0
-	MODERATOR = 1
-	ADMIN = 2
-
 
 class QueueChannel:
 
@@ -39,17 +32,12 @@ class QueueChannel:
 		table=FactoryTable(name='qc_configs', p_key="channel_id"),
 		name="qc_config",
 		sections=["General", "Auto-remove", "Rating", "Leaderboard"],
+		# Nov 2026: removed 12 settings that did nothing — prefix (text commands
+		# are gone), description (no /help), emoji_ranks and promotion_role /
+		# promotion_delay (only read by code nothing calls), and PUBobot's seven
+		# rating knobs (MMR is mmr_engine's alone). Saved values for them are
+		# simply ignored, and dropped the next time the config is saved.
 		variables=[
-			Variables.StrVar(
-				"prefix",
-				display="Command prefix",
-				section="General",
-				description="Set the prefix before for the bot`s commands",
-				verify=lambda x: len(x) == 1,
-				verify_message="Command prefix must be exactly one symbol.",
-				default="!",
-				notnull=True
-			),
 			Variables.OptionVar(
 				"lang",
 				display="Language",
@@ -72,20 +60,6 @@ class QueueChannel:
 				section="General",
 				description="Members with this role will be able to use the bot`s moderation commands."
 			),
-			Variables.RoleVar(
-				"promotion_role",
-				display="Promotion role",
-				section="General",
-				description="Set a role to highlight on !promote and !sub commands.",
-			),
-			Variables.DurationVar(
-				"promotion_delay",
-				display="Promotion delay",
-				section="General",
-				description="Set time delay between players can promote queues.",
-				verify=lambda x: 0 <= MAX_PROMOTION_DELAY,  # noqa: SIM300
-				verify_message=f"Promotion delay time must be less than {seconds_to_str(MAX_EXPIRE_TIME)}"
-			),
 			Variables.BoolVar(
 				"remove_offline",
 				display="Auto remove on offline status",
@@ -95,7 +69,7 @@ class QueueChannel:
 			),
 			Variables.DurationVar(
 				"expire_time",
-				display="Auto remove on timer after last !add command",
+				display="Auto remove on timer after last /add",
 				section="Auto-remove",
 				verify=lambda x: 0 < x <= MAX_EXPIRE_TIME,
 				verify_message=f"Expire time must be less than {seconds_to_str(MAX_EXPIRE_TIME)}"
@@ -116,16 +90,10 @@ class QueueChannel:
 				"max_auto_ready",
 				display="Auto ready limit",
 				section="General",
-				description="Set limit on how long !auto_ready duration can be. Disable to prohibit the command.",
+				description="Longest duration /auto_ready accepts. Leave empty for no limit.",
 				default=15*60,
 				verify=lambda d: 0 < d < 86401,
 				verify_message="Auto ready limit must be 24 hours or less."
-			),
-			Variables.TextVar(
-				"description",
-				display="Description",
-				section="General",
-				description="Set an answer on '!help' command."
 			),
 			Variables.TextChanVar(
 				"rating_channel",
@@ -157,81 +125,10 @@ class QueueChannel:
 				on_change=bot.update_rating_system
 			),
 			Variables.IntVar(
-				"rating_min_deviation",
-				display="Minimum deviation",
-				section="Rating",
-				description="Set players minimum deviation value. If not set, rating changes may seek to 0 over time.",
-				default=100,
-				verify=lambda x: 1 <= x <= 3000,
-				verify_message="Rating minimum deviation must be between 1 and 3000",
-				on_change=bot.update_rating_system
-			),
-			Variables.SliderVar(
-				"rating_scale",
-				display="Rating scale",
-				section="Rating",
-				max_val=1000,
-				description="Scale all rating changes, 100% = x1.",
-				on_change=bot.update_rating_system
-			),
-			Variables.SliderVar(
-				"rating_loss_scale",
-				display="Rating loss scale",
-				section="Rating",
-				description="\n".join([
-					"Scale rating changes for losses, 100% = x1.",
-					"Warning: changing this will break ratings balance."
-				]),
-				max_val=500,
-				on_change=bot.update_rating_system
-			),
-			Variables.SliderVar(
-				"rating_win_scale",
-				display="Rating win scale",
-				section="Rating",
-				description="\n".join([
-					"Scale rating changes for wins, 100% = x1.",
-					"Warning: changing this will break ratings balance."
-				]),
-				max_val=500,
-				on_change=bot.update_rating_system
-			),
-			Variables.SliderVar(
-				"rating_draw_bonus",
-				display="Rating draw bonus",
-				section="Rating",
-				description="\n".join([
-					"Add rating bonus for draws.",
-					"100% = x + 1x // -100% = x - 1x",
-					"Warning: changing this will break ratings balance."
-				]),
-				max_val=500,
-				min_val=-500,
-				on_change=bot.update_rating_system
-			),
-			Variables.BoolVar(
-				"rating_ws_boost",
-				display="Rating winning streak boost",
-				section="Rating",
-				description="Apply rating boost from 1.5x to 3x from 3 to 6 won matches in a row.",
-				notnull=True,
-				default=0,
-				on_change=bot.update_rating_system
-			),
-			Variables.BoolVar(
-				"rating_ls_boost",
-				display="Rating losing streak boost",
-				section="Rating",
-				description="Apply rating boost from 1.5x to 3x from 3 to 6 lost matches in a row.",
-				notnull=True,
-				default=0,
-				on_change=bot.update_rating_system
-			),
-			Variables.IntVar(
 				"rating_decay",
 				display="Rating decay",
 				section="Rating",
-				description="Set weekly rating decay until a nearest rank is met. Applies only to inactive players.",
+				description="Weekly rating loss for inactive players; stops at their rank's threshold (the real rank ladder).",
 				default=10,
 				verify=lambda x: 0 <= x <= 100,
 				verify_message="Rating decay must be between 0 and 100",
@@ -251,7 +148,7 @@ class QueueChannel:
 				"lb_min_matches",
 				display="Leaderboard min matches",
 				section="Leaderboard",
-				description="Set a minimum amount of played matches required for a player to be shown in the !leaderboard.",
+				description="Minimum matches played for a player to be shown on /leaderboard.",
 				default=40
 			),
 			Variables.DurationVar(
@@ -271,16 +168,11 @@ class QueueChannel:
 				default=1,
 				notnull=True
 			),
-			Variables.BoolVar(
-				"emoji_ranks",
-				display="Ranks are emojis",
-				description="Display rank strings like emojis.",
-				section="Leaderboard",
-				notnull=True,
-				default=False
-			),
+			# Only maps ratings to Discord rank ROLES now. Ranks shown in embeds,
+			# decay floors and /rating snap all use the code ladder
+			# (constants.RANK_EMOJIS).
 			VariableTable(
-				'ranks', display="Rating ranks", section="Leaderboard",
+				'ranks', display="Rank roles", section="Leaderboard",
 				variables=[
 					Variables.StrVar("rank", default="〈F〉"),
 					Variables.IntVar("rating", default=0, description="The rank will be given on this rating or higher."),
@@ -325,15 +217,8 @@ class QueueChannel:
 			channel_id=(self.cfg.rating_channel or text_channel).id,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
-			min_deviation=self.cfg.rating_min_deviation,
-			loss_scale=self.cfg.rating_loss_scale,
-			win_scale=self.cfg.rating_win_scale,
-			draw_bonus=self.cfg.rating_draw_bonus,
-			ws_boost=self.cfg.rating_ws_boost,
-			ls_boost=self.cfg.rating_ls_boost
 		)
 		self.queues = []
-		self.last_promote = 0
 
 	async def update_info(self, text_channel):
 		self.cfg.cfg_info['channel_name'] = text_channel.name
@@ -350,13 +235,6 @@ class QueueChannel:
 			channel_id=(self.cfg.rating_channel or self).id,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
-			min_deviation=self.cfg.rating_min_deviation,
-			scale=self.cfg.rating_scale,
-			loss_scale=self.cfg.rating_loss_scale,
-			win_scale=self.cfg.rating_win_scale,
-			draw_bonus=self.cfg.rating_draw_bonus,
-			ws_boost=self.cfg.rating_ws_boost,
-			ls_boost=self.cfg.rating_ls_boost
 		)
 
 	async def apply_rating_decay(self):
@@ -372,7 +250,10 @@ class QueueChannel:
 
 	async def new_queue(self, ctx, name, size, kind):
 		kind.validate_name(name)
-		if 1 > size > 100:
+		# Was `if 1 > size > 100`, which can never be true: size 0 or 1000 went
+		# through, the save then failed half-way and left a nameless queue row
+		# that broke queue autocomplete after the next deploy.
+		if not 2 <= size <= 100:
 			raise ValueError("Queue size must be between 2 and 100.")
 		if name.lower() in [i.name.lower() for i in self.queues]:
 			raise ValueError("Queue with this name already exists.")
