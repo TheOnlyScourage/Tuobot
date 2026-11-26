@@ -11,7 +11,18 @@ import time
 from core.database import db
 from core.utils import find, get_nick
 
+from bot.constants import RANK_EMOJIS
 from bot.stats import stats
+
+
+def _ladder_floors() -> list[int]:
+	"""The rank thresholds decay and /rating snap stop at: the code ladder
+	(constants.RANK_EMOJIS), i.e. the ranks players actually see. They used to
+	come from the per-channel `ranks` config — PUBobot's default 500/1000/…/2500
+	unless someone rewrote it — so an inactive Star (2200+) decayed down to
+	2000 and inactive Wood/Iron players sank toward 500. That table now only
+	maps Discord rank roles. Chad (0) is the bottom, not a floor."""
+	return [threshold for threshold, _ in RANK_EMOJIS if threshold]
 
 if TYPE_CHECKING:
 	from nextcord import Member
@@ -24,22 +35,13 @@ class Rating:
 
 	table = "qc_players"
 
-	def __init__(
-			self, channel_id: int, init_rp: int = 1500, init_deviation: int = 300, min_deviation: int | None = None, scale: int = 100,
-			loss_scale: int = 100, win_scale: int = 100, draw_bonus: int = 0, ws_boost: bool = False, ls_boost: bool = False
-	):
-		"""Configure the rating store from queue config. The scaling knobs are kept
-		for config compatibility but no longer affect MMR (see mmr_engine.py)."""
+	def __init__(self, channel_id: int, init_rp: int = 1500, init_deviation: int = 300, **_legacy_knobs):
+		"""Configure the rating store from channel config. `_legacy_knobs` swallows
+		PUBobot's old scaling settings (scale, win/loss scale, draw bonus, streak
+		boosts, min deviation): nothing read them — MMR is mmr_engine's alone."""
 		self.channel_id = channel_id
 		self.init_rp = init_rp
 		self.init_deviation = init_deviation
-		self.min_deviation = min_deviation or 0
-		self.scale = (scale or 100)/100.0
-		self.win_scale = (win_scale or 100)/100.0
-		self.loss_scale = (loss_scale or 100)/100.0
-		self.draw_bonus = (draw_bonus or 0)/100.0
-		self.ws_boost = ws_boost
-		self.ls_boost = ls_boost
 
 	async def get_players(self, user_ids) -> list[dict]:
 		""" Return rating or initial rating for each member """
@@ -105,10 +107,11 @@ class Rating:
 		"""Flag a player hidden (excluded from leaderboards) or unhidden."""
 		await db.update(self.table, dict(is_hidden=hide), keys=dict(channel_id=self.channel_id, user_id=user_id))
 
-	async def snap_ratings(self, ranks_table: list[dict]) -> None:
+	async def snap_ratings(self, ranks_table: list[dict] | None = None) -> None:
 		"""Snap every rating down to the nearest rank threshold at or below it
-		(floored at the lowest rank), recording each change in history."""
-		ranks = [i['rating'] for i in ranks_table if i['rating'] != 0]
+		(floored at the lowest rank), recording each change in history.
+		`ranks_table` is ignored — see _ladder_floors()."""
+		ranks = _ladder_floors()
 		lowest = min(ranks)
 		data = await db.select(('*',), self.table, where=dict(channel_id=self.channel_id))
 		history = []
@@ -130,10 +133,12 @@ class Rating:
 		await db.insert_many(self.table, data, on_dublicate='replace')
 		await db.insert_many('qc_rating_history', history)
 
-	async def apply_decay(self, rating: int, deviation: int, ranks_table: list[dict]) -> None:
-		""" Apply weekly rating and deviation decay """
+	async def apply_decay(self, rating: int, deviation: int, ranks_table: list[dict] | None = None) -> None:
+		"""Apply weekly rating and deviation decay: an inactive player loses
+		`rating` per week but never drops below their current rank's threshold.
+		`ranks_table` is ignored — see _ladder_floors()."""
 		now = int(time.time())
-		ranks = [i['rating'] for i in ranks_table if i['rating'] != 0]
+		ranks = _ladder_floors()
 		data = await stats.last_games(self.channel_id)
 		history = []
 		to_update = []
