@@ -1,7 +1,4 @@
-# Python 3.13: nextcord 3.x needs 3.12 or newer. Keep this version in step
-# with .github/workflows/ci.yml and ruff.toml's target-version
-# (tests/test_platform.py fails if they drift apart).
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 # Stream logs in real time (unbuffered stdout) so Railway's log viewer
 # shows output as it happens rather than in delayed chunks.
