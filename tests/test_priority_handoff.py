@@ -186,7 +186,7 @@ def test_release_frees_the_check_in_without_a_strike():
 		players=[ODA, GBK], ranked=True, gt=lambda s: s,
 		queue=types.SimpleNamespace(name="1v1", revert=revert),
 	)
-	fake_bot = types.SimpleNamespace(active_matches=[match], waiting_reactions={99: "handler"})
+	fake_bot = types.SimpleNamespace(active_matches=[match])  # check-in has no reaction handler to drop
 	ns = _methods("bot/match/check_in.py", "CheckIn", {"release", "_begin_close", "_safe_notice"}, {
 		"bot": fake_bot, "DiscordException": Exception, "log": _Log(), "record_violation": no_strikes,
 		"join_and": lambda xs: " & ".join(xs),
@@ -203,7 +203,7 @@ def test_release_frees_the_check_in_without_a_strike():
 	asyncio.run(ns["release"](ci, Ctx(), [ODA], "6v6"))
 	assert reverted == [([ODA], [GBK])]               # GreenBlackKatt back to the 1v1 queue
 	assert "moved to the **6v6** match" in notices[0]
-	assert fake_bot.active_matches == [] and fake_bot.waiting_reactions == {} and deleted
+	assert fake_bot.active_matches == [] and deleted
 	asyncio.run(ns["release"](ci, Ctx(), [ODA], "6v6"))  # a second call is a no-op
 	assert len(reverted) == 1
 
