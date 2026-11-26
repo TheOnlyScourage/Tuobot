@@ -12,6 +12,7 @@ from nextcord.errors import DiscordException
 from core.utils import join_and
 from core.console import log
 from bot.stats.checkin_tracker import record_violation
+from bot.buttons import CheckInButtons
 
 if TYPE_CHECKING:
 	from nextcord import Member
@@ -118,14 +119,16 @@ class CheckIn:
 				await self.finish(ctx)
 
 	async def start(self, ctx: bot.Context) -> None:
-		"""Post the check-in message, add the ready/abort reactions, register the
-		reaction handler, and render the board."""
+		"""Post the check-in message (with Ready / Not ready buttons), add the
+		ready/abort reactions, register the reaction handler, and render the board."""
 		self._closing = False
 		# Snapshot originals so standby joiners aren't penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
 		not_ready = [p for p in self.m.players if p not in self.ready_players]
+		# The buttons sit next to the reactions; both do the same thing.
 		self.message = await ctx.channel.send(
-			content=self._ping_line(not_ready), embed=self.m.embeds.check_in(not_ready)
+			content=self._ping_line(not_ready), embed=self.m.embeds.check_in(not_ready),
+			view=CheckInButtons(allow_discard=self.allow_discard)
 		)
 
 		emojis = [self.READY_EMOJI, '🔸', self.NOT_READY_EMOJI] if self.allow_discard else [self.READY_EMOJI]
