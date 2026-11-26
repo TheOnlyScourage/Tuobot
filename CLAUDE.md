@@ -46,6 +46,7 @@ The Nov 2026 audit added one guard file per batch of fixes. Most pull single fun
 - `test_parse_duration.py` — duration parsing (overflow, year length, hostile input) · `test_state_restore.py` — save/restore of queues and matches across a redeploy · `test_daily_clear.py` — the 4 AM clear carries on past one broken channel
 - `test_match_flow.py` — check-in's single exit, standby, draft subs, crashed-match cleanup
 - `test_stats_integrity.py` — transactions, the fill-in penalty, undo, season stamping, atomic match ids, indexes
+- `test_cleanup.py` — the dead code stays gone, background work goes through `spawn`, a failed match start puts the lobby back in the queue, `/stats replace_player` is one transaction
 - `test_admin_and_config.py` — permissions, confirm-before-destroying, owner locks, the `start.py` → `config.cfg` round trip, removed settings, the crash exit code, and repo-wide wiring checks: every `bot.commands.X` exists, every `__all__` name exists, imports between the bot's own files resolve, and **`README.md` lists every slash command** (it's what `/commands` links to — add a row when you add a command)
 
 Test files **must** be named `test_*.py` — pytest silently skips anything else.
@@ -67,7 +68,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`client.py`** — `DiscordClient` subclass of `nextcord.Client`; custom event system allowing multiple handlers per event (`@dc.event`)
 - **`database.py`** → **`DBAdapters/mysql.py`** — async MySQL access (aiomysql pool). The single adapter instance is `core.database.db`
 - **`cfg_factory.py`** — generic typed-config system (`CfgFactory`): per-channel and per-queue settings stored in MySQL, used by both `QueueChannel` and `PickupQueue`
-- **`console.py`** — logging (`log`; `LOG_LEVEL` is case-insensitive and also accepts ERROR / WARNING / OFF), **`locales.py`** — translation lookups (`gt`), **`utils.py`** — shared helpers (`find`, `get`, `get_nick`, `seconds_to_str`, `parse_duration`, etc.)
+- **`console.py`** — logging (`log`; `LOG_LEVEL` is case-insensitive and also accepts ERROR / WARNING / OFF), **`locales.py`** — translation lookups (`gt`), **`utils.py`** — shared helpers (`find`, `get`, `get_nick`, `seconds_to_str`, `parse_duration`, `spawn` for background work, `send_dm`, etc.)
 
 ### Bot layer (`bot/`)
 - **`bot/__init__.py`** — global state: `queue_channels` (the central `channel_id → QueueChannel` dict), `active_matches`, `active_queues`, `expire`, plus re-exports (`Match`, `PickupQueue`, `QueueChannel`, `Context`, `Exc`, `commands`, `stats`, …)
@@ -82,7 +83,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 - **`bot/commands/`** — command implementations (`admin`, `config`, `matches`, `misc`, `queues`, `stats`), star-imported via `__init__.py`; plus `views.py` (nextcord UI Views — currently `LeaderboardView`: button pagination, 🔍 Me, and an optional 🔁 two-board toggle; renders via injected callables so it imports nothing from the bot package)
 - **`bot/context/`** — command-context abstraction:
   - `slash/` — the primary interface: command definitions in `commands.py` (thin wrappers over `bot/commands/` via `run_slash()`), autocomplete in `autocomplete.py`, subcommand groups in `groups.py` (`/channel`, `/queue`, `/match`, `/rating`, `/stats`, `/noadds`, `/phrases` — there is no `/admin` group; the Python names are still `admin_*`), `SlashContext` in `context.py`
-  - `message/` — an **unused** `MessageContext`. The `++` / `--` add/remove shorthand it served was deleted from `on_message` in June 2026 (in the same edit that removed the AoE2 sync), so nothing imports it. The bot is slash-only apart from the two `!enable_tuobot` / `!disable_tuobot` triggers. (The web dashboard's `WebContext` was removed in Nov 2026.)
+  - The bot is **slash-only** apart from the two literal `!enable_tuobot` / `!disable_tuobot` triggers in `on_message`. The old `!text`-command `MessageContext` (and the `++` / `--` shorthand it served), the web dashboard's `WebContext` and `core/client.py`'s text-command registry were all removed by Nov 2026.
 - **`bot/stats/`** — stats, rating, and season logic:
   - `mmr_engine.py` — **the single source of truth for the MMR formula** (`compute_mmr_changes`): flat captain rewards, upset scaling, streak multipliers
   - `rating.py` — a single `Rating` class: per-channel rating **storage/maintenance** (fetch/seed, admin adjustments, weekly decay, rank snapping, season reset). It does *not* compute match deltas — `mmr_engine` does. Decay stops at, and `/rating snap` rounds down to, the thresholds of the real ladder (`constants.RANK_EMOJIS`), never the channel's `ranks` role table
@@ -100,7 +101,6 @@ Custom MMR (`mmr_engine`), Hogwarts **house points / House Cup** (awarded on ran
 ### Utils & scripts
 Standalone tools, not imported by the running bot:
 - `scripts/backup_db.sh` — DB backup helper
-- `update_db.py` (repo root) — an obsolete 2022 PUBobot config-format migration (interactive; nothing runs or mentions it any more)
 
 ## Key conventions
 - **Indentation: tabs** throughout, with one exception — `bot/stats/stats.py` uses 4-space indentation. Match the file you're editing.
@@ -112,6 +112,7 @@ Standalone tools, not imported by the running bot:
 - **Transactions:** `async with db.transaction() as tx:` — inside the block, read and write **only through `tx`** (`tx.insert` / `update` / `delete` / `execute` / `select_one`). A `db.` call inside the block runs on another pool connection: it isn't rolled back and can't see the uncommitted rows. Anything raised inside rolls the whole block back.
 - **`PubobotException` subclasses `BaseException`**, so `except Exception` does not catch it. Loops and handlers that must survive any error catch `(Exception, bot.Exc.PubobotException)`. `bot/__init__.py` imports `main.py` before `bot.Exc` exists, so module-level code in `main.py` imports from `bot.exceptions` directly.
 - **A match is reported once:** `report_loss` / `report_win` / `record_abort` start with `_ensure_active()`, and `finish_match` removes the match from `active_matches` before its first `await`. **Check-in has one exit:** every path that ends a check-in (`finish`, `finish_race`, aborts, timeouts) starts with `if not self._begin_close(): return`, so two endings firing together can't both run.
+- **Background work goes through `core.utils.spawn(coro, name=...)`**, never a bare `asyncio.create_task()` / `ensure_future()` whose result is thrown away: asyncio holds tasks only weakly, so those can be garbage-collected mid-flight, and their errors never reached the bot's log. `spawn` keeps the task alive and logs a failure. DM people with `send_dm(member, ...)` — closed DMs are normal, not an error. (`test_cleanup.py` fails on a fire-and-forget task.)
 - **Pings go in message content.** Discord never pings a mention inside an embed, so the check-in call-out and the captain's "your pick" ping are sent as `content=`.
 - **Destructive slash commands ask first:** give them `confirm: bool = SlashOption(**_CONFIRM)` and return unless `_confirm_or_explain(...)` passes, before doing anything. **Owner-locked** (`constants.OWNER_ID`, checked on top of ADMIN): `/stats nuclear_option`, `/rating reset`, `/channel cleanup`, `/autoreply`. Any `bot.commands.X` a slash wrapper calls must be listed in that module's `__all__` — a stale `__all__` crashes the star-import at boot.
 - **`bot.queue_channels`** is the central `channel_id → QueueChannel` dict. State persists to the MySQL `saved_state` table (+ `saved_state.json` fallback) and is restored on startup.
