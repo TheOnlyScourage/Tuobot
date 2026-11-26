@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import nextcord
-from asyncio import iscoroutinefunction
+# inspect's, not asyncio's: asyncio.iscoroutinefunction is deprecated from Python 3.14.
+from inspect import iscoroutinefunction
 
 
 class FakeMember:
