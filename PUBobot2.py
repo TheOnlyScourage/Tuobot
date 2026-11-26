@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 import time
 import signal
 import asyncio
@@ -33,19 +34,37 @@ from core import config, console, database, cfg_factory
 from core.client import dc
 
 loop = asyncio.get_event_loop()
-loop.run_until_complete(database.db.connect())
 
-# One-time fix: set NULL deviations to 350 (prevents rating.py TypeError on match start)
-async def _fix_null_deviations():
-    await database.db.fetchall(
-        "UPDATE qc_players SET deviation = 350 WHERE deviation IS NULL", []
-    )
-loop.run_until_complete(_fix_null_deviations())
+
+def _connect_with_retry(attempts: int = 12, delay: float = 5.0) -> None:
+	"""MySQL being briefly unreachable at boot (Railway restarting it, a network
+	blip) used to crash the bot on the spot, and railway.toml gives up after 5
+	failed restarts. Keep trying for about a minute first."""
+	for attempt in range(1, attempts + 1):
+		try:
+			loop.run_until_complete(database.db.connect())
+			return
+		except Exception as e:
+			if attempt == attempts:
+				raise
+			console.log.error(f"Database not reachable yet ({e!r}); retry {attempt}/{attempts - 1} in {delay:.0f}s")
+			time.sleep(delay)
+
+
+_connect_with_retry()
 
 # Initialize all Tuobot-specific MySQL tables in one consolidated call.
 # See bot/db_init.py for the full list and ordering.
 from bot.db_init import init_all_tables
 loop.run_until_complete(init_all_tables())
+
+
+# One-time fix: set NULL deviations to 350 (prevents rating.py TypeError on
+# match start). It runs AFTER init_all_tables: on an empty or freshly restored
+# database qc_players doesn't exist until then, and this used to crash the boot.
+async def _fix_null_deviations():
+	await database.db.execute("UPDATE qc_players SET deviation = 350 WHERE deviation IS NULL")
+loop.run_until_complete(_fix_null_deviations())
 
 # Load bot
 import bot
@@ -55,14 +74,17 @@ from bot.web import start_web_server
 web_runner = None
 
 log = console.log
+_crashed = False  # set when a supervised task dies; decides the exit code
 
 
 def _task_done_callback(task):
+	global _crashed
 	if task.cancelled():
 		return
 	exc = task.exception()
 	if exc is None:
 		return
+	_crashed = True
 	tb_text = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 	log.error(f"CRITICAL: supervised task '{task.get_name()}' crashed:\n{tb_text}")
 	if sentry_sdk is not None:
@@ -154,3 +176,10 @@ supervised_task(dc.start(config.cfg.DC_BOT_TOKEN), name="discord_client")
 
 log.info("Connecting to discord...")
 loop.run_forever()
+
+if _crashed:
+	# railway.toml restarts the service only ON_FAILURE, i.e. on a non-zero exit
+	# code. This used to exit 0 after a crash (Discord unreachable at boot, the
+	# think loop dying), so Railway saw a clean stop and left the bot offline
+	# until the next deploy. A normal shutdown (SIGTERM on redeploy) still exits 0.
+	sys.exit(1)
