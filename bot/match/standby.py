@@ -188,6 +188,11 @@ async def finalize_race_results(ci: CheckIn, ctx: bot.Context) -> None:
 			match.init_captains(match.cfg['pick_captains'])
 			match.init_teams('draft')
 			match._assign_house_names()
+	else:
+		# Non-draft modes built their teams from the ORIGINAL roster too. Without
+		# a rebuild the bounced player stayed on a team and the standby winner was
+		# on none, so registration filed the winner as team 1 (Nov 2026 audit).
+		match.init_teams(match.cfg['pick_teams'])
 
 	# Clear offline-immunity for players who made the final roster, mirroring
 	# what queue_channel.queue_started() does for normally-filled matches.
@@ -200,8 +205,10 @@ async def finalize_race_results(ci: CheckIn, ctx: bot.Context) -> None:
 			bot.allow_offline.remove(p.id)
 
 	if losers:
-		await ctx.notice(match.gt(
+		await ci._safe_notice(ctx, match.gt(
 			"{losers} didn\u2019t make the cut and have been returned to standby."
 		).format(losers=join_and([m.mention for m in losers])))
 
-	await ci.finish(ctx)
+	# CheckIn.finish_race() already claimed the close before calling us, so
+	# use the unguarded half \u2014 finish() would see the claim and do nothing.
+	await ci._finish(ctx)
