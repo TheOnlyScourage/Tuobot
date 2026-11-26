@@ -1,42 +1,20 @@
 # -*- coding: utf-8 -*-
-import random
 import re
-from prettytable import PrettyTable, MARKDOWN
-from nextcord import Embed
-from nextcord.utils import get, find, escape_markdown  # noqa: F401
+import asyncio
+import traceback
+from nextcord import Embed, DiscordException
+# get / find are re-exported: the bot imports them from here.
+from nextcord.utils import get, find  # noqa: F401
 from datetime import timedelta
 
-
-class EmojiFormatter(object):  # noqa: UP004
-	""" Converts emoji name to an emoji string """
-
-	def __init__(self, guild):
-		self.guild = guild
-		super().__init__()
-
-	def __format__(self, string):
-		try:
-			return str(next(i for i in self.guild.emojis if i.name == string))
-		except StopIteration:
-			return ''
-
-
-def random_string(length):
-	letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-	return ''.join(random.choice(letters) for i in range(length))
-
-
-def hl_user(user_id):
-	return '<@' + str(user_id) + '>'
+# Nov 2026: removed eleven helpers nothing called any more (EmojiFormatter,
+# random_string, hl_user, hl_role, format_channel/role/emoji/message, escape,
+# reply, discord_table) — leftovers of PUBobot's text commands.
 
 
 def join_and(names):
 	""" Generates 'item1, item2, item3 & item4' string from a list """
 	return ', '.join(names[:-1]) + f' & {names[-1]}' if len(names) > 1 else names[0]
-
-
-def hl_role(role_id):
-	return '<&' + str(role_id) + '>'
 
 
 def error_embed(description, title='Error'):
@@ -51,37 +29,6 @@ def ok_embed(description, title='Success'):
 		return Embed(title=title, description=description, color=0x32cd32)
 	else:
 		return Embed(description=description, color=0x32cd32)
-
-
-def format_channel(string, guild):
-	channel = get(guild.text_channels, name=string)
-	return '<#{}>'.format(channel.id) if channel else None
-
-
-def format_role(string, guild):
-	role = get(guild.roles, name=string)
-	return '<@&{}>'.format(role.id) if role else None
-
-
-def format_emoji(string, guild):
-	emoji = get(guild.emojis, name=string)
-	return '<:{}:{}>'.format(emoji.name, emoji.id) if emoji else None
-
-
-def format_message(_string, _guild, **kwargs):
-	_string = re.sub('#([^ ,.!?]+)', lambda i: format_channel(i.group(1), _guild) or i.group(0), _string)
-	_string = re.sub('@([^ ,.!?]+)', lambda i: format_role(i.group(1), _guild) or i.group(0), _string)
-	_string = re.sub(':([^ ,.!?]+):', lambda i: format_emoji(i.group(1), _guild) or i.group(0), _string)
-	return _string.format(**kwargs)
-
-
-def escape(string):
-	""" Escape discord text formatting characters """
-	return re.sub('([`*_])', lambda i: '\\'+i.group(), string)
-
-
-async def reply(msg, string):
-	await msg.channel.send('<@{}>, {}'.format(msg.author.id, string))
 
 
 # No real duration ("12h30m15s", "1d 12h", "100Y", "01:30:00") comes close to
@@ -159,19 +106,6 @@ def get_nick(user):
 	return escape_cb(string)
 
 
-def discord_table(header, rows):
-	t = PrettyTable()
-	t.set_style(MARKDOWN)
-	t.header = False
-	t.add_row(header)
-	t.add_rows(rows)
-	content = t.get_string().split("\n")
-	text = "```markdown\n" + content[0].strip("|")
-	text += "\n" + "-" * len(content[0]) + "\n"
-	text += "\n".join(line.strip("|") for line in content[1:]) + "\n```"
-	return text
-
-
 def split_big_text(string: str, limit: int = 2000, delimiter: str = None, prefix: str = "", suffix: str = ""):
 	""" Yields pieces with limited length and prefix and suffix attached. Split by delimiter if possible. """
 	_limit = limit-len(prefix+suffix)
@@ -190,3 +124,41 @@ class SafeTemplateDict(dict):
 	""" returns {key} for missing keys, useful for string.format_map() """
 	def __missing__(self, key):
 		return '{'+key+'}'
+
+
+# ── Background work ───────────────────────────────────────────────────────────
+# asyncio keeps only a WEAK reference to a task, so a bare create_task() /
+# ensure_future() whose result nobody keeps can be garbage-collected before it
+# finishes, and an exception inside one surfaced only as "Task exception was
+# never retrieved" on stderr, never in the bot's log.
+_background_tasks = set()
+
+
+def spawn(coro, name=None):
+	"""Run `coro` in the background: keep it alive until it finishes and log it
+	if it fails. Use this instead of a bare asyncio.create_task()."""
+	task = asyncio.ensure_future(coro)
+	if name:
+		task.set_name(name)
+	_background_tasks.add(task)
+	task.add_done_callback(_background_done)
+	return task
+
+
+def _background_done(task):
+	_background_tasks.discard(task)
+	if task.cancelled() or task.exception() is None:
+		return
+	from core.console import log  # here, not at import time: this module stays light
+	exc = task.exception()
+	log.error("Background task {!r} failed: {!r}\n{}".format(
+		task.get_name(), exc, "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+	))
+
+
+async def send_dm(member, *args, **kwargs):
+	"""DM a member. Closed DMs (or any other Discord refusal) aren't an error."""
+	try:
+		await member.send(*args, **kwargs)
+	except DiscordException:
+		pass
