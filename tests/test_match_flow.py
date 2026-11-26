@@ -61,8 +61,37 @@ def test_nothing_acts_once_check_in_is_closing():
 	for name in ("think", "refresh"):
 		first = _body(_func(tree, name, cls="CheckIn"))[0]
 		assert ast.unparse(first) == "if self._closing:\n    return", name
-	assert "self._closing" in ast.unparse(_func(tree, "process_reaction", cls="CheckIn").body[1].test)
 	assert "self._closing" in ast.unparse(_func(tree, "set_ready", cls="CheckIn"))
+
+
+# ── check-in is buttons only (Nov 26) ────────────────────────────────────────
+
+def test_check_in_is_buttons_only():
+	"""The ✅ / ⛔ reactions did what the buttons do. Removed: one way to check
+	in, three fewer Discord calls per check-in. /ready and /notready stay."""
+	src = (ROOT / "bot/match/check_in.py").read_text(encoding="utf-8")
+	klass = next(n for n in _tree("bot/match/check_in.py").body if isinstance(n, ast.ClassDef) and n.name == "CheckIn")
+	names = {n.name for n in klass.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+	names |= {t.id for n in klass.body if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
+	assert not {"process_reaction", "READY_EMOJI", "NOT_READY_EMOJI"} & names
+	assert "add_reaction" not in src and "waiting_reactions" not in src
+	start = ast.unparse(_func(_tree("bot/match/check_in.py"), "start", cls="CheckIn"))
+	assert "view=CheckInButtons(allow_discard=self.allow_discard)" in start
+
+
+def test_nothing_tells_players_to_react_to_check_in():
+	board = ast.unparse(_func(_tree("bot/match/embeds.py"), "check_in"))
+	standby = (ROOT / "bot/match/standby.py").read_text(encoding="utf-8")
+	assert "react" not in board.lower() and "react" not in standby.lower()
+
+
+def test_party_up_keeps_its_reaction_and_nothing_handles_un_reacts():
+	events = _tree("bot/events.py")
+	handlers = {n.name for n in events.body if isinstance(n, ast.AsyncFunctionDef)}
+	assert "on_reaction_add" in handlers           # the party-up ✅ still needs it
+	assert "on_raw_reaction_remove" not in handlers  # only check-in used un-reacts
+	party = (ROOT / "bot/match/party_code.py").read_text(encoding="utf-8")
+	assert "bot.waiting_reactions[self.party_message_id] = self._process_reaction" in party
 
 
 def test_race_finish_uses_the_unguarded_half():
