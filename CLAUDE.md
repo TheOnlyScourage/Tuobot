@@ -4,14 +4,14 @@ This file provides guidance to Claude (and Claude Code) when working with code i
 
 ## Project
 
-**Tuobot** — a Discord pickup-queue bot for a **Q6 (Quidditch 6v6)** community, purpose-built for the LEAGUE7 server. It began as a fork of PUBobot2 → NammaPUBobot (an AoE2 pickup bot) and has been progressively reshaped into a Quidditch-specific bot with a custom MMR system, Hogwarts house points, and specialty-role features. Built with **Python 3.11** (Railway `Dockerfile` ships `python:3.11-slim`; `ruff.toml` targets `py311`), **nextcord** (Discord library), **aiomysql**, and **MySQL**.
+**Tuobot** — a Discord pickup-queue bot for a **Q6 (Quidditch 6v6)** community, purpose-built for the LEAGUE7 server. It began as a fork of PUBobot2 → NammaPUBobot (an AoE2 pickup bot) and has been progressively reshaped into a Quidditch-specific bot with a custom MMR system, Hogwarts house points, and specialty-role features. Built with **Python 3.13** (Railway's `Dockerfile` ships `python:3.13-slim`, `ruff.toml` targets `py313` and CI runs 3.13 — bump all three together; `tests/test_platform.py` checks they agree), **nextcord 3.2** (Discord library), **aiomysql**, and **MySQL**.
 
 A sibling bot, **Niffler** (formerly Q6 Cards Bot — Scourage's separate Node.js card-collecting game, its own repo), serves the same community. A shared economy between the two is the one remaining roadmap item (see **Roadmap**).
 
 ## Running the Bot
 
 ```bash
-# Install dependencies
+# Install dependencies (Python 3.12+ — nextcord 3 needs it; the Dockerfile uses 3.13)
 pip3 install -r requirements.txt
 
 # Configure: copy and fill in credentials (config.cfg is raw Python, loaded via SourceFileLoader)
@@ -29,7 +29,7 @@ python3 start.py
 ## Linting
 
 ```bash
-# Lint — config in ruff.toml (line-length 120, TAB indentation, target py311)
+# Lint — config in ruff.toml (line-length 120, TAB indentation, target py313)
 ruff check .
 ```
 
@@ -46,6 +46,7 @@ The Nov 2026 audit added one guard file per batch of fixes. Most pull single fun
 - `test_parse_duration.py` — duration parsing (overflow, year length, hostile input) · `test_state_restore.py` — save/restore of queues and matches across a redeploy · `test_daily_clear.py` — the 4 AM clear carries on past one broken channel
 - `test_match_flow.py` — check-in's single exit, standby, draft subs, crashed-match cleanup
 - `test_stats_integrity.py` — transactions, the fill-in penalty, undo, season stamping, atomic match ids, indexes
+- `test_platform.py` — one Python version in the Dockerfile, CI and ruff; `requirements.txt` matches the imports; the bot runs on the Discord client's loop; embed text is always text
 - `test_cleanup.py` — the dead code stays gone, background work goes through `spawn`, a failed match start puts the lobby back in the queue, `/stats replace_player` is one transaction
 - `test_admin_and_config.py` — permissions, confirm-before-destroying, owner locks, the `start.py` → `config.cfg` round trip, removed settings, the crash exit code, and repo-wide wiring checks: every `bot.commands.X` exists, every `__all__` name exists, imports between the bot's own files resolve, and **`README.md` lists every slash command** (it's what `/commands` links to — add a row when you add a command)
 
@@ -61,7 +62,7 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest tests/ -v`, and a d
 2. Connects to MySQL via `core/database.py` → `core/DBAdapters/mysql.py` (aiomysql pool), retrying for about a minute if the database isn't up yet
 3. Runs `bot/db_init.py::init_all_tables` so every table exists (then a one-off NULL-deviation fix that needs `qc_players`)
 4. Imports `bot/`, which registers all commands and event handlers
-5. Starts the asyncio loop as three supervised tasks: the health-check web server, a 1-second `think()` tick, and the Discord client. If a supervised task crashes, the process saves state and exits with code **1**, so Railway's `ON_FAILURE` restart policy brings it back; a SIGTERM (redeploy) shuts down cleanly with code 0
+5. Starts the asyncio loop — **`dc.loop`**, the one nextcord creates when `dc` is built and keeps using internally (never make a second loop) — as three supervised tasks: the health-check web server, a 1-second `think()` tick, and the Discord client. If a supervised task crashes, the process saves state and exits with code **1**, so Railway's `ON_FAILURE` restart policy brings it back; a SIGTERM (redeploy) shuts down cleanly with code 0
 
 ### Core layer (`core/`)
 - **`config.py`** — loads `config.cfg` as a Python module (not INI/YAML — raw Python), then converts each key in `_SCHEMA` to its type with `_coerce` (an empty or non-numeric int keeps its default instead of crashing). Keys outside `_SCHEMA` are ignored
@@ -113,6 +114,7 @@ Standalone tools, not imported by the running bot:
 - **`PubobotException` subclasses `BaseException`**, so `except Exception` does not catch it. Loops and handlers that must survive any error catch `(Exception, bot.Exc.PubobotException)`. `bot/__init__.py` imports `main.py` before `bot.Exc` exists, so module-level code in `main.py` imports from `bot.exceptions` directly.
 - **A match is reported once:** `report_loss` / `report_win` / `record_abort` start with `_ensure_active()`, and `finish_match` removes the match from `active_matches` before its first `await`. **Check-in has one exit:** every path that ends a check-in (`finish`, `finish_race`, aborts, timeouts) starts with `if not self._begin_close(): return`, so two endings firing together can't both run.
 - **Background work goes through `core.utils.spawn(coro, name=...)`**, never a bare `asyncio.create_task()` / `ensure_future()` whose result is thrown away: asyncio holds tasks only weakly, so those can be garbage-collected mid-flight, and their errors never reached the bot's log. `spawn` keeps the task alive and logs a failure. DM people with `send_dm(member, ...)` — closed DMs are normal, not an error. (`test_cleanup.py` fails on a fire-and-forget task.)
+- **Embed text must be text (nextcord 3).** nextcord 2 ran `str()` over embed titles, descriptions, field names/values and footers; nextcord 3 sends them as given, so a number or `None` there is rejected by Discord. Wrap numbers in `str()` or an f-string (`test_platform.py` flags the obvious cases).
 - **Pings go in message content.** Discord never pings a mention inside an embed, so the check-in call-out and the captain's "your pick" ping are sent as `content=`.
 - **Destructive slash commands ask first:** give them `confirm: bool = SlashOption(**_CONFIRM)` and return unless `_confirm_or_explain(...)` passes, before doing anything. **Owner-locked** (`constants.OWNER_ID`, checked on top of ADMIN): `/stats nuclear_option`, `/rating reset`, `/channel cleanup`, `/autoreply`. Any `bot.commands.X` a slash wrapper calls must be listed in that module's `__all__` — a stale `__all__` crashes the star-import at boot.
 - **`bot.queue_channels`** is the central `channel_id → QueueChannel` dict. State persists to the MySQL `saved_state` table (+ `saved_state.json` fallback) and is restored on startup.
