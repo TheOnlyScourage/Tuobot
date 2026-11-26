@@ -69,10 +69,24 @@ class Draft:
 		except Exception as e:
 			bot.log.error(f"[snitch] flip embed failed for match {self.m.id}: {e}")
 
+	def picking_captain(self) -> Member | None:
+		"""The captain whose turn it is, mirroring pick()'s turn rule (None when
+		the draft is over or the last pick is automatic)."""
+		if self.m.state != self.m.DRAFT or not len(self.m.teams[2]):
+			return None
+		pick_step = max(0, len(self.m.teams[0]) + len(self.m.teams[1]) - 2)
+		if pick_step >= len(self.pick_order) - 1:
+			return None
+		team = self.m.teams[self.pick_order[pick_step]]
+		return team[0] if len(team) else None
+
 	async def print(self, ctx: bot.Context) -> None:
-		"""Render the draft board embed."""
+		"""Render the draft board embed, pinging the captain on the clock (a
+		mention only notifies from the message text, not from inside the embed)."""
+		captain = self.picking_captain()
+		content = self.m.gt("{captain}, your pick!").format(captain=captain.mention) if captain else None
 		try:
-			await ctx.notice(embed=self.m.embeds.draft())
+			await ctx.notice(content=content, embed=self.m.embeds.draft())
 		except DiscordException as e:
 			# Don't crash the match on a failed embed (rate limit / perms), but
 			# surface it in the Railway logs rather than swallowing silently.
@@ -164,26 +178,45 @@ class Draft:
 		elif not force and player1 not in self.sub_queue:
 			raise bot.Exc.PermissionError(self.m.gt("Specified player is not looking for a substitute."))
 
-		team = find(lambda t: player1 in t, self.m.teams)
-		team[team.index(player1)] = player2
-		self.m.players.remove(player1)
-		self.m.players.append(player2)
-		if player1 in self.sub_queue:
-			self.sub_queue.remove(player1)
+		self._swap_in(player1, player2)
 		await self._refresh_ratings()
 		await self.m.qc.remove_members(player2, ctx=ctx)
 		await bot.remove_players(player2, reason="pickup started")
 
 		if self.m.state == self.m.CHECK_IN:
-			await self.m.check_in.refresh()
+			# Was refresh() with no ctx: a TypeError AFTER the swap, so the
+			# caller never recorded the fill-in penalty and the board went stale.
+			await self.m.check_in.refresh(ctx)
 		elif self.m.state == self.m.WAITING_REPORT:
 			await ctx.notice(embed=self.m.embeds.final_message())
 		else:
 			await self.print(ctx)
 
+	def _swap_in(self, player1: Member, player2: Member) -> None:
+		"""Put player2 exactly where player1 was: same team slot (captain slot
+		included), the roster, and the check-in state. player2 starts NOT ready.
+		Leaving player1 in the ready set let the standby race finalizer seat
+		them again, after which every draft board render crashed."""
+		team = find(lambda t: player1 in t, self.m.teams)
+		if team is not None:
+			team[team.index(player1)] = player2
+		self.m.players.remove(player1)
+		self.m.players.append(player2)
+		if player1 in self.m.captains:
+			self.m.captains[self.m.captains.index(player1)] = player2
+		if player1 in self.sub_queue:
+			self.sub_queue.remove(player1)
+		ci = self.m.check_in
+		ci.ready_players.discard(player1)
+		ci.discarded_players.discard(player1)
+		if player1 in ci.ready_order:
+			ci.ready_order.remove(player1)
+
 	async def sub_auto(self, ctx: bot.Context, author: Member) -> None:
-		"""Substitute the caller with the next available queued player, then
-		fully re-matchmake both teams (unlike sub_for, which swaps in place)."""
+		"""Substitute the caller with the next available queued player, who takes
+		the caller's exact slot. It used to re-run matchmaking on everyone: one
+		unpicked player's /subauto auto-drafted the whole lobby, replaced both
+		captains and skipped straight to the report stage (Nov 2026 audit)."""
 		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the draft or waiting report stage."))
 
@@ -195,24 +228,14 @@ class Draft:
 		if candidate is None:
 			raise bot.Exc.NotFoundError(self.m.gt("There are no available players in the queue to substitute in."))
 
-		# Swap the caller out for the candidate and recompute ratings for the
-		# new roster so the rebalance below sees correct ELOs.
-		self.m.players.remove(author)
-		self.m.players.append(candidate)
-		if author in self.sub_queue:
-			self.sub_queue.remove(author)
+		self._swap_in(author, candidate)
 		await self._refresh_ratings()
 
 		# Pull the candidate out of the queue and expire timers, like /subfor.
 		await self.m.qc.remove_members(candidate, ctx=ctx)
 		await bot.remove_players(candidate, reason="pickup started")
 
-		# Full re-matchmaking: re-split everyone into the two most ELO-balanced
-		# teams. Reuses the proven matchmaking path; teams[0][0]/teams[1][0]
-		# become each team's reporting captain (sorted by rating).
-		self.m.init_teams("matchmaking")
-
-		await ctx.notice(self.m.gt("{old} was substituted by {new}. Teams have been rebalanced.").format(
+		await ctx.notice(self.m.gt("{old} was substituted by {new}, who takes their place.").format(
 			old=author.mention, new=candidate.mention
 		))
 
