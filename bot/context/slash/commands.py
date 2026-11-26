@@ -312,7 +312,7 @@ async def _sub_force(
 ) -> None: await run_slash(bot.commands.sub_force, interaction=interaction, player1=player1, player2=player2)
 
 
-@dc.slash_command(name='swap', description='Swap two players (within match, queue, or bring an outsider in).', **guild_kwargs)
+@dc.slash_command(name='swap', description='Swap two players (within match, queue, or bring an outsider in).', **groups.MOD_MENU, **guild_kwargs)
 async def _swap_players(
 		interaction: Interaction,
 		player1: Member = SlashOption(name="player1", description="First player.", verify=False),
@@ -758,7 +758,7 @@ async def donbot(interaction: Interaction) -> None:
 		await sender("The age of Donbot is over.")
 
 
-@dc.slash_command(name='autoreply', description="Owner: toggle the out-of-office auto-reply prank.", **guild_kwargs)
+@dc.slash_command(name='autoreply', description="Owner: toggle the out-of-office auto-reply prank.", **groups.MOD_MENU, **guild_kwargs)
 async def _autoreply(
 	interaction: Interaction,
 	action: str = SlashOption(name="action", description="on = start the story from line 1, off = stop, status = where it is.", choices=["on", "off", "status"])
