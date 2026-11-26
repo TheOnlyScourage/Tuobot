@@ -86,6 +86,11 @@ class Match:
 		"""Create a match: fetch ratings, run captain selection and team setup,
 		update captain streaks (captain_role mode), assign house names, stash the
 		season number, and register it in bot.active_matches."""
+		# One slot per person. The queue checks too; this is the last line.
+		# A doubled player started a 1v1 against themselves whose result
+		# could never be saved (Nov 11 + Nov 20).
+		if len({p.id for p in players}) != len(players):
+			raise bot.Exc.ValueError("A match can't have the same player twice.")
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
 		match = cls(match_id, queue, ctx.qc, players, ratings, **kwargs)
