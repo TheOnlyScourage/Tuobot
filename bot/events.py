@@ -69,6 +69,27 @@ async def on_init():
 	await bot.stats.check_match_id_counter()
 
 
+async def _drop_crashed_match(match) -> None:
+	"""A match whose tick raised can't be trusted to continue. It used to just
+	vanish from active_matches, leaving its players in neither a match nor a
+	queue with no word in the channel. Now the channel is told and the match
+	is cancelled properly (Match.cancel pings the players and tears down its
+	reaction and game-code listeners)."""
+	if match not in bot.active_matches:
+		return
+	try:
+		ctx = bot.SystemContext(match.qc)
+		await ctx.error(match.gt(
+			"Match {id} hit an internal error and was cancelled — sorry! Please `/add` again."
+		).format(id=str(match.id).zfill(6)))
+		await match.cancel(ctx)
+	except (Exception, bot.Exc.PubobotException) as e:
+		log.error(f"Cleaning up crashed match {match.id} failed: {e}")
+	finally:
+		if match in bot.active_matches:
+			bot.active_matches.remove(match)
+
+
 _last_state_save = 0
 _STATE_SAVE_INTERVAL = 30
 
@@ -83,14 +104,15 @@ async def on_think(frame_time):
 	for match in list(bot.active_matches):
 		try:
 			await match.think(frame_time)
-		except Exception as e:
+		# PubobotException derives from BaseException, so `except Exception`
+		# alone let bot errors escape and kill the whole tick loop.
+		except (Exception, bot.Exc.PubobotException) as e:
 			log.error("\n".join([
 				"Error at Match.think().",
 				f"match_id: {match.id}).",
 				f"{str(e)}. Traceback:\n{traceback.format_exc()}=========="
 			]))
-			if match in bot.active_matches:
-				bot.active_matches.remove(match)
+			await _drop_crashed_match(match)
 			continue
 	await bot.expire.think(frame_time)
 	await bot.noadds.think(frame_time)
