@@ -485,15 +485,14 @@ class PickupQueue:
 			)),
 			exclude=protected_ids
 		)
-		# `exclude` keeps protected players queued EVERYWHERE — including this
-		# queue, which just popped. Take them out of this one only (they're in
-		# the match now); the higher-priority queue keeps them. Without this
-		# they stayed listed here and the next pop put them in a second match
-		# at the same time (Nov 2026 audit).
+		# `exclude` keeps protected players queued EVERYWHERE. They belong only
+		# in the higher-priority queues that protect them, so drop them now from
+		# every other queue, this one included, like everyone else. Left in this
+		# queue, its next pop put them in a second match (Nov 2026 audit). Left
+		# in another low-priority queue (a 2v2), that queue filling during this
+		# check-in did the same (Nov 26).
 		if protected_ids:
-			self.pop_members(*[p for p in players if p.id in protected_ids])
-			if not self.length and self in bot.active_queues:
-				bot.active_queues.remove(self)
+			self._drop_protected(players, protected_ids, my_priority)
 
 		try:
 			await bot.Match.new(ctx, self, players, team_size=team_size, **self._match_cfg())
@@ -520,6 +519,52 @@ class PickupQueue:
 				if uid not in bot.allow_offline:
 					bot.allow_offline.append(uid)
 			bot.auto_ready.update(saved_auto_ready)
+
+		# A player waiting in a lower-priority match's check-in (a 1v1 while
+		# this 6v6 filled) is in this match now. Let that check-in go without
+		# them. It used to wait them out and then give them a missed check-in
+		# strike for joining the bigger game, or keep them in both matches.
+		await self._release_from_lower_check_ins(players, my_priority)
+
+	def _drop_protected(self, players, protected_ids, my_priority):
+		"""Take priority-protected players out of every queue that isn't
+		higher-priority than this one (this queue included). The higher ones
+		keep them; that is all the protection is for."""
+		protected = [p for p in players if p.id in protected_ids]
+		channels = list(bot.queue_channels.values())
+		if self.qc not in channels:
+			channels.append(self.qc)
+		for qc in channels:
+			dropped = {}
+			for q in qc.queues:
+				if (getattr(q.cfg, 'priority', None) or 0) > my_priority:
+					continue
+				for m in q.pop_members(*protected):
+					dropped[m.id] = m
+				if not q.length and q in bot.active_queues:
+					bot.active_queues.remove(q)
+			for m in dropped.values():
+				if not any(q.is_added(m) for q in qc.queues):
+					bot.expire.cancel(qc, m)
+
+	async def _release_from_lower_check_ins(self, players, my_priority):
+		"""See start(): free this match's players from lower-priority check-ins."""
+		ids = {p.id for p in players}
+		for m in list(bot.active_matches):
+			if m.queue is self or m.state != m.CHECK_IN:
+				continue
+			if (getattr(m.queue.cfg, 'priority', None) or 0) >= my_priority:
+				continue
+			leaving = [p for p in m.players if p.id in ids]
+			if not leaving:
+				continue
+			try:
+				await m.check_in.release(bot.SystemContext(m.qc), leaving, self.name)
+			except (Exception, bot.Exc.PubobotException):
+				log.error(
+					f"[start] {self.name}: couldn't release {[p.display_name for p in leaving]} "
+					f"from match {m.id}'s check-in\n" + traceback.format_exc()
+				)
 
 	async def fake_ranked_match(self, ctx, winners, losers, aborted=False):
 		"""Admin /match create: inject a ranked result without a live match.
