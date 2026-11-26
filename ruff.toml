@@ -1,7 +1,8 @@
 # Ruff configuration for Tuobot.
 #
-# We target py311 because that's what the Dockerfile ships (Railway builds on 3.11 — if we break
-# that, production breaks, so lint against what actually runs).
+# We target py313 because that's what the Dockerfile ships (Railway builds on 3.13 — if we break
+# that, production breaks, so lint against what actually runs). Keep it in step with the
+# Dockerfile and .github/workflows/ci.yml; tests/test_platform.py checks all three agree.
 #
 # The rule set is intentionally small: we're dropping ruff into a
 # codebase that has never been linted, so starting strict would mean
@@ -12,14 +13,14 @@
 #           undefined names — the baseline every project should have)
 #   B     — flake8-bugbear (real bug patterns like mutable default args,
 #           except-bare, no-op asserts)
-#   UP    — pyupgrade (py3.11 idioms, catches legacy f-strings etc.)
+#   UP    — pyupgrade (modern-Python idioms, catches legacy f-strings etc.)
 #   SIM   — flake8-simplify (readability fixes)
 #
 # Notably absent: W (whitespace), D (docstrings), ANN (annotations),
 # PL (pylint) — all too noisy for a codebase that uses tab indentation
 # and predates type hints.
 
-target-version = "py311"
+target-version = "py313"
 line-length = 120
 
 # The repo uses tabs throughout the original codebase (see CLAUDE.md).
