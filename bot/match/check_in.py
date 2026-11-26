@@ -308,6 +308,30 @@ class CheckIn:
 		bot.active_matches.remove(self.m)
 		await self.m.queue.revert(ctx, [member], [m for m in self.m.players if m != member])
 
+	async def release(self, ctx: bot.Context, members: list, to_queue: str) -> None:
+		"""End the check-in because these players were just put into a
+		higher-priority match (the 6v6 filled during a 1v1 check-in). No strike
+		for them; everyone else goes back to the queue, as with an abort.
+		Called by PickupQueue.start() of the higher-priority queue."""
+		if not self._begin_close():
+			return
+		if self.message:
+			bot.waiting_reactions.pop(self.message.id, None)
+			try:
+				await self.message.delete()
+			except DiscordException:
+				pass
+
+		await self._safe_notice(ctx, "\n".join((
+			self.m.gt("{members} moved to the **{queue}** match (higher priority).").format(
+				members=join_and([m.mention for m in members]), queue=to_queue
+			),
+			self.m.gt("Reverting {queue} to the gathering stage...").format(queue=f"**{self.m.queue.name}**")
+		)))
+
+		bot.active_matches.remove(self.m)
+		await self.m.queue.revert(ctx, list(members), [m for m in self.m.players if m not in members])
+
 	async def pull_standby(self, ctx: bot.Context) -> None:
 		"""Delegate to bot.match.standby.pull_standby_into_match — kept as a
 		thin shim so existing callers (think()) don't need to change."""
