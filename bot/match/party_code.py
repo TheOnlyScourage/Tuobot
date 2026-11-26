@@ -65,6 +65,10 @@ def _is_valid_code(text: str) -> bool:
 	return bool(CODE_PATTERN.match(text.strip()))
 
 
+# {match_id: PartyCode} — every match waiting for a code. It used to be keyed
+# by CHANNEL, so a second match in the same channel replaced the first one's
+# listener and that team's Game 2/3 code was silently ignored. A player can
+# only be in one active match, so the author picks the listener unambiguously.
 _waiting_codes: dict = {}
 
 
@@ -78,12 +82,15 @@ async def handle_code_input(message) -> bool:
 	Anything else (random chatter, "one code pplease", etc.) is ignored so
 	teammates can keep talking while waiting.
 	"""
-	pc = _waiting_codes.get(message.channel.id)
-	if pc is None or not pc.active:
-		return False
-
-	# Only a member of the pending team may submit.
-	if message.author.id not in pc.pending_team_ids:
+	# Only a member of a pending team, in that match's channel, may submit.
+	pc = next(
+		(
+			p for p in list(_waiting_codes.values())
+			if p.active and p.m.qc.id == message.channel.id and message.author.id in p.pending_team_ids
+		),
+		None
+	)
+	if pc is None:
 		return False
 
 	# Cooldown gate: if the next game's code window hasn't opened yet, silently
@@ -97,7 +104,7 @@ async def handle_code_input(message) -> bool:
 		return False  # not a code — leave the listener in place
 
 	# Pop BEFORE handing off so a successful submission can't double-fire.
-	_waiting_codes.pop(message.channel.id, None)
+	_waiting_codes.pop(pc.m.id, None)
 	await pc._receive_code(message)
 	return True
 
@@ -115,7 +122,7 @@ class PartyCode:
 		self.pending_team_ids = set()     # user-ids allowed to submit right now
 		self.next_code_allowed_at = 0.0   # epoch secs; codes ignored before this
 		self.pending_game  = 0
-		self.party_message = None         # the ✅ reaction message
+		self.party_message_id = None      # the ✅ reaction message (id survives a restart)
 		self.game1_done    = False        # True after Game 1 code is submitted
 		self.active        = True         # False after match cancel/finish
 
@@ -125,22 +132,62 @@ class PartyCode:
 		"""Post the party-up embed and register the ✅ reaction callback."""
 		import bot
 		embed = self._party_embed()
-		self.party_message = await ctx.channel.send(embed=embed)
+		party_message = await ctx.channel.send(embed=embed)
+		self.party_message_id = party_message.id
 		try:
-			await self.party_message.add_reaction(self.READY_EMOJI)
+			await party_message.add_reaction(self.READY_EMOJI)
 		except DiscordException:
 			pass
-		bot.waiting_reactions[self.party_message.id] = self._process_reaction
+		bot.waiting_reactions[self.party_message_id] = self._process_reaction
 
 	def cancel(self):
-		"""Clean up all listeners when the match is cancelled."""
+		"""Clean up all listeners when the match is cancelled or finished."""
 		import bot
 		self.active = False
-		if self.party_message:
-			bot.waiting_reactions.pop(self.party_message.id, None)
-		_waiting_codes.pop(self.m.qc.id, None)
+		if self.party_message_id:
+			bot.waiting_reactions.pop(self.party_message_id, None)
+		_waiting_codes.pop(self.m.id, None)
 		self.pending_captain = None
 		self.pending_team_ids = set()
+
+	def serialize(self) -> dict:
+		"""Snapshot for save_state, so a redeploy mid-series resumes the code flow."""
+		return dict(
+			ready_order=[p.id for p in self.ready_order],
+			second_captain=self.second_captain.id if self.second_captain else None,
+			pending_captain=self.pending_captain.id if self.pending_captain else None,
+			pending_team_ids=sorted(self.pending_team_ids),
+			next_code_allowed_at=self.next_code_allowed_at,
+			pending_game=self.pending_game,
+			party_message_id=self.party_message_id,
+			game1_done=self.game1_done,
+			active=self.active,
+		)
+
+	def restore(self, snap: dict, members: dict) -> None:
+		"""Inverse of serialize(). `members` is {user_id: Member} for the match.
+		Re-registers the ✅ reaction and the pending code listener, both keyed
+		by id, so the original party-up post keeps working."""
+		import bot
+
+		def member(user_id):
+			return members.get(user_id) if user_id is not None else None
+
+		self.ready_order = [p for p in (member(uid) for uid in snap.get('ready_order') or []) if p]
+		self.second_captain = member(snap.get('second_captain'))
+		self.pending_captain = member(snap.get('pending_captain'))
+		self.pending_team_ids = set(snap.get('pending_team_ids') or [])
+		self.next_code_allowed_at = float(snap.get('next_code_allowed_at') or 0)
+		self.pending_game = int(snap.get('pending_game') or 0)
+		self.party_message_id = snap.get('party_message_id')
+		self.game1_done = bool(snap.get('game1_done'))
+		self.active = bool(snap.get('active', True))
+		if not self.active:
+			return
+		if self.party_message_id:
+			bot.waiting_reactions[self.party_message_id] = self._process_reaction
+		if self.pending_team_ids:
+			_waiting_codes[self.m.id] = self
 
 	# ── Party-up embed (Image 2) ──────────────────────────────────────────────
 
@@ -204,8 +251,8 @@ class PartyCode:
 		captain_team = self._team_of(captain)
 		self.pending_team_ids = {p.id for p in captain_team} if captain_team else {captain.id}
 
-		# Register message listener (keyed by channel — see _waiting_codes note).
-		_waiting_codes[self.m.qc.id] = self
+		# Register message listener (keyed by match — see _waiting_codes note).
+		_waiting_codes[self.m.id] = self
 
 		channel = dc.get_channel(self.m.qc.id)
 		if channel is None:
