@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import contextlib
 import aiomysql
 from pymysql import err as mysqlErr
 from .common import *
@@ -58,6 +59,7 @@ class Adapter:
 			# well inside the server's idle window.
 			self.pool = await aiomysql.create_pool(
 				host=self.dbHost,
+				port=int(self.dbPort),  # parsed from DB_URI but never passed, so it was always 3306
 				user=self.dbUser,
 				password=self.dbPassword,
 				db=self.dbName,
@@ -69,40 +71,70 @@ class Adapter:
 		except mysqlErr.Error as e:
 			self.wrap_exc(e)
 
-	async def execute(self, *args):
+	@contextlib.asynccontextmanager
+	async def _cursor(self):
+		"""A cursor on a pooled connection (autocommit). Every query goes through
+		here, so _Transaction can run the whole API on one held connection."""
 		async with self.pool.acquire() as conn:
 			async with conn.cursor() as cur:
+				yield cur
+
+	@contextlib.asynccontextmanager
+	async def transaction(self):
+		"""All-or-nothing writes:
+
+			async with db.transaction() as tx:
+				await tx.insert(...)
+				await tx.update(...)
+
+		`tx` has this same query API, on ONE connection inside BEGIN…COMMIT. Any
+		exception (cancellation included) rolls every statement back. Inside the
+		block, write ONLY through `tx`: a plain `db.` write runs on another
+		connection, outside the transaction, and can wait forever on rows `tx`
+		has locked. (Reads through `db.` are safe but can't see `tx`'s writes.)"""
+		async with self.pool.acquire() as conn:
+			await conn.begin()
+			try:
+				yield _Transaction(self, conn)
+			except BaseException:
 				try:
-					await cur.execute(*args)
-					return cur.lastrowid
+					await conn.rollback()
 				except Exception as e:
-					self.wrap_exc(e)
+					log.error(f"[db] rollback failed: {e}")
+				raise
+			else:
+				await conn.commit()
+
+	async def execute(self, *args):
+		async with self._cursor() as cur:
+			try:
+				await cur.execute(*args)
+				return cur.lastrowid
+			except Exception as e:
+				self.wrap_exc(e)
 
 	async def executemany(self, *args):
-		async with self.pool.acquire() as conn:
-			async with conn.cursor() as cur:
-				try:
-					await cur.executemany(*args)
-				except mysqlErr.Error as e:
-					self.wrap_exc(e)
+		async with self._cursor() as cur:
+			try:
+				await cur.executemany(*args)
+			except mysqlErr.Error as e:
+				self.wrap_exc(e)
 
 	async def fetchone(self, *args):
-		async with self.pool.acquire() as conn:
-			async with conn.cursor() as cur:
-				try:
-					await cur.execute(*args)
-					return await cur.fetchone()
-				except mysqlErr.Error as e:
-					self.wrap_exc(e)
+		async with self._cursor() as cur:
+			try:
+				await cur.execute(*args)
+				return await cur.fetchone()
+			except mysqlErr.Error as e:
+				self.wrap_exc(e)
 
 	async def fetchall(self, *args):
-		async with self.pool.acquire() as conn:
-			async with conn.cursor() as cur:
-				try:
-					await cur.execute(*args)
-					return await cur.fetchall()
-				except mysqlErr.Error as e:
-					self.wrap_exc(e)
+		async with self._cursor() as cur:
+			try:
+				await cur.execute(*args)
+				return await cur.fetchall()
+			except mysqlErr.Error as e:
+				self.wrap_exc(e)
 
 	@staticmethod
 	def _mysql_column(kwargs):
@@ -263,3 +295,21 @@ class Adapter:
 
 		else:
 			raise DatabaseError() from e
+
+
+class _Transaction(Adapter):
+	"""The Adapter's query API bound to one connection inside BEGIN…COMMIT.
+	Created only by Adapter.transaction()."""
+
+	def __init__(self, parent: Adapter, conn):  # deliberately not Adapter.__init__ (no address to parse)
+		self.__dict__.update(parent.__dict__)
+		self._conn = conn
+
+	@contextlib.asynccontextmanager
+	async def _cursor(self):
+		async with self._conn.cursor() as cur:
+			yield cur
+
+	@contextlib.asynccontextmanager
+	async def transaction(self):
+		yield self  # already inside one: nested blocks join it
