@@ -22,14 +22,20 @@ import bot
 async def queues(interaction: Interaction, queue: str) -> List[str]:  # noqa: UP006
 	"""Autocomplete queue names on this channel matching the partial input."""
 	if (qc := bot.queue_channels.get(interaction.channel_id)) is not None:
-		return [q.name for q in qc.queues if q.name.startswith(queue)]
+		# `q.name and`: a queue saved without a name used to crash this for everyone
+		return [q.name for q in qc.queues if q.name and q.name.startswith(queue)]
 	else:
 		return []
 
 
+# Discord shows up to 25 suggestions; this used to stop at 10, so most
+# settings never appeared in the /channel set and /queue set pickers.
+_MAX_SUGGESTIONS = 25
+
+
 async def qc_variables(interaction: Interaction, variable: str) -> List[str]:  # noqa: UP006
 	"""Autocomplete channel config variable names matching the partial input."""
-	return sorted([v for v in bot.QueueChannel.cfg_factory.variables.keys() if v.startswith(variable)])[:10]
+	return sorted([v for v in bot.QueueChannel.cfg_factory.variables.keys() if v.startswith(variable)])[:_MAX_SUGGESTIONS]
 
 
 async def queue_variables(interaction: Interaction, variable: str) -> List[str]:  # noqa: UP006
@@ -38,7 +44,7 @@ async def queue_variables(interaction: Interaction, variable: str) -> List[str]:
 		return []
 	interaction_queue = find(lambda i: i['name'] == 'queue', interaction.data['options'][0]['options'])
 	if interaction_queue and (queue := get(qc.queues, name=interaction_queue['value'])):
-		return sorted([v for v in queue.cfg_factory.variables.keys() if v.startswith(variable)])[:10]
+		return sorted([v for v in queue.cfg_factory.variables.keys() if v.startswith(variable)])[:_MAX_SUGGESTIONS]
 	return []
 
 
@@ -92,39 +98,4 @@ async def unpicked_players(interaction: Interaction, current: str) -> Dict[str, 
 	except Exception as exc:
 		from core.console import log
 		log.error(f"[autocomplete.unpicked_players] {exc}")
-		return {}
-
-
-async def players_in_match(interaction: Interaction, current: str) -> Dict[str, str]:  # noqa: UP006
-	"""Autocomplete every player in an active match on this channel.
-
-	Used by admin commands like /admin match sub_player and /swap where
-	the moderator is targeting somebody who's actively playing.
-	"""
-	from bot.constants import MAX_AUTOCOMPLETE_OPTS
-	try:
-		qc = bot.queue_channels.get(interaction.channel_id)
-		if qc is None:
-			return {}
-
-		seen: dict[int, str] = {}  # user_id → display_name (dedupe across matches)
-		for m in bot.active_matches:
-			if m.qc != qc:
-				continue
-			for p in m.players:
-				seen.setdefault(p.id, p.display_name)
-
-		cur = (current or "").lower().strip()
-		out: dict[str, str] = {}
-		for uid, name in seen.items():
-			label = name[:100]
-			if cur and cur not in label.lower():
-				continue
-			out[label] = str(uid)
-			if len(out) >= MAX_AUTOCOMPLETE_OPTS:
-				break
-		return out
-	except Exception as exc:
-		from core.console import log
-		log.error(f"[autocomplete.players_in_match] {exc}")
 		return {}
