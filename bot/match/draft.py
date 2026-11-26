@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import bot
-from core.utils import find
+from core.utils import find, get_nick
 from nextcord import DiscordException
 
+from bot.buttons import DraftPickMenu, maybe
+from bot.buttons_rules import pick_options
 from .subbing import pick_available
 
 if TYPE_CHECKING:
@@ -18,9 +20,10 @@ class Draft:
 	"""Manages the draft stage: captains claim or relinquish team slots, then
 	alternately pick from the unpicked pool (teams[2]) following pick_order,
 	with automatic last-picks when one team's remaining turns cover the pool.
-	Also handles manual roster edits (put) and substitutions (sub_me / sub_for /
-	sub_auto) across the CHECK_IN, DRAFT, and WAITING_REPORT stages. All state
-	is mutated on the shared Match object (self.m).
+	Also handles substitutions (sub_me / sub_for / sub_auto) across the CHECK_IN,
+	DRAFT, and WAITING_REPORT stages. (/match put moves players itself, in
+	bot/commands/matches.py.) All state is mutated on the shared Match object
+	(self.m).
 
 	pick_order is stored as team indices (0/1) translated from the config's
 	letter form via pick_steps; e.g. "abba" -> [0, 1, 1, 0].
@@ -80,13 +83,26 @@ class Draft:
 		team = self.m.teams[self.pick_order[pick_step]]
 		return team[0] if len(team) else None
 
+	def pick_menu(self) -> DraftPickMenu | None:
+		"""The pick menu for the board: the unpicked players, while a captain is
+		on the clock (nothing to pick otherwise)."""
+		if self.picking_captain() is None or not len(self.m.teams[2]):
+			return None
+		options = pick_options(self.m.teams[2], get_nick, self.m.ratings if self.m.ranked else None)
+		more = len(self.m.teams[2]) - len(options)
+		placeholder = self.m.gt("Captain: pick a player") if not more else self.m.gt(
+			"Captain: pick a player ({n} more with /pick)"
+		).format(n=more)
+		return DraftPickMenu(options, placeholder=placeholder)
+
 	async def print(self, ctx: bot.Context) -> None:
-		"""Render the draft board embed, pinging the captain on the clock (a
-		mention only notifies from the message text, not from inside the embed)."""
+		"""Render the draft board embed with the pick menu, pinging the captain on
+		the clock (a mention only notifies from the message text, not from inside
+		the embed)."""
 		captain = self.picking_captain()
 		content = self.m.gt("{captain}, your pick!").format(captain=captain.mention) if captain else None
 		try:
-			await ctx.notice(content=content, embed=self.m.embeds.draft())
+			await ctx.notice(content=content, embed=self.m.embeds.draft(), **maybe(self.pick_menu()))
 		except DiscordException as e:
 			# Don't crash the match on a failed embed (rate limit / perms), but
 			# surface it in the Railway logs rather than swallowing silently.
@@ -138,25 +154,6 @@ class Draft:
 
 		await self.refresh(ctx)
 
-	async def put(self, ctx: bot.Context, player: Member, team_name: str) -> None:
-		"""Manually place a player on the named team during DRAFT or
-		WAITING_REPORT: move them if already rostered, otherwise add them
-		(refreshing ratings), then remove them from the queue."""
-		if (team := find(lambda t: t.name.lower() == team_name.lower(), self.m.teams)) is None:
-			raise bot.Exc.SyntaxError(self.m.gt("Specified team name not found."))
-		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
-			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the draft or waiting report stage."))
-
-		if (old_team := find(lambda t: player in t, self.m.teams)) is not None:
-			old_team.remove(player)
-		else:
-			self.m.players.append(player)
-			await self._refresh_ratings()
-
-		team.append(player)
-		await self.m.qc.remove_members(player, ctx=ctx)
-		await self.refresh(ctx)
-
 	async def sub_me(self, ctx: bot.Context, author: Member) -> None:
 		"""Toggle whether the caller is listed as looking for a substitute."""
 		if self.m.state not in [self.m.DRAFT, self.m.WAITING_REPORT]:
@@ -188,7 +185,7 @@ class Draft:
 			# caller never recorded the fill-in penalty and the board went stale.
 			await self.m.check_in.refresh(ctx)
 		elif self.m.state == self.m.WAITING_REPORT:
-			await ctx.notice(embed=self.m.embeds.final_message())
+			await self.m.final_message(ctx)
 		else:
 			await self.print(ctx)
 
@@ -240,6 +237,6 @@ class Draft:
 		))
 
 		if self.m.state == self.m.WAITING_REPORT:
-			await ctx.notice(embed=self.m.embeds.final_message())
+			await self.m.final_message(ctx)
 		else:
 			await self.refresh(ctx)
