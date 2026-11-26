@@ -136,7 +136,8 @@ async def stats_reset_player(ctx: bot.Context, player: str) -> None:
 	if (player := await ctx.get_member(player)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
 
-	await bot.stats.reset_player(ctx.qc.id, player.id)
+	# Ratings live under the rating channel (this channel unless `rating_channel` is set).
+	await bot.stats.reset_player(ctx.qc.rating.channel_id, player.id)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
@@ -148,7 +149,9 @@ async def stats_replace_player(ctx: bot.Context, player1: str, player2: str) -> 
 	if (player2 := await ctx.get_member(player2)) is None:
 		raise bot.Exc.SyntaxError(f"Specified member not found on the server.")  # noqa: F541
 
-	await bot.stats.replace_player(ctx.qc.id, player1.id, player2.id, get_nick(player2))
+	await bot.stats.replace_player(
+		ctx.qc.id, player1.id, player2.id, get_nick(player2), rating_channel_id=ctx.qc.rating.channel_id
+	)
 	await ctx.success(ctx.qc.gt("Done."))
 
 
