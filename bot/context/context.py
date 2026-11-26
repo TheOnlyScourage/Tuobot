@@ -112,12 +112,13 @@ class SystemContext(Context):
 	def access_level(self):
 		return Context.Perms.ADMIN
 
-	async def reply(self, content: str = None, embed: Embed = None):
-		await self.messagable.send(content=content, embed=embed)
+	# **extra lets callers attach buttons (view=...), as they can on a slash context.
+	async def reply(self, content: str = None, embed: Embed = None, **extra):
+		await self.messagable.send(content=content, embed=embed, **extra)
 
-	async def notice(self, content: str = None, embed: Embed = None):
+	async def notice(self, content: str = None, embed: Embed = None, **extra):
 		""" Send message in chat without replying if possible """
-		await self.messagable.send(content=content, embed=embed)
+		await self.messagable.send(content=content, embed=embed, **extra)
 
 	async def reply_dm(self, content: str = None, embed: Embed = None):
 		await self.messagable.send(content=content, embed=embed)
