@@ -20,7 +20,6 @@ from .context import Context, SlashContext, SystemContext
 from . import commands
 
 from . import events
-from . import utils
 
 
 class _TTLReactionDict(dict):
@@ -82,9 +81,3 @@ active_matches = []
 waiting_reactions = _TTLReactionDict()  # {message.id: function}
 allow_offline = []  # [user_id]
 auto_ready = dict()  # {user.id: timestamp}
-
-
-def background_context(coro):
-	async def wrapper(qc, *args, **kwargs):
-		await coro(SystemContext(qc=qc), *args, **kwargs)
-	return wrapper
