@@ -83,16 +83,10 @@ class Embeds:
 			inline=False
 		)
 		if self.m.check_in.allow_discard:
-			how = self.m.gt("Press **Ready** (or react {ready_emoji}) to **check in**, or **Not ready** ({not_ready_emoji}) to **abort**!")
+			how = self.m.gt("Press **Ready** to **check in**, or **Not ready** to **abort**!")
 		else:
-			how = self.m.gt("Press **Ready** (or react {ready_emoji}) to **check in**!")
-		embed.add_field(
-			name="\u2014",
-			value=how.format(
-				ready_emoji=self.m.check_in.READY_EMOJI, not_ready_emoji=self.m.check_in.NOT_READY_EMOJI
-			) + "\n\u200b",
-			inline=False
-		)
+			how = self.m.gt("Press **Ready** to **check in**!")
+		embed.add_field(name="\u2014", value=how + "\n\u200b", inline=False)
 		embed.set_footer(**self._make_footer())
 		return embed
 
