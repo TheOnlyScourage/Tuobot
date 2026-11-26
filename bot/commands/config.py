@@ -2,12 +2,10 @@ from __future__ import annotations
 
 __all__ = [
 	'create_pickup', 'delete_queue', 'show_queues', 'set_qc', 'set_queue', 'cfg_qc', 'cfg_queue',
-	'set_qc_cfg', 'set_queue_cfg'
 ]
 
 import json
 from core.utils import find, get, split_big_text
-from core.console import log  # noqa: F401
 import bot
 
 
@@ -95,28 +93,3 @@ async def cfg_queue(ctx: bot.Context, queue: str) -> None:
 	)
 	for piece in gen:
 		await ctx.reply_dm(piece)
-
-
-async def set_qc_cfg(ctx: bot.Context, cfg: str) -> None:
-	""" Update QueueChannel configuration via JSON string """
-	ctx.check_perms(ctx.Perms.ADMIN)
-	try:
-		await ctx.qc.cfg.update(json.loads(cfg))
-	except Exception as e:
-		raise bot.Exc.ValueError(str(e))
-	else:
-		await ctx.success(f"Channel configuration updated.")  # noqa: F541
-
-
-async def set_queue_cfg(ctx: bot.Context, queue: str, cfg: str) -> None:
-	""" Update queue configuration via JSON string """
-	ctx.check_perms(ctx.Perms.ADMIN)
-	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
-		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
-
-	try:
-		await q.cfg.update(json.loads(cfg))
-	except Exception as e:
-		raise bot.Exc.ValueError(str(e))
-	else:
-		await ctx.success(f"__{q.name}__ queue configuration updated.")
