@@ -8,7 +8,9 @@ A guide to every slash command in Tuobot, grouped by who uses them and what they
 - **Admin**: members with the channel's **admin role** (`/channel set admin_role`), anyone with Discord's **Administrator** permission, and the bot owner.
 - **Owner**: the bot owner only (`OWNER_ID` in `bot/constants.py`). Admins can't run these.
 
-Discord lists every command for everyone. Tuobot checks who you are when you run one, and tells you privately if you aren't allowed.
+The mod and admin groups (`/channel`, `/queue`, `/match`, `/rating`, `/noadds`, `/phrases`, plus `/swap` and `/autoreply`) only show up in the slash menu for members with Discord's **Manage Messages** permission. A server admin can show them to another role in **Server Settings → Integrations → Tuobot**. `/stats` stays visible because players use `/stats show`. Either way, Tuobot checks who you are when you run a command and tells you privately if you aren't allowed.
+
+**Buttons.** Most things players do also have a button: **Join** / **Leave** under each queue update, **Ready** / **Not ready** on the check-in message, a pick menu for the captain on the draft board, and **We lost** / **Abort** on the match board. Each does exactly what its command does, and they keep working after the bot restarts.
 
 **Commands that ask first.** `/channel delete`, `/rating reset`, `/rating snap`, `/stats season_end`, `/stats replace_player` and `/stats nuclear_option` do nothing unless you add `confirm: True`. Without it, they tell you (and only you) what they would do.
 
@@ -19,8 +21,8 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 ### Queue Management
 | Command | What it does |
 |---|---|
-| `/add [queues]` | Add yourself to a queue. Without a queue name it adds you to the default queue(s). |
-| `/remove [queues]` | Remove yourself from a queue. Without a name it removes you from all the queues you're in on this channel. |
+| `/add [queues]` | Add yourself to a queue. Without a queue name it adds you to the default queue(s). The **Join** button under a queue update does the same. |
+| `/remove [queues]` | Remove yourself from a queue. Without a name it removes you from all the queues you're in on this channel. The **Leave** button does the same. |
 | `/remove_all [player]` | Remove yourself from **every queue across the entire server** (all channels). Mods can pass a player to remove someone else. |
 | `/remove_after <time>` | Set a timer to auto-remove yourself from this channel's queues after a duration (e.g. `30m`, `1h`, `1:30:00`). |
 | `/who [queues]` | List the players currently added to each queue on this channel. |
@@ -31,9 +33,9 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 ### During Check-in & Draft
 | Command | What it does |
 |---|---|
-| `/ready` | Confirm participation during the check-in stage. Same as reacting ✅ on the check-in message. Only you see the reply. |
-| `/notready` | Abort participation during the check-in stage. Same as reacting ❌. |
-| `/pick <player>` | Captains only: pick a player from the unpicked pool. The dropdown shows only valid choices, and the bot pings the captain whose turn it is. |
+| `/ready` | Confirm participation during the check-in stage. Same as pressing **Ready** or reacting ✅ on the check-in message. Only you see the reply. |
+| `/notready` | Abort participation during the check-in stage. Same as pressing **Not ready** or reacting ⛔. |
+| `/pick <player>` | Captains only: pick a player from the unpicked pool. The captain on the clock can also pick from the menu under the draft board, and the bot pings them when it's their turn. |
 
 ### Substitutes
 | Command | What it does |
@@ -67,7 +69,7 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 ### Reporting Results
 | Command | What it does |
 |---|---|
-| `/report <result>` | Report a match result. Choices: `loss`, `abort`. An abort needs the other captain to also `/report abort`, and is then **recorded** — no winner, no rating change, streaks untouched. |
+| `/report <result>` | Report a match result. Choices: `loss`, `abort`. Captains can also press **We lost** (it asks you to confirm first) or **Abort** on the match board. An abort needs the other captain to agree (their own **Abort** or `/report abort`), and is then **recorded** — no winner, no rating change, streaks untouched. |
 
 ### Misc / Fun
 | Command | What it does |
@@ -89,8 +91,8 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 | `/queue remove_player <player> [queues]` | Mod | Force-remove a player from a queue (or all queues if none specified). |
 | `/queue clear [queue]` | Mod | Empty a queue (or all queues if none specified). |
 | `/queue start <queue>` | Mod | Manually start a queue even if not full. |
-| `/queue list` | Everyone | List every queue on the channel. |
-| `/queue show <queue>` | Everyone | DM you a queue's full configuration. |
+| `/queue list` | Mod | List every queue on the channel. |
+| `/queue show <queue>` | Mod | DM you a queue's full configuration. |
 | `/queue create_pickup <name> [size]` | Admin | Create a new pickup queue (2–100 players, default 8). |
 | `/queue set <queue> <variable> <value>` | Admin | Set a queue config variable (e.g. `priority`, `check_in_timeout`, `ranked`). |
 | `/queue delete <queue>` | Admin | Delete a queue. |
@@ -131,7 +133,7 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 |---|---|---|
 | `/noadds add <player> [duration] [reason]` | Mod | Ban a player from joining queues (2 hours if no duration is given). |
 | `/noadds remove <player>` | Mod | Lift a player's ban. |
-| `/noadds list` | Everyone | Show everyone currently banned. |
+| `/noadds list` | Mod | Show everyone currently banned. |
 
 ### `/phrases` — Player Phrases
 | Command | Who | What it does |
@@ -145,7 +147,7 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 | `/channel enable` | Discord Administrator | Enable the bot on this channel. |
 | `/channel disable` | Discord Administrator | Turn the bot off on this channel until the bot restarts. Settings are kept. |
 | `/channel delete [confirm]` | Discord Administrator | Delete this channel's settings and **every queue on it**, and disable the bot here. Match history and ratings are kept. Asks first. |
-| `/channel show` | Everyone | DM you the channel configuration. |
+| `/channel show` | Mod | DM you the channel configuration. |
 | `/channel set <variable> <value>` | Admin | Set a channel config variable. |
 | `/channel cleanup [confirm]` | Owner | ☢️ Purge configs for channels that were **deleted from Discord** before `channel delete` was run in them (they otherwise linger forever, logging "Could not reach a text channel" at every boot). Dry-run listing by default; `confirm: True` deletes. Match history untouched. |
 
@@ -160,7 +162,7 @@ Discord lists every command for everyone. Tuobot checks who you are when you run
 
 **Queue priority**: Set via `/queue set <queue> priority <number>`. When a lower-priority queue pops, players stay in higher-priority queues. Recommended: `6v6-ranked = 100`, `bonanza = 80`, others = `0`.
 
-**Check-in**: When a queue pops, the check-in message pings everyone who still has to ready up. React ✅ / ❌ or use `/ready` / `/notready`.
+**Check-in**: When a queue pops, the check-in message pings everyone who still has to ready up. Press **Ready** / **Not ready**, react ✅ / ⛔, or use `/ready` / `/notready` — they all do the same.
 
 **Standby pool**: If a queue is in check-in, new players adding go to standby. At 2/3 of the check-in time, standby players are pulled in as additional candidates — the first to ready up gets the spot. Standby players don't get check-in violations.
 
