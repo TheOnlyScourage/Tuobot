@@ -8,6 +8,7 @@ from core.utils import get_nick, get, SafeTemplateDict, spawn
 from core.client import dc
 
 import bot
+from bot.queues.roster_rules import distinct, distinct_across
 
 
 class PickupQueue:
@@ -403,6 +404,15 @@ class PickupQueue:
 		can pop underneath them at any moment."""
 		if players is None:
 			players = list(self.queue)
+		# One slot per person. A doubled entry started a 1v1 against
+		# themselves whose result then couldn't be saved (Nov 11 + Nov 20).
+		# Never start from a damaged list: fix the list and stop.
+		if len(distinct(players)) != len(players):
+			self.queue = distinct(self.queue)
+			log.error(f"[start] {self.name}: someone was listed twice {[p.display_name for p in players]}; not started")
+			raise bot.Exc.PubobotException(self.qc.gt(
+				"Someone was listed twice in **{queue}**, so it didn't start. The list is fixed now."
+			).format(queue=self.name))
 		if len(players) < 2:
 			raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
 
@@ -529,6 +539,12 @@ class PickupQueue:
 		# Standby players (who added during check-in/draft) fill slots first
 		standby_players = list(self.standby)
 		self.standby = []
+
+		# One slot per person, and whoever wasn't ready stays out. A ready
+		# player who was still listed here went back in TWICE: the 1v1
+		# re-popped and started them against themselves (Worpel Nov 11,
+		# GreenBlackKatt Nov 20; the stale listing was fixed Nov 25).
+		ready, standby_players, old_players = distinct_across(not_ready, ready, standby_players, old_players)
 
 		self.queue = list(ready)
 		if self.cfg.autostart:
