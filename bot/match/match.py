@@ -23,6 +23,7 @@ from core.utils import find, get, join_and, get_nick
 from core.console import log
 from core.client import dc
 
+from bot.buttons import ReportButtons, maybe
 from .check_in import CheckIn
 from .draft import Draft
 from .embeds import Embeds
@@ -622,7 +623,7 @@ class Match:
 			team.draw_flag = draw_flag
 			await ctx.notice(
 				self.gt(
-					"{self} offers to abort the match, waiting for {enemy} to type `/report abort`."
+					"{self} offers to abort the match, waiting for {enemy} to press **Abort** (or type `/report abort`)."
 				).format(self=member.mention, enemy=enemy_team[0].mention)
 			)
 			return
@@ -789,8 +790,11 @@ class Match:
 		return detect_milestones(players)
 
 	async def final_message(self, ctx: bot.Context) -> None:
+		"""Post the match board. While it waits for a result it carries the
+		We lost / Abort buttons (the same as /report)."""
+		buttons = ReportButtons() if self.state == self.WAITING_REPORT else None
 		try:
-			await ctx.notice(embed=self.embeds.final_message())
+			await ctx.notice(embed=self.embeds.final_message(), **maybe(buttons))
 		except DiscordException:
 			pass
 
