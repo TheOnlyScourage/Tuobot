@@ -59,7 +59,9 @@ class Context:
 	def check_perms(self, req_perms: Perms):
 		""" Raise PermissionError if specified permissions is not met by the author """
 		if self.access_level.value < req_perms.value:
-			if req_perms == 2:
+			# Was `req_perms == 2` — but 2 is MODERATOR (ADMIN is 3), so the two
+			# messages were swapped: mod commands said "admin" and vice versa.
+			if req_perms >= self.Perms.ADMIN:
 				raise bot.Exc.PermissionError(self.qc.gt("You must possess admin permissions."))
 			else:
 				raise bot.Exc.PermissionError(self.qc.gt("You must possess moderator permissions."))
@@ -125,17 +127,3 @@ class SystemContext(Context):
 
 	async def success(self, *args, **kwargs):
 		await self.messagable.send(embed=ok_embed(*args, **kwargs))
-
-
-class WebContext(Context):
-	""" Context for actions within the web interface """
-
-	def __init__(self, user_id: int, channel_id: int):
-		if (qc := bot.queue_channels.get(channel_id)) is None:
-			raise bot.Exc.NotFoundError(f"QueueChannel with id {channel_id} is not found.")
-		if (channel := dc.get_channel(channel_id)) is None:
-			raise bot.Exc.NotFoundError(f"Discord Channel object with id {channel_id} is not reachable.")
-		if (author := channel.guild.get_member(user_id)) is None:
-			raise bot.Exc.NotFoundError(f"You are not a member of requested guild.")  # noqa: F541
-
-		super().__init__(qc, channel, author)
