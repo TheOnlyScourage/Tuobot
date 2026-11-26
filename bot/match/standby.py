@@ -18,9 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import asyncio
 from core.console import log
-from core.utils import join_and
+from core.utils import join_and, spawn, send_dm
 import bot
 
 if TYPE_CHECKING:
@@ -115,12 +114,7 @@ async def pull_standby_into_match(ci: CheckIn, ctx: bot.Context) -> None:
 		ready=ci.READY_EMOJI,
 	)
 	for m in added:
-		async def _dm(member=m, text=dm_text):
-			try:
-				await member.send(text)
-			except Exception:
-				pass
-		asyncio.ensure_future(_dm())
+		spawn(send_dm(m, dm_text), name="standby pull-in DM")
 
 	await ci.refresh(ctx)
 
