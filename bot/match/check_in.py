@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Check-in stage controller for a match: the ready/not-ready reaction flow,
-race-to-ready finishing, standby fill, and abort/timeout handling.
+"""Check-in stage controller for a match: the Ready / Not ready buttons (or
+/ready and /notready), race-to-ready finishing, standby fill, and
+abort/timeout handling.
 """
 from __future__ import annotations
 
@@ -19,14 +20,11 @@ if TYPE_CHECKING:
 
 
 class CheckIn:
-	"""Runs the check-in stage: players react to ready up or abort. Fills empty
+	"""Runs the check-in stage: players press Ready or Not ready. Fills empty
 	slots from standby partway through, finishes early once enough players ready
 	(race-to-ready), or aborts and reverts the queue on timeout. All state lives
 	on the shared Match object (self.m).
 	"""
-
-	READY_EMOJI = "✅"
-	NOT_READY_EMOJI = "⛔"
 
 	def __init__(self, match: bot.Match, timeout: int):
 		"""Set up check-in state from config: pre-ready any auto-ready players and
@@ -119,25 +117,18 @@ class CheckIn:
 				await self.finish(ctx)
 
 	async def start(self, ctx: bot.Context) -> None:
-		"""Post the check-in message (with Ready / Not ready buttons), add the
-		ready/abort reactions, register the reaction handler, and render the board."""
+		"""Post the check-in board with its Ready / Not ready buttons and render it."""
 		self._closing = False
 		# Snapshot originals so standby joiners aren't penalized for missing check-in.
 		self.original_player_ids = {p.id for p in self.m.players}
 		not_ready = [p for p in self.m.players if p not in self.ready_players]
-		# The buttons sit next to the reactions; both do the same thing.
+		# Buttons only (Nov 26). The ✅ / ⛔ reactions did exactly what the
+		# buttons do; dropping them leaves one way to check in and saves three
+		# Discord calls on every check-in. /ready and /notready still work.
 		self.message = await ctx.channel.send(
 			content=self._ping_line(not_ready), embed=self.m.embeds.check_in(not_ready),
 			view=CheckInButtons(allow_discard=self.allow_discard)
 		)
-
-		emojis = [self.READY_EMOJI, '🔸', self.NOT_READY_EMOJI] if self.allow_discard else [self.READY_EMOJI]
-		try:
-			for emoji in emojis:
-				await self.message.add_reaction(emoji)
-		except DiscordException:
-			pass
-		bot.waiting_reactions[self.message.id] = self.process_reaction
 		await self.refresh(ctx)
 
 	async def refresh(self, ctx: bot.Context) -> None:
@@ -153,7 +144,6 @@ class CheckIn:
 			if not self._begin_close():
 				return
 			if self.message:
-				bot.waiting_reactions.pop(self.message.id, None)
 				try:
 					await self.message.delete()
 				except DiscordException:
@@ -216,8 +206,6 @@ class CheckIn:
 
 	async def _finish(self, ctx: bot.Context) -> None:
 		"""finish() after the close has been claimed (also the end of the race path)."""
-		if self.message:
-			bot.waiting_reactions.pop(self.message.id, None)
 		self.ready_players = set()
 		self.ready_order = []
 		if self.message:
@@ -231,31 +219,9 @@ class CheckIn:
 
 		await self.m.next_state(ctx)
 
-	async def process_reaction(self, reaction, user: Member, remove: bool = False) -> None:
-		"""Handle a ready or abort reaction (add or remove). The ready reaction
-		readies; the abort reaction discards or immediately aborts. Ignored
-		unless in CHECK_IN and the user is a player."""
-		if self._closing or self.m.state != self.m.CHECK_IN or user not in self.m.players:
-			return
-
-		if str(reaction) == self.READY_EMOJI:
-			if remove:
-				self.ready_players.discard(user)
-			else:
-				self.discarded_players.discard(user)
-				self.ready_players.add(user)
-				if user not in self.ready_order:
-					self.ready_order.append(user)
-			await self.refresh(bot.SystemContext(self.m.queue.qc))
-
-		elif str(reaction) == self.NOT_READY_EMOJI and self.allow_discard:
-			if self.discard_immediately:
-				return await self.abort_member(bot.SystemContext(self.m.queue.qc), user)
-			return await self.discard_member(bot.SystemContext(self.m.queue.qc), user)
-
 	async def set_ready(self, ctx: bot.Context, member: Member, ready: bool) -> None:
-		"""Command-driven ready toggle: mark member ready, or (if allowed)
-		discard / immediately abort them."""
+		"""The Ready / Not ready buttons and /ready, /notready: mark member
+		ready, or (if allowed) discard / immediately abort them."""
 		if self.m.state != self.m.CHECK_IN:
 			raise bot.Exc.MatchStateError(self.m.gt("The match is not on the check-in stage."))
 		if self._closing:
@@ -287,7 +253,6 @@ class CheckIn:
 		if not self._begin_close():
 			return
 		if self.message:
-			bot.waiting_reactions.pop(self.message.id, None)
 			try:
 				await self.message.delete()
 			except DiscordException:
@@ -316,7 +281,6 @@ class CheckIn:
 		if not self._begin_close():
 			return
 		if self.message:
-			bot.waiting_reactions.pop(self.message.id, None)
 			try:
 				await self.message.delete()
 			except DiscordException:
@@ -347,7 +311,6 @@ class CheckIn:
 			return
 		not_ready = [m for m in self.m.players if m not in self.ready_players]
 		if self.message:
-			bot.waiting_reactions.pop(self.message.id, None)
 			try:
 				await self.message.delete()
 			except DiscordException:
