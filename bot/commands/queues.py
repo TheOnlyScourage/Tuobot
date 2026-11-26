@@ -6,7 +6,7 @@ __all__ = [
 ]
 
 from nextcord import Member
-from core.utils import error_embed, join_and, find, get_nick
+from core.utils import error_embed, ok_embed, join_and, find, get_nick, spawn, send_dm
 import bot
 
 
@@ -45,34 +45,23 @@ async def add(ctx: bot.Context, queues: str | None = None) -> None:
 		)))
 
 	if standby_queues:
-		# Standby placement: ephemeral success in channel + DM so the player
-		# isn\'t confused by the queue topic showing "no players".
+		# Standby placement: a private notice + a DM, so the player isn't
+		# confused by the queue topic not listing them.
 		queue_names = join_and([f"**{q.name}**" for q in standby_queues])
-		channel_mention = ctx.channel.mention if hasattr(ctx, 'channel') and ctx.channel else "the queue channel"
 		standby_msg = (
 			f"\u23f3 You\u2019re on **standby** for {queue_names}.\n"
 			f"A match is currently in check-in. If any of the current players "
 			f"don\u2019t ready up in time, you\u2019ll be pulled in to compete for the open slot."
 		)
-		try:
-			await ctx.success(standby_msg, title="On Standby", ephemeral=True)
-		except TypeError:
-			# Older context might not accept ephemeral kwarg — fall back to normal
-			await ctx.success(standby_msg, title="On Standby")
-
-		# DM the player for extra safety — fire-and-forget so the slash response isn\'t blocked
-		import asyncio as _aio
-		dm_text = (
-			f"\u23f3 You\u2019re on standby for {queue_names} in {channel_mention}.\n"
+		# This used to be ctx.success(..., ephemeral=True). success() can't take
+		# `ephemeral`, so it raised a TypeError and the fallback posted the
+		# "You're on standby" notice publicly every time.
+		await ctx.ignore(embed=ok_embed(standby_msg, title="On Standby"))
+		spawn(send_dm(ctx.author, (
+			f"\u23f3 You\u2019re on standby for {queue_names} in {ctx.channel.mention}.\n"
 			f"A match is currently in check-in. If anyone fails to ready up, "
 			f"you\u2019ll be pulled in \u2014 keep an eye on the channel."
-		)
-		async def _dm():
-			try:
-				await ctx.author.send(dm_text)
-			except Exception:
-				pass
-		_aio.ensure_future(_dm())
+		)), name="standby DM")
 		return
 
 	if bot.Qr.Success in qr.values():
@@ -179,29 +168,15 @@ async def add_player(ctx: bot.Context, player: Member, queue: str) -> None:
 
 	resp = await q.add_member(ctx, p)
 	if resp == bot.Qr.Success:
-		# Standby detection — if player landed in standby, send DM + ephemeral notice
+		# Standby detection — the player landed in standby: DM them, and tell the
+		# moderator privately (this also used to go public: see /add above).
 		if p in getattr(q, 'standby', []):
-			channel_mention = ctx.channel.mention if hasattr(ctx, 'channel') and ctx.channel else "the queue channel"
-			import asyncio as _aio
-			dm_text = (
-				f"\u23f3 You\u2019ve been added to **standby** for **{q.name}** in {channel_mention}.\n"
+			spawn(send_dm(p, (
+				f"\u23f3 You\u2019ve been added to **standby** for **{q.name}** in {ctx.channel.mention}.\n"
 				f"A match is currently in check-in. If anyone fails to ready up, "
 				f"you\u2019ll be pulled in to compete for the spot."
-			)
-			async def _dm():
-				try:
-					await p.send(dm_text)
-				except Exception:
-					pass
-			_aio.ensure_future(_dm())
-			try:
-				await ctx.success(
-					f"**{get_nick(p)}** added to standby for **{q.name}**.",
-					title="On Standby",
-					ephemeral=True
-				)
-			except TypeError:
-				await ctx.success(f"**{get_nick(p)}** added to standby for **{q.name}**.")
+			)), name="standby DM")
+			await ctx.ignore(embed=ok_embed(f"**{get_nick(p)}** added to standby for **{q.name}**.", title="On Standby"))
 			return
 		await ctx.qc.update_expire(p)
 		await ctx.reply(ctx.qc.topic)
