@@ -14,8 +14,11 @@ class PickupQueue:
 	cfg_factory = CfgFactory(
 		table=FactoryTable(name="pq_configs", p_key="pq_id", f_key="channel_id"),
 		name="pq_config",
-		sections=["General", "Teams", "Appearance", "Maps"],
+		sections=["General", "Teams", "Appearance"],
 		icon='pq.png',
+		# Nov 2026: removed description (no /help), promotion_role and
+		# promotion_msg (only read by the never-reachable promote command). Saved
+		# values for them are simply ignored.
 		variables=[
 			Variables.StrVar(
 				"name",
@@ -24,12 +27,6 @@ class PickupQueue:
 				notnull=True,
 				verify=lambda name: len(name) and not any((c in name for c in ": \t\n")),
 				verify_message="Invalid queue name. A queue name should be one word without +-: characters."
-			),
-			Variables.TextVar(
-				"description",
-				display="Description",
-				section="Appearance",
-				description="Set an answer on '!help queue' command."
 			),
 			Variables.IntVar(
 				"size",
@@ -194,18 +191,6 @@ class PickupQueue:
 				verify=lambda s: len(s) < 501,
 				verify_message="Server string is too long."
 			),
-			Variables.RoleVar(
-				"promotion_role",
-				display="Promotion role",
-				section="General",
-				description="Set a role to highlight on !promote and !sub commands."
-			),
-			Variables.TextVar(
-				"promotion_msg",
-				display="Promotion message",
-				section="Appearance",
-				description="Replace default promotion message. You can use {name}, {role} and {left} placeholders in the text."
-			),
 			Variables.BoolVar(
 				"show_streamers",
 				display="Show streamers",
@@ -315,25 +300,10 @@ class PickupQueue:
 			check_in_timeout=self.cfg.check_in_timeout,
 			check_in_discard=self.cfg.check_in_discard, check_in_discard_immediately=self.cfg.check_in_discard_immediately,
 			match_lifetime=self.cfg.match_lifetime,
-			start_msg=self.cfg.start_msg, server=self.cfg.server
+			start_msg=self.cfg.start_msg, server=self.cfg.server,
+			# Was never passed on, so the queue's "Show streamers" switch did nothing.
+			show_streamers=self.cfg.show_streamers
 		)
-
-	async def promote(self, ctx):
-		promotion_role = self.cfg.promotion_role or self.qc.cfg.promotion_role
-		promotion_msg = self.cfg.promotion_msg or self.qc.gt("{role} Please add to **{name}** pickup, `{left}` players left!")
-		promotion_msg = promotion_msg.format_map(SafeTemplateDict(
-			role=promotion_role.mention if promotion_role else "",
-			name=self.name,
-			left=self.cfg.size-self.length
-		))
-		if (
-			promotion_role and not promotion_role.mentionable and
-			ctx.channel.guild.me and not ctx.channel.guild.me.guild_permissions.mention_everyone
-		):
-			raise bot.Exc.PermissionError("Insufficient permissions to ping the promotion role.")
-		else:
-			await ctx.ignore(ctx.qc.gt("Sending **{queue}** promotion...").format(queue=self.name))
-			await ctx.notice(promotion_msg)
 
 	async def reset(self):
 		self.queue = []
