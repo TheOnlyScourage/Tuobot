@@ -5,29 +5,25 @@ Generates config.cfg from environment variables, then launches the bot.
 """
 import os
 import sys
-import subprocess
 
+# Every value goes in as an escaped Python string literal ({x!r}), and
+# core/config.py converts each to its real type (int / list). Values used to be
+# pasted in raw, so an empty DC_OWNER_ID (SyntaxError), a quote in STATUS or
+# HELP, or a backslash in the database password broke config.cfg and
+# crash-looped the boot.
 TEMPLATE = '''# -*- coding: utf-8 -*-
 # Auto-generated from environment variables for Railway deployment
 
-DC_BOT_TOKEN = "{dc_bot_token}"
-DC_CLIENT_ID = {dc_client_id}
-DC_CLIENT_SECRET = "{dc_client_secret}"
-DC_INVITE_LINK = "{dc_invite_link}"
-DC_OWNER_ID = {dc_owner_id}
-DC_SLASH_SERVERS = [{dc_slash_servers}]
+DC_BOT_TOKEN = {dc_bot_token!r}
+DC_OWNER_ID = {dc_owner_id!r}
+DC_SLASH_SERVERS = {dc_slash_servers!r}
 
 
-DB_URI = "{db_uri}"
-LOG_LEVEL = "{log_level}"
-COMMANDS_URL = "{commands_url}"
-HELP = """{help_text}"""
-STATUS = "{status}"
-
-WS_ENABLE = {ws_enable}
-WS_HOST = "0.0.0.0"
-WS_PORT = {ws_port}
-WS_ROOT_URL = "{ws_root_url}"
+DB_URI = {db_uri!r}
+LOG_LEVEL = {log_level!r}
+COMMANDS_URL = {commands_url!r}
+HELP = {help_text!r}
+STATUS = {status!r}
 '''
 
 
@@ -66,9 +62,6 @@ def main():
 
     config_content = TEMPLATE.format(
         dc_bot_token=token,
-        dc_client_id=os.environ.get("DC_CLIENT_ID", "0"),
-        dc_client_secret=os.environ.get("DC_CLIENT_SECRET", ""),
-        dc_invite_link=os.environ.get("DC_INVITE_LINK", ""),
         dc_owner_id=owner_id,
         dc_slash_servers=os.environ.get("DC_SLASH_SERVERS", ""),
         db_uri=db_uri,
@@ -78,9 +71,6 @@ def main():
         help_text=os.environ.get("HELP",
             "Tuobot is a Discord bot for organising Q6 (Quidditch 6v6) pickup games."),
         status=os.environ.get("STATUS", "Tuobot2.0"),
-        ws_enable=os.environ.get("WS_ENABLE", "False"),
-        ws_port=os.environ.get("WS_PORT", os.environ.get("PORT", "8080")),
-        ws_root_url=os.environ.get("WS_ROOT_URL", ""),
     )
 
     with open("config.cfg", "w") as f:
