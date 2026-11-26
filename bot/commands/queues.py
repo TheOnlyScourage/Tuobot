@@ -8,6 +8,8 @@ __all__ = [
 from nextcord import Member
 from core.utils import error_embed, ok_embed, join_and, find, get_nick, spawn, send_dm
 import bot
+# Join / Leave under every public queue update (the same as /add and /remove).
+from bot.buttons import QueueButtons
 
 
 
@@ -33,7 +35,7 @@ async def add(ctx: bot.Context, queues: str | None = None) -> None:
 	for q in t_queues:
 		qr[q] = await q.add_member(ctx, ctx.author)
 		if qr[q] == bot.Qr.QueueStarted:
-			await ctx.notice(ctx.qc.topic)
+			await ctx.notice(ctx.qc.topic, view=QueueButtons())
 			return
 		# If the player was routed to the standby pool, remember the queue
 		if qr[q] == bot.Qr.Success and ctx.author in getattr(q, 'standby', []):
@@ -68,7 +70,7 @@ async def add(ctx: bot.Context, queues: str | None = None) -> None:
 		await ctx.qc.update_expire(ctx.author)
 		if phrase:
 			await ctx.reply(phrase)
-		await ctx.notice(ctx.qc.topic)
+		await ctx.notice(ctx.qc.topic, view=QueueButtons())
 	else:
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
 
@@ -93,7 +95,7 @@ async def remove(ctx: bot.Context, queues: str | None = None) -> None:
 		if not any((q.is_added(ctx.author) for q in ctx.qc.queues)):
 			bot.expire.cancel(ctx.qc, ctx.author)
 
-		await ctx.notice(ctx.qc.topic)
+		await ctx.notice(ctx.qc.topic, view=QueueButtons())
 	else:
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
 
@@ -179,9 +181,9 @@ async def add_player(ctx: bot.Context, player: Member, queue: str) -> None:
 			await ctx.ignore(embed=ok_embed(f"**{get_nick(p)}** added to standby for **{q.name}**.", title="On Standby"))
 			return
 		await ctx.qc.update_expire(p)
-		await ctx.reply(ctx.qc.topic)
+		await ctx.reply(ctx.qc.topic, view=QueueButtons())
 	elif resp == bot.Qr.QueueStarted:
-		await ctx.reply(ctx.qc.topic)
+		await ctx.reply(ctx.qc.topic, view=QueueButtons())
 	else:
 		await ctx.error(f"Got bad queue response: {resp.__name__}.")
 
@@ -202,7 +204,7 @@ async def start(ctx: bot.Context, queue: str | None = None) -> None:
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
 	await q.start(ctx)
-	await ctx.reply(ctx.qc.topic)
+	await ctx.reply(ctx.qc.topic, view=QueueButtons())
 
 
 async def reset(ctx: bot.Context, queue: str | None = None) -> None:
@@ -215,7 +217,7 @@ async def reset(ctx: bot.Context, queue: str | None = None) -> None:
 	else:
 		for q in ctx.qc.queues:
 			await q.reset()
-	await ctx.reply(ctx.qc.topic)
+	await ctx.reply(ctx.qc.topic, view=QueueButtons())
 
 
 async def server(ctx: bot.Context, queue: str) -> None:
