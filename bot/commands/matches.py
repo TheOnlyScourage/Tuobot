@@ -2,7 +2,7 @@ from __future__ import annotations
 
 __all__ = [
 	'show_matches', 'show_teams', 'set_ready', 'sub_me', 'sub_auto', 'sub_for', 'put',
-	'sub_force', 'pick', 'report_admin', 'report', 'report_manual',
+	'sub_force', 'pick', 'pick_by_id', 'report_admin', 'report', 'confirm_loss', 'report_manual',
 	'force_checkin', 'swap_players'
 ]
 
@@ -13,6 +13,7 @@ from functools import wraps
 from core.utils import find, get_nick
 
 import bot
+from bot.buttons import ConfirmLoss
 
 
 def author_match(coro):
@@ -112,6 +113,14 @@ async def pick(ctx: bot.Context, match: bot.Match, players: List[Member]) -> Non
 	await match.draft.pick(ctx, ctx.author, players)
 
 
+@author_match
+async def pick_by_id(ctx: bot.Context, match: bot.Match, user_id: int) -> None:
+	"""The draft board's pick menu: pick by user id (the menu sends ids)."""
+	if (player := find(lambda p: p.id == user_id, match.teams[2])) is None:
+		raise bot.Exc.NotFoundError(ctx.qc.gt("That player isn't in the unpicked list any more."))
+	await match.draft.pick(ctx, ctx.author, [player])
+
+
 async def put(ctx: bot.Context, match_id: int, player: Member, team_name: str) -> None:
 	"""Put a player on Team A (teams[0]), Team B (teams[1]), or back to the unpicked pool.
 
@@ -173,7 +182,7 @@ async def put(ctx: bot.Context, match_id: int, player: Member, team_name: str) -
 
 	# Otherwise refresh the visible embed so everyone sees the change
 	if match.state == match.WAITING_REPORT:
-		await ctx.notice(embed=match.embeds.final_message())
+		await match.final_message(ctx)
 	elif match.state == match.DRAFT:
 		await match.draft.print(ctx)
 
@@ -189,6 +198,21 @@ async def report_admin(ctx: bot.Context, match_id: int, winner_team: str | None 
 		await match.record_abort(ctx)
 	else:
 		await match.report_win(ctx, winner_team)
+
+
+@author_match
+async def confirm_loss(ctx: bot.Context, match: bot.Match) -> None:
+	"""The board's We lost button: check it's a captain of a match waiting for a
+	result, then ask privately before reporting (a button is easy to misclick;
+	typing /report loss is not)."""
+	if match.state != match.WAITING_REPORT or match not in bot.active_matches:
+		raise bot.Exc.MatchStateError(ctx.qc.gt("This match isn't waiting for a result."))
+	if (team := find(lambda t: ctx.author in t[:1], match.teams[:2])) is None:
+		raise bot.Exc.PermissionError(ctx.qc.gt("Only the team captains can report the result."))
+	await ctx.ignore(
+		content=ctx.qc.gt("Report a **loss** for **{team}**? This ends match {id}.").format(team=team.name, id=match.id),
+		view=ConfirmLoss()
+	)
 
 
 @author_match
@@ -310,7 +334,7 @@ async def swap_players(ctx: bot.Context, player1: Member, player2: Member) -> No
 		t2[i2] = player1
 
 		if match.state == match.WAITING_REPORT:
-			await ctx.notice(embed=match.embeds.final_message())
+			await match.final_message(ctx)
 		else:
 			await match.draft.print(ctx)
 
@@ -359,7 +383,7 @@ async def swap_players(ctx: bot.Context, player1: Member, player2: Member) -> No
 				match.ratings.setdefault(outsider.id, 1500)
 
 		if match.state == match.WAITING_REPORT:
-			await ctx.notice(embed=match.embeds.final_message())
+			await match.final_message(ctx)
 		elif match.state == match.DRAFT:
 			await match.draft.print(ctx)
 
