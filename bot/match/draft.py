@@ -10,6 +10,7 @@ from nextcord import DiscordException
 
 from bot.buttons import DraftPickMenu, maybe
 from bot.buttons_rules import pick_options
+from .captain_selection import get_quidditch_roles
 from .subbing import pick_available
 
 if TYPE_CHECKING:
@@ -84,11 +85,14 @@ class Draft:
 		return team[0] if len(team) else None
 
 	def pick_menu(self) -> DraftPickMenu | None:
-		"""The pick menu for the board: the unpicked players, while a captain is
-		on the clock (nothing to pick otherwise)."""
+		"""The pick menu for the board: the unpicked players, each with their
+		rating and position(s), while a captain is on the clock (nothing to pick
+		otherwise)."""
 		if self.picking_captain() is None or not len(self.m.teams[2]):
 			return None
-		options = pick_options(self.m.teams[2], get_nick, self.m.ratings if self.m.ranked else None)
+		options = pick_options(
+			self.m.teams[2], get_nick, self.m.ratings if self.m.ranked else None, positions_of=get_quidditch_roles
+		)
 		more = len(self.m.teams[2]) - len(options)
 		placeholder = self.m.gt("Captain: pick a player") if not more else self.m.gt(
 			"Captain: pick a player ({n} more with /pick)"
