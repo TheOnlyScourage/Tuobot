@@ -509,9 +509,10 @@ async def activity(ctx: bot.Context, player: Member | None = None) -> None:
 	or the channel, on the community's clock — Central time, the same zone as
 	the daily 4 AM clear. (It used to be India time, +05:30: a leftover from
 	the original Indian bot.)"""
-	interaction = getattr(ctx, 'interaction', None)
-	if interaction is not None and not interaction.response.is_done():
-		await interaction.response.defer()
+	# The heatmap takes a moment to draw: acknowledge first. Through ctx, so
+	# it takes turns with run_slash's own 2.5 s defer (see SlashContext).
+	if hasattr(ctx, 'defer'):
+		await ctx.defer()
 
 	target = None
 	if player is not None and (target := await ctx.get_member(player)) is None:
