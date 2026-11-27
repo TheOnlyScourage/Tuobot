@@ -56,11 +56,14 @@ async def run_slash(coro: Callable, interaction: Interaction, **kwargs) -> None:
 	try:
 		await wait_for(shield(run_slash_coro(ctx, coro, **kwargs)), timeout=max(2.5 - passed_time, 0))
 	except (TimeoutError, aTimeoutError):
-		# If the inner coro hasn\'t responded yet, defer so Discord stops waiting.
-		# If it already responded (e.g. ctx.notice fired mid-flight), just log.
+		# Not answered within 2.5 s: defer so Discord stops waiting. Through
+		# ctx, which takes turns with the command's own replies: deferring the
+		# interaction directly raced them into error 40060 (see SlashContext).
 		try:
-			await interaction.response.defer()
-			log.info('Deferred /slash command')
+			if await ctx.defer():
+				log.info('Deferred /slash command')
+			else:
+				log.info('Slow /slash command finished mid-timeout (already responded)')
 		except InteractionResponded:
 			log.info('Slow /slash command finished mid-timeout (already responded)')
 
