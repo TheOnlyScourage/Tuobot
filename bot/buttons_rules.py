@@ -29,13 +29,24 @@ def _clip(text: str) -> str:
 	return text if len(text) <= MAX_TEXT else text[:MAX_TEXT - 1] + "…"
 
 
-def pick_options(players, nick_of, ratings=None):
+def _description(rating, positions):
+	"""The grey line under a name in the pick menu: "1657 rating • Keeper",
+	"1607 rating • Seeker/Keeper", or just one half of it. None = no line."""
+	parts = [f"{rating} rating"] if rating is not None else []
+	if positions:
+		parts.append("/".join(str(p).capitalize() for p in positions))
+	return _clip(" • ".join(parts)) if parts else None
+
+
+def pick_options(players, nick_of, ratings=None, positions_of=None):
 	"""Options for the captain's pick menu: [{'label', 'value', 'description'}].
 
 	Highest rated first when ratings are known (else by name), at most 25
 	(Discord's limit; anyone beyond that is still pickable with /pick), with
-	labels and descriptions cut to 100 characters. `value` is the user id as
-	text, so it survives the round trip through Discord."""
+	labels and descriptions cut to 100 characters. The description is the
+	player's rating and, when `positions_of` is given, their Quidditch
+	position(s) (see _description). `value` is the user id as text, so it
+	survives the round trip through Discord."""
 	ratings = ratings or {}
 	seen = set()
 	rows = []
@@ -52,7 +63,7 @@ def pick_options(players, nick_of, ratings=None):
 		dict(
 			label=_clip(nick_of(p) or p.id),
 			value=str(p.id),
-			description=_clip(f"{ratings[p.id]} rating") if ratings.get(p.id) is not None else None,
+			description=_description(ratings.get(p.id), positions_of(p) if positions_of else ()),
 		)
 		for p in rows[:MAX_OPTIONS]
 	]
