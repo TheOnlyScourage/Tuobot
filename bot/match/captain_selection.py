@@ -39,13 +39,17 @@ CAPTAIN_HISTORY_SIZE = 5
 
 # ── Scoring primitives (pure) ─────────────────────────────────────────────────
 
+def get_quidditch_roles(player) -> list[str]:
+	"""Every Quidditch position the player holds, from their Discord roles, in
+	QUIDDITCH_ROLES order; ['chaser'] when they hold none. The captain's pick
+	menu lists them all ("Seeker/Keeper"); /profile shows the first."""
+	role_names = {r.name.lower() for r in getattr(player, 'roles', None) or ()}
+	return [role for role in QUIDDITCH_ROLES if role in role_names] or ['chaser']
+
+
 def get_quidditch_role(player) -> str:
 	"""Return the player's Quidditch role from their Discord roles, default 'chaser'."""
-	role_names = {r.name.lower() for r in player.roles}
-	for role in QUIDDITCH_ROLES:
-		if role in role_names:
-			return role
-	return 'chaser'
+	return get_quidditch_roles(player)[0]
 
 
 def role_bonus(role1: str, role2: str) -> int:
